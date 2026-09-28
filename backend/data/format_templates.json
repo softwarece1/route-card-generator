@@ -1,0 +1,815 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-28T11:18:11+00:00",
+  "templates": [
+    {
+      "id": "bel-ga-default",
+      "name": "BEL GA / Assembly (default)",
+      "docType": "GA",
+      "builtin": true,
+      "aliases": {
+        "noteHeaders": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "CTQ POINTS",
+          "CTQ POINT",
+          "CRITICAL TO QUALITY POINTS"
+        ],
+        "plColumns": {},
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "GA",
+        "keywords": [
+          "NOTE",
+          "NOTES",
+          "ASSEMBLE",
+          "ITEM",
+          "SHEET",
+          "CTQ"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": false,
+        "hasWireListHeader": false,
+        "noteHeaderCountMin": 1
+      },
+      "stats": {
+        "useCount": 1,
+        "learnCount": 0
+      },
+      "createdAt": "2026-09-24T06:42:40+00:00",
+      "updatedAt": "2026-09-24T06:44:37+00:00"
+    },
+    {
+      "id": "bel-pl-default",
+      "name": "BEL Parts List (default)",
+      "docType": "PL",
+      "builtin": true,
+      "aliases": {
+        "noteHeaders": [],
+        "plColumns": {
+          "item": [
+            "ITEM",
+            "ITEM NO",
+            "ITM",
+            "S.NO",
+            "SL NO",
+            "SL.NO"
+          ],
+          "description": [
+            "DESIGNATION",
+            "DESCRIPTION",
+            "DESC",
+            "PART NAME"
+          ],
+          "partNo": [
+            "PART NO",
+            "PART NUMBER",
+            "P/N",
+            "PN"
+          ],
+          "qty": [
+            "QTY",
+            "QUANTITY",
+            "QTY.",
+            "NOS"
+          ]
+        },
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "PL",
+        "keywords": [
+          "PARTS LIST",
+          "DESIGNATION",
+          "PART NO",
+          "ITEM"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": false,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": false,
+        "noteHeaderCountMin": 0
+      },
+      "stats": {
+        "useCount": 34,
+        "learnCount": 0
+      },
+      "createdAt": "2026-09-24T06:42:40+00:00",
+      "updatedAt": "2026-09-28T11:16:47+00:00"
+    },
+    {
+      "id": "bel-wl-default",
+      "name": "BEL Wire List (default)",
+      "docType": "WL",
+      "builtin": true,
+      "aliases": {
+        "noteHeaders": [],
+        "plColumns": {},
+        "wlHints": [
+          "WIRE LIST",
+          "FROM",
+          "TO",
+          "WIRE LFH"
+        ]
+      },
+      "fingerprint": {
+        "docTypeHint": "WL",
+        "keywords": [
+          "WIRE LIST",
+          "FROM",
+          "TO",
+          "WIRE"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": false,
+        "hasPartsListHeader": false,
+        "hasWireListHeader": true,
+        "noteHeaderCountMin": 0
+      },
+      "stats": {
+        "useCount": 0,
+        "learnCount": 0
+      },
+      "createdAt": "2026-09-24T06:42:40+00:00",
+      "updatedAt": "2026-09-24T06:42:40+00:00"
+    },
+    {
+      "id": "learned-ga-a8d64859e2",
+      "name": "GA drawing \u2014 112185749834",
+      "docType": "GA",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "CTQ POINTS",
+          "CTQ POINT",
+          "CRITICAL TO QUALITY POINTS"
+        ],
+        "plColumns": {},
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "GA",
+        "keywords": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "notes",
+          "wire_list",
+          "title",
+          "bel_pn",
+          "CTQ"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": false,
+        "hasWireListHeader": true,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "00",
+          "001",
+          "100",
+          "1121",
+          "115.0",
+          "119.5",
+          "224.0",
+          "24.02.23",
+          "25.01.2024",
+          "3-PCU",
+          "325VDC",
+          "34",
+          "498",
+          "5.0",
+          "55.0",
+          "857",
+          "A3",
+          "ADHESIVE.",
+          "ALL",
+          "ALLOWED",
+          "ANY",
+          "APPRD",
+          "ARE",
+          "AS",
+          "ASSY",
+          "BANGALORE",
+          "BHARAT",
+          "CD6",
+          "CHANGE",
+          "CHECKED",
+          "CN.",
+          "CODE",
+          "CONSENT",
+          "DATE",
+          "DIMENSIONS",
+          "DISCLOSURE",
+          "DO",
+          "DOC",
+          "DOCUMENT",
+          "DRAWN"
+        ]
+      },
+      "stats": {
+        "useCount": 28,
+        "learnCount": 1
+      },
+      "sourceSessionId": 94,
+      "notes": "Saved after engineer review",
+      "createdAt": "2026-09-24T06:45:12+00:00",
+      "updatedAt": "2026-09-28T11:02:17+00:00"
+    },
+    {
+      "id": "learned-pl-14a3a701cd",
+      "name": "Parts List \u2014 112185749834",
+      "docType": "PL",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [],
+        "plColumns": {
+          "item": [
+            "ITEM",
+            "ITEM NO",
+            "ITM",
+            "S.NO",
+            "SL NO"
+          ],
+          "description": [
+            "DESIGNATION",
+            "DESCRIPTION",
+            "DESC"
+          ],
+          "partNo": [
+            "PART NO",
+            "PART NUMBER",
+            "P/N",
+            "PN"
+          ],
+          "qty": [
+            "QTY",
+            "QUANTITY",
+            "NOS"
+          ]
+        },
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "PL",
+        "keywords": [
+          "notes",
+          "parts_list"
+        ],
+        "hasBelPartNo": false,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": false,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "2127",
+          "229",
+          "941",
+          "CIRCUIT",
+          "DESIGNATIOPART",
+          "ENV",
+          "GR",
+          "ITEM",
+          "LABEL",
+          "NO",
+          "POWERSUP4579",
+          "QTY",
+          "RE",
+          "REL",
+          "REMARKS",
+          "UNT"
+        ]
+      },
+      "stats": {
+        "useCount": 15,
+        "learnCount": 1
+      },
+      "sourceSessionId": 94,
+      "notes": "Saved after engineer review",
+      "createdAt": "2026-09-24T06:45:14+00:00",
+      "updatedAt": "2026-09-28T10:12:54+00:00"
+    },
+    {
+      "id": "learned-ga-f5ed4e252b",
+      "name": "GA drawing \u2014 112360195216",
+      "docType": "GA",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "CTQ POINTS",
+          "CTQ POINT",
+          "CRITICAL TO QUALITY POINTS"
+        ],
+        "plColumns": {},
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "GA",
+        "keywords": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "notes",
+          "parts_list",
+          "wire_list",
+          "title",
+          "ga",
+          "CTQ"
+        ],
+        "hasBelPartNo": false,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": true,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "---",
+          "00",
+          "001",
+          "02",
+          "03",
+          "03.02.2025",
+          "100",
+          "11.04.26",
+          "112360195216AA",
+          "2.",
+          "3.",
+          "362",
+          "39",
+          "3MM",
+          "4-40",
+          "4.",
+          "5.",
+          "545501000341",
+          "5914719",
+          "A2",
+          "AK630",
+          "ALL",
+          "ALLOWED",
+          "AND",
+          "ANY",
+          "APPRD",
+          "ARE",
+          "AS",
+          "ASSEMBLY",
+          "ASSY",
+          "B1",
+          "B8.",
+          "BANGALORE",
+          "BARE",
+          "BE",
+          "BEFORE",
+          "BETA",
+          "BHARAT",
+          "BOARD",
+          "BOARD."
+        ]
+      },
+      "stats": {
+        "useCount": 7,
+        "learnCount": 1
+      },
+      "sourceSessionId": 96,
+      "notes": "Saved after engineer review",
+      "createdAt": "2026-09-24T07:21:47+00:00",
+      "updatedAt": "2026-09-25T06:32:15+00:00"
+    },
+    {
+      "id": "learned-pl-f536721b78",
+      "name": "Parts List \u2014 112360195216",
+      "docType": "PL",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [],
+        "plColumns": {
+          "item": [
+            "ITEM",
+            "ITEM NO",
+            "ITM",
+            "S.NO",
+            "SL NO"
+          ],
+          "description": [
+            "DESIGNATION",
+            "DESCRIPTION",
+            "DESC"
+          ],
+          "partNo": [
+            "PART NO",
+            "PART NUMBER",
+            "P/N",
+            "PN"
+          ],
+          "qty": [
+            "QTY",
+            "QUANTITY",
+            "NOS"
+          ]
+        },
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "PL",
+        "keywords": [
+          "notes",
+          "parts_list"
+        ],
+        "hasBelPartNo": false,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": false,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "2127",
+          "229",
+          "941",
+          "CIRCUIT",
+          "DESIGNATIOPART",
+          "ENV",
+          "GR",
+          "ITEM",
+          "LABEL",
+          "NO",
+          "POWERSUP4579",
+          "QTY",
+          "RE",
+          "REL",
+          "REMARKS",
+          "UNT"
+        ]
+      },
+      "stats": {
+        "useCount": 0,
+        "learnCount": 1
+      },
+      "sourceSessionId": 96,
+      "notes": "Saved after engineer review",
+      "createdAt": "2026-09-24T07:21:48+00:00",
+      "updatedAt": "2026-09-24T07:21:48+00:00"
+    },
+    {
+      "id": "bel-wiring-assy-instructions",
+      "name": "BEL Wiring / Cable GA (Assembly Instructions)",
+      "docType": "GA",
+      "builtin": true,
+      "aliases": {
+        "noteHeaders": [
+          "ASSEMBLY INSTRUCTIONS",
+          "ASSY INSTRUCTIONS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "NOTES",
+          "NOTE",
+          "REMARKS",
+          "CTQ POINTS",
+          "CTQ POINT",
+          "CRITICAL TO QUALITY POINTS"
+        ],
+        "plColumns": {},
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "GA",
+        "keywords": [
+          "ASSEMBLY INSTRUCTIONS",
+          "INSTRUCTIONS",
+          "CABLE",
+          "HEAT SHRINK",
+          "FIGURE",
+          "CONNECTOR",
+          "INTERCONNECTION",
+          "CTQ"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": false,
+        "hasWireListHeader": false,
+        "noteHeaderCountMin": 1
+      },
+      "stats": {
+        "useCount": 0,
+        "learnCount": 0
+      },
+      "createdAt": "2026-09-25T06:25:52+00:00",
+      "updatedAt": "2026-09-25T06:25:52+00:00"
+    },
+    {
+      "id": "learned-pl-957ec52541",
+      "name": "Parts List \u2014 112188041168",
+      "docType": "PL",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [],
+        "plColumns": {
+          "item": [
+            "ITEM",
+            "ITEM NO",
+            "ITM",
+            "S.NO",
+            "SL NO"
+          ],
+          "description": [
+            "DESIGNATION",
+            "DESCRIPTION",
+            "DESC"
+          ],
+          "partNo": [
+            "PART NO",
+            "PART NUMBER",
+            "P/N",
+            "PN"
+          ],
+          "qty": [
+            "QTY",
+            "QUANTITY",
+            "NOS"
+          ]
+        },
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "PL",
+        "keywords": [
+          "notes",
+          "parts_list",
+          "bel_pn"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": false,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "0.1",
+          "0.2",
+          "0.5",
+          "0.6",
+          "006",
+          "009",
+          "010",
+          "027",
+          "056",
+          "078",
+          "088",
+          "089",
+          "099",
+          "10",
+          "100",
+          "100MM",
+          "101",
+          "103",
+          "105",
+          "110",
+          "114",
+          "12",
+          "120",
+          "126",
+          "127",
+          "13-35",
+          "130",
+          "140",
+          "19",
+          "20",
+          "201",
+          "22",
+          "24.0.",
+          "30",
+          "32BIT",
+          "4.0-38.1",
+          "40",
+          "401",
+          "403",
+          "42"
+        ]
+      },
+      "stats": {
+        "useCount": 0,
+        "learnCount": 1
+      },
+      "sourceSessionId": 179,
+      "notes": "Saved after engineer review",
+      "createdAt": "2026-09-25T07:36:16+00:00",
+      "updatedAt": "2026-09-25T07:36:16+00:00"
+    },
+    {
+      "id": "learned-ga-a3b08f529d",
+      "name": "GA drawing \u2014 112188041168",
+      "docType": "GA",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "ASSY INSTRUCTIONS",
+          "ASSEMBLY INSTRUCTIONS",
+          "CTQ POINTS",
+          "CTQ POINT",
+          "CRITICAL TO QUALITY POINTS"
+        ],
+        "plColumns": {},
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "GA",
+        "keywords": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "ASSY INSTRUCTIONS",
+          "notes",
+          "parts_list",
+          "wire_list",
+          "title",
+          "ga",
+          "bel_pn",
+          "CTQ"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": true,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "+/-",
+          "01",
+          "02",
+          "07.11.15",
+          "1.",
+          "10",
+          "100",
+          "1000",
+          "1001",
+          "105",
+          "10MM",
+          "110",
+          "1121",
+          "120",
+          "15.03.20",
+          "15MM",
+          "2.",
+          "2.5MM",
+          "20",
+          "3.",
+          "30",
+          "30.0",
+          "300.0",
+          "4.",
+          "40",
+          "411",
+          "5.",
+          "50.0",
+          "500",
+          "501",
+          "5585283",
+          "6.",
+          "68",
+          "7.",
+          "70",
+          "8.",
+          "80",
+          "880",
+          "90",
+          "A."
+        ]
+      },
+      "stats": {
+        "useCount": 17,
+        "learnCount": 1
+      },
+      "sourceSessionId": 179,
+      "notes": "Saved after engineer review",
+      "createdAt": "2026-09-25T07:36:16+00:00",
+      "updatedAt": "2026-09-28T11:17:09+00:00"
+    },
+    {
+      "id": "learned-ga-ebcca3f69e",
+      "name": "GA drawing \u2014 118000507663",
+      "docType": "GA",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "ASSY INSTRUCTIONS",
+          "ASSEMBLY INSTRUCTIONS",
+          "CTQ POINTS",
+          "CTQ POINT",
+          "CRITICAL TO QUALITY POINTS"
+        ],
+        "plColumns": {},
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "GA",
+        "keywords": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "ASSY INSTRUCTIONS",
+          "notes",
+          "parts_list",
+          "wire_list",
+          "title",
+          "ga",
+          "bel_pn"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": true,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "---",
+          ".PDF",
+          "00",
+          "005",
+          "02",
+          "03",
+          "076",
+          "09-03-2026",
+          "096",
+          "1-1",
+          "1.",
+          "1.5NM",
+          "10",
+          "10-1",
+          "10.",
+          "11",
+          "11-1",
+          "1180",
+          "118000507663",
+          "118000509603",
+          "118032187281",
+          "12",
+          "12-1",
+          "13",
+          "13-1",
+          "131.50",
+          "14",
+          "14-1",
+          "15",
+          "15-1",
+          "16",
+          "16-1",
+          "17",
+          "17-1",
+          "18",
+          "18+/-",
+          "18-1",
+          "19",
+          "19-1",
+          "2-1"
+        ]
+      },
+      "stats": {
+        "useCount": 0,
+        "learnCount": 1
+      },
+      "sourceSessionId": 275,
+      "notes": "Saved after engineer review",
+      "createdAt": "2026-09-28T11:18:11+00:00",
+      "updatedAt": "2026-09-28T11:18:11+00:00"
+    }
+  ]
+}

@@ -1,0 +1,531 @@
+/* OARC preview dialog — CreateOrderModal ops/materials spacing (local copy) */
+
+.oarc-preview-dialog.p-dialog {
+  max-width: 98vw;
+}
+
+.oarc-preview-dialog {
+  .p-dialog-content {
+    max-height: min(82vh, 58rem);
+    overflow: auto;
+    padding-bottom: 0.75rem;
+  }
+
+  .p-dialog-footer {
+    margin-top: 0;
+    padding-top: 0.85rem;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  &__footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.25rem;
+
+    .p-button {
+      font-size: 0.8rem;
+    }
+  }
+}
+
+.oarc-preview-dialog .om-order-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1rem;
+
+  &--two-col {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    align-items: stretch;
+
+    @media (min-width: 992px) {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+}
+
+.oarc-preview-dialog .om-section {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem 0.55rem;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+  min-width: 0;
+}
+
+.oarc-preview-dialog .om-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #0f172a;
+  padding: 0 0 0.5rem;
+  margin-bottom: 0.35rem;
+  border-bottom: 1px solid #eef0f3;
+
+  i {
+    font-size: 0.85rem;
+    color: #2563eb;
+  }
+}
+
+.oarc-preview-dialog .om-grid .field {
+  margin-bottom: 0.55rem;
+  padding: 0.15rem 0.35rem;
+}
+
+.oarc-preview-dialog .om-grid label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #4b5563;
+  margin-bottom: 0.25rem;
+}
+
+.oarc-preview-dialog .om-input,
+.oarc-preview-dialog .om-grid .p-inputtext,
+.oarc-preview-dialog .om-grid .p-inputnumber-input,
+.oarc-preview-dialog .om-create-order-card .om-input,
+.oarc-preview-dialog .om-create-order-card .p-inputtext:not(textarea) {
+  width: 100%;
+  height: 2.35rem;
+  font-size: 0.84rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+}
+
+.oarc-preview-dialog .om-grid .p-inputnumber {
+  width: 100%;
+}
+
+.oarc-preview-dialog .om-grid .p-inputnumber-input {
+  height: 2.35rem;
+}
+
+.oarc-preview-dialog .om-create-order-divider {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: #475569;
+  margin: 1rem 0 0.75rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* —— Ops / Raw Materials tabs (match CreateOrderModal) —— */
+.oarc-preview-dialog .om-create-order-ops-tabs {
+  margin-top: 0.75rem;
+  width: 100%;
+  min-width: 0;
+
+  .om-zepto-tabs {
+    .p-tabview-nav-container {
+      margin-bottom: 0.875rem;
+    }
+
+    .p-tabview-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      width: auto;
+      max-width: 100%;
+      margin: 0;
+      padding: 0.25rem;
+      list-style: none;
+      border: 0;
+      border-radius: 999px;
+      background: #eef1f6;
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    .p-tabview-nav li {
+      margin: 0;
+      flex: 0 0 auto;
+
+      .p-tabview-nav-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin: 0;
+        padding: 0.55rem 0.95rem;
+        border: 0 !important;
+        border-radius: 999px;
+        background: transparent;
+        color: #64748b;
+        font-size: 0.875rem;
+        font-weight: 600;
+        box-shadow: none !important;
+      }
+
+      &.p-highlight .p-tabview-nav-link {
+        background: #16325c;
+        color: #fff;
+        box-shadow: 0 6px 16px rgba(22, 50, 92, 0.22) !important;
+
+        .om-zepto-tab-count {
+          background: rgba(255, 255, 255, 0.18);
+          color: #fff;
+        }
+      }
+    }
+
+    .p-tabview-ink-bar {
+      display: none;
+    }
+
+    .p-tabview-panels {
+      padding: 0.95rem 1rem 1rem;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+      overflow: hidden;
+    }
+
+    .p-tabview-panel {
+      padding: 0;
+      min-width: 0;
+    }
+  }
+}
+
+.oarc-preview-dialog .om-zepto-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  line-height: 1;
+
+  .pi {
+    font-size: 0.875rem;
+  }
+}
+
+.oarc-preview-dialog .om-zepto-tab-count {
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  background: rgba(15, 23, 42, 0.08);
+  color: #475569;
+}
+
+.oarc-preview-dialog .om-create-order-section__toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.65rem;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.oarc-preview-dialog .om-create-order-section__hint {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.oarc-preview-dialog .om-create-order-table {
+  font-size: 0.875rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #fff;
+  width: 100%;
+
+  .p-datatable-wrapper {
+    border-radius: inherit;
+    overflow: auto;
+  }
+
+  .p-datatable-thead > tr > th {
+    border-bottom: 1px solid #e5e7eb;
+    background: #f8fafc;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .p-datatable-tbody > tr > td {
+    border-bottom: 1px solid #e5e7eb;
+    padding: 0.45rem 0.55rem;
+    vertical-align: middle;
+  }
+
+  .p-datatable-tbody > tr:last-child > td {
+    border-bottom: none;
+  }
+
+  .p-datatable-reorderablerow-handle {
+    cursor: grab;
+    color: #64748b;
+    font-size: 0.9rem;
+  }
+
+  .om-oprn-no {
+    display: inline-block;
+    min-width: 2.5rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #1e3a5f;
+  }
+
+  .p-inputtext,
+  .p-inputnumber,
+  .p-inputnumber-input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .p-inputtext,
+  .p-inputnumber-input {
+    height: 2.35rem;
+    font-size: 0.84rem;
+  }
+}
+
+.oarc-preview-dialog .om-create-order-empty {
+  text-align: center;
+  padding: 1.5rem 1rem;
+  color: #64748b;
+
+  &__sub {
+    font-size: 0.85rem;
+    margin: 0.35rem 0 0;
+  }
+}
+
+.oarc-preview-dialog .om-create-order-op-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+
+  .p-checkbox {
+    flex-shrink: 0;
+  }
+
+  label {
+    font-size: 0.75rem;
+    color: #64748b;
+    cursor: pointer;
+    user-select: none;
+  }
+}
+
+.oarc-preview-dialog .om-op-desc-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+
+  &__input.p-inputtext {
+    width: 100%;
+    padding-right: 2.75rem;
+  }
+
+  &__actions {
+    position: absolute;
+    top: 50%;
+    right: 0.25rem;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.oarc-preview-dialog .om-op-instruction-btn {
+  width: 2rem;
+  height: 2rem;
+
+  &--filled {
+    color: #16a34a !important;
+  }
+}
+
+.oarc-preview-dialog .om-op-instruction-dot {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: #16a34a;
+}
+
+.oarc-preview-dialog .om-create-order-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  height: 100%;
+  min-height: 0;
+}
+
+.oarc-preview-dialog .om-create-order-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.oarc-preview-dialog .om-create-order-card__title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #0f172a;
+}
+
+.oarc-preview-dialog .om-create-order-card__body .field {
+  margin-bottom: 0.5rem;
+}
+
+.oarc-preview-dialog .om-create-order-card__body label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #4b5563;
+  margin-bottom: 0.25rem;
+}
+
+.oarc-preview-dialog .om-create-order-card__body .p-inputtextarea {
+  font-size: 0.84rem;
+  padding: 0.4rem 0.65rem;
+  border-radius: 6px;
+  min-height: 3.5rem;
+}
+
+.oarc-preview-dialog .om-create-order-card__body .p-button {
+  height: 2.35rem;
+  font-size: 0.84rem;
+}
+
+.oarc-preview-dialog .om-create-order-file-debug {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+/* Nested “Add / Edit instruction” dialog — keep compact (portaled outside parent) */
+.oarc-instr-dialog.p-dialog {
+  font-family: "Rubik", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  .p-dialog-header {
+    padding: 0.7rem 1rem;
+  }
+
+  .p-dialog-header-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+
+    .p-dialog-header-close-icon {
+      font-size: 0.85rem;
+    }
+  }
+
+  .p-dialog-title {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #1e3a5f;
+  }
+
+  .p-dialog-content {
+    padding: 0.65rem 1rem 0.5rem;
+  }
+
+  .p-dialog-footer {
+    padding: 0.55rem 1rem 0.75rem;
+    border-top: 1px solid #e5e7eb;
+  }
+}
+
+.oarc-instr-dialog__hint {
+  margin: 0 0 0.45rem;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.oarc-instr-dialog__textarea.p-inputtextarea,
+.oarc-instr-dialog .p-inputtextarea {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  padding: 0.45rem 0.6rem;
+}
+
+.oarc-instr-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.4rem;
+
+  .p-button {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.75rem;
+  }
+}
+
+.oarc-instr-dialog__meta {
+  margin-top: 0.55rem;
+  padding-top: 0.45rem;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.oarc-instr-dialog__meta-label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.oarc-instr-dialog__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.oarc-instr-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oarc-instr-chip--item {
+  cursor: help;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1e40af;
+}
+
+.oarc-instr-chip--ref {
+  background: #f8fafc;
+  max-width: 16rem;
+}
+
+.oarc-instr-chip--torque {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}

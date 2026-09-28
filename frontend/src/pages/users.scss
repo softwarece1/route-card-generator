@@ -1,0 +1,111 @@
+.rc-users {
+  max-width: 92rem;
+  margin: 0 auto;
+  padding: 0.75rem 1.35rem 3rem;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.rc-users__table {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.rc-users__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.rc-users__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.rc-users__form--grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem 0.85rem;
+}
+
+.rc-users__form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #334155;
+  min-width: 0;
+}
+
+.rc-users__form .p-inputtext,
+.rc-users__form .p-dropdown,
+.rc-users__form .p-password,
+.rc-users__form .p-dropdown .p-dropdown-label {
+  width: 100%;
+}
+
+/* Standard control height — override enlarged theme defaults in dialogs */
+.rc-users-dialog .p-dialog-content {
+  padding-top: 0.85rem;
+  padding-bottom: 0.5rem;
+}
+
+.rc-users-dialog .rc-users__form .p-inputtext,
+.rc-users-dialog .rc-users__form .p-dropdown {
+  height: 2.25rem;
+  min-height: 2.25rem;
+  font-size: 0.875rem;
+}
+
+.rc-users-dialog .rc-users__form .p-inputtext {
+  padding: 0.35rem 0.65rem;
+}
+
+.rc-users-dialog .rc-users__form .p-dropdown {
+  align-items: center;
+}
+
+.rc-users-dialog .rc-users__form .p-dropdown .p-dropdown-label {
+  padding: 0.35rem 0.65rem;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+}
+
+.rc-users-dialog .rc-users__form .p-dropdown .p-dropdown-trigger {
+  width: 2.25rem;
+}
+
+.rc-users__dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.rc-users-dialog .rc-users__dialog-footer .p-button {
+  height: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0 0.85rem;
+  font-size: 0.85rem;
+}
+
+.rc-users-dialog .rc-users__dialog-footer .p-button .p-button-icon {
+  font-size: 0.8rem;
+}
+
+.rc-users__hint {
+  margin: 0 0 0.7rem;
+  font-size: 0.82rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+@media (max-width: 560px) {
+  .rc-users__form--grid {
+    grid-template-columns: 1fr;
+  }
+}

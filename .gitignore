@@ -1,0 +1,11 @@
+# .env
+.venv/
+node_modules/
+uploads/
+__pycache__/
+*.pyc
+dist/
+.DS_Store
+docs/
+
+*offline*

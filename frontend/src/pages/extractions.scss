@@ -1,0 +1,149 @@
+.rc-hist {
+  max-width: 92rem;
+  margin: 0 auto;
+  padding: 0.75rem 1.35rem 3rem;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.rc-hist__intro {
+  display: none;
+}
+
+.rc-hist__filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+  gap: 0.75rem 0.85rem;
+  align-items: end;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+}
+
+.rc-hist__filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+
+  label {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #64748b;
+  }
+
+  .p-calendar,
+  .p-dropdown {
+    width: 100%;
+  }
+
+  .p-inputtext {
+    width: 100%;
+    font-size: 0.875rem;
+  }
+}
+
+.rc-hist__filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.1rem;
+}
+
+.rc-hist__users-panel {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+}
+
+.rc-hist__users-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+
+  h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #16325c;
+  }
+}
+
+@media (min-width: 1100px) {
+  .rc-hist__filters {
+    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  }
+
+  .rc-hist__filter-actions {
+    justify-content: flex-end;
+  }
+}
+
+.rc-hist__table {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.rc-hist__row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.rc-hist-detail {
+  dl {
+    display: grid;
+    gap: 0.55rem;
+    margin: 0 0 1rem;
+  }
+
+  dt {
+    font-size: 0.72rem;
+    color: #64748b;
+    font-weight: 500;
+  }
+
+  dd {
+    margin: 0.1rem 0 0;
+    font-size: 0.9rem;
+  }
+
+  &__json {
+    color: #475569;
+    font-size: 0.82rem !important;
+  }
+
+  h3 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+  }
+}
+
+.rc-hist-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+
+  li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    font-size: 0.85rem;
+  }
+}

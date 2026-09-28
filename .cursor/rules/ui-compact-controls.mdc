@@ -1,0 +1,28 @@
+---
+description: Prefer compact/regular PrimeReact control sizes (not large)
+globs: frontend/**/*.{jsx,tsx,js,ts,scss}
+alwaysApply: false
+---
+
+# Compact UI controls
+
+Default to **small** or **regular** control sizing. Do not use large buttons, inputs, or dialog chrome unless the design explicitly needs a hero CTA.
+
+## Buttons & inputs
+
+- Prefer `size="small"` on PrimeReact `Button`, or leave default (regular). Avoid `size="large"`.
+- Prefer compact padding / `0.8–0.875rem` font for form labels and dialog body text.
+- Dialog footers: small outlined Cancel + small primary action; keep button row tight.
+
+## Confirm dialogs
+
+- Use `confirmDialog` with a short message (1–2 sentences).
+- Pass `acceptClassName` / `rejectClassName` with `p-button-sm`.
+- Prefer `className: "p-confirm-dialog-sm"` (or rely on global `.pmf-compact .p-confirm-dialog` styles).
+- Avoid oversized icons and multi-paragraph confirm copy.
+
+## Nested edit dialogs
+
+- Instruction / note editors should stay compact: modest title, hint, textarea, small footer buttons.
+- Put reference-only metadata (Items, Ref, Torque) in chips **below** the input — not inside LongText / print / OARC export.
+---

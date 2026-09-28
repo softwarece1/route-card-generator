@@ -1,0 +1,184 @@
+.rc-otpl {
+  max-width: 92rem;
+  margin: 0 auto;
+  padding: 0.75rem 1.35rem 3rem;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.rc-otpl__intro {
+  display: none;
+}
+
+.rc-otpl__row-actions {
+  display: inline-flex;
+  gap: 0.15rem;
+  align-items: center;
+}
+
+.rc-otpl__other-bar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.rc-otpl__dept-filter {
+  min-width: 14rem;
+}
+
+.rc-otpl-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.rc-otpl-form__row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+
+  label {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: #64748b;
+  }
+}
+
+.rc-otpl-form__steps-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.25rem;
+
+  h4 {
+    margin: 0;
+    font-size: 0.88rem;
+    color: #16325c;
+  }
+}
+
+.rc-otpl-step {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: #fafbfc;
+}
+
+.rc-otpl-step__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.rc-otpl-step__grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 0.6fr 0.6fr;
+  gap: 0.35rem 0.5rem;
+
+  label {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: #64748b;
+    margin-bottom: 0.12rem;
+  }
+}
+
+.rc-otpl-step__full {
+  grid-column: 1 / -1;
+}
+
+/* Compact dialog chrome — match users dialog / ui-compact-controls rule */
+.rc-otpl-dialog.p-dialog {
+  .p-dialog-header {
+    padding: 0.7rem 1rem;
+  }
+
+  .p-dialog-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+
+  .p-dialog-header-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .p-dialog-content {
+    padding: 0.65rem 1rem 0.5rem;
+  }
+
+  .p-dialog-footer {
+    padding: 0.5rem 1rem 0.7rem;
+    border-top: 1px solid #e5e7eb;
+  }
+}
+
+.rc-otpl-dialog .rc-otpl-form .p-inputtext,
+.rc-otpl-dialog .rc-otpl-form .p-dropdown,
+.rc-otpl-dialog .p-inputtext {
+  height: 2.15rem;
+  min-height: 2.15rem;
+  font-size: 0.82rem;
+}
+
+.rc-otpl-dialog .rc-otpl-form .p-inputtext,
+.rc-otpl-dialog .p-inputtext {
+  padding: 0.3rem 0.55rem;
+}
+
+.rc-otpl-dialog .rc-otpl-form .p-inputtextarea {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  padding: 0.35rem 0.55rem;
+}
+
+.rc-otpl-dialog .rc-otpl-form .p-dropdown {
+  align-items: center;
+}
+
+.rc-otpl-dialog .rc-otpl-form .p-dropdown .p-dropdown-label {
+  padding: 0.3rem 0.55rem;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.rc-otpl-dialog .rc-otpl-form .p-dropdown .p-dropdown-trigger {
+  width: 2.15rem;
+}
+
+.rc-otpl-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.rc-otpl-dialog .rc-otpl-dialog__footer .p-button {
+  height: 2.15rem;
+  min-height: 2.15rem;
+  padding: 0 0.8rem;
+  font-size: 0.82rem;
+}
+
+.rc-otpl-dialog .rc-otpl-dialog__footer .p-button .p-button-icon {
+  font-size: 0.78rem;
+}
+
+@media (max-width: 720px) {
+  .rc-otpl__intro {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .rc-otpl-step__grid {
+    grid-template-columns: 1fr;
+  }
+}
