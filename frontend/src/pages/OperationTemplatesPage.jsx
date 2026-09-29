@@ -715,7 +715,7 @@ export default function OperationTemplatesPage() {
           </div>
         }
       >
-        <p className="m-0 mb-3 text-sm" style={{ color: "#64748b" }}>
+        <p className="m-0 mb-3 text-sm" style={{ color: "var(--pmf-text-muted)" }}>
           Copying from {dup.source?.dept} / {dup.source?.name} into{" "}
           <strong>{user?.dept || "your department"}</strong>.
         </p>
@@ -742,7 +742,7 @@ export default function OperationTemplatesPage() {
       >
         {viewTpl ? (
           <div className="rc-otpl-form">
-            <p className="m-0 text-sm" style={{ color: "#64748b" }}>
+            <p className="m-0 text-sm" style={{ color: "var(--pmf-text-muted)" }}>
               Placement: <TableStatusBadge value={viewTpl.placement || "any"} tone="info" /> ·{" "}
               {(viewTpl.steps || []).length} step(s)
             </p>
@@ -753,7 +753,7 @@ export default function OperationTemplatesPage() {
                     {(i + 1) * 10}. {s.operation}
                   </span>
                 </div>
-                <p className="m-0 text-sm" style={{ color: "#475569" }}>
+                <p className="m-0 text-sm" style={{ color: "var(--pmf-text-subtle)" }}>
                   {s.workCentre ? `Wc: ${s.workCentre}` : ""}
                   {s.instructionText ? (
                     <>

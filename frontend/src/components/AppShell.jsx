@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { getUser } from "@/lib/auth";
 import { logout } from "@/services/authApi";
+import ThemeToggle from "@/components/ThemeToggle";
 import "./app-shell.scss";
 
 function roleLabel(role) {
@@ -114,6 +115,7 @@ export default function AppShell({ active = "generator", children }) {
                 user?.username ||
                 "User"}
             </span>
+            <ThemeToggle className="rca-topbar__theme" />
             <Button
               type="button"
               icon="pi pi-sign-out"

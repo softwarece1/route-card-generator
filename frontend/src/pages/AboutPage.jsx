@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Button } from "primereact/button";
 import { isAuthenticated, getUser } from "@/lib/auth";
+import ThemeToggle from "@/components/ThemeToggle";
 import logoSvg from "@/assets/route-card-logo.svg";
 import heroImg from "@/assets/hero.png";
 import workflowImg from "@/assets/about-workflow.png";
@@ -123,6 +124,7 @@ export default function AboutPage() {
             </span>
           </Link>
           <div className="rc-landing__nav-actions">
+            <ThemeToggle />
             {loggedIn ? (
               <>
                 <span className="rc-landing__nav-user">

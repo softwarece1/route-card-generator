@@ -10,6 +10,7 @@ import {
   fetchEmpStatus,
 } from "@/services/authApi";
 import AuthLogo from "@/components/AuthLogo";
+import ThemeToggle from "@/components/ThemeToggle";
 import heroImg from "@/assets/hero.png";
 import "./login.scss";
 
@@ -127,6 +128,9 @@ export default function SignupPage() {
 
   return (
     <div className="rc-login">
+      <div className="rc-login__theme">
+        <ThemeToggle />
+      </div>
       <div className="rc-login__panel">
         <aside className="rc-login__hero" aria-hidden="true">
           <img src={heroImg} alt="" className="rc-login__hero-img" />

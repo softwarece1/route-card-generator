@@ -1,28 +1,77 @@
-// PMF design tokens + PageHeader (.nd-header) for standalone Route Card app
+// PMF design tokens — light (:root) + dark ([data-theme="dark"])
 
 :root {
+  color-scheme: light;
+
   --pmf-text: #0f172a;
   --pmf-text-secondary: #1e293b;
   --pmf-text-muted: #64748b;
+  --pmf-text-subtle: #475569;
+  --pmf-text-faint: #94a3b8;
+  --pmf-text-heading: #334155;
   --pmf-navy: #16325c;
+  --pmf-ink-deep: #1e3a5f;
+  --pmf-auth-navy: #0f2347;
 
+  --pmf-page-bg: #f8fafc;
+  --pmf-chrome: #f4f7fb;
+  --pmf-sidebar: #f4f7fb;
+  --pmf-navbar: #f4f7fb;
   --pmf-surface: #ffffff;
   --pmf-surface-muted: #f8fafc;
+  --pmf-surface-hover: #f1f5f9;
+  --pmf-surface-raised: #ffffff;
   --pmf-border: #e5e7eb;
+  --pmf-border-strong: #e2e8f0;
+  --pmf-border-soft: #eef2f7;
+  --pmf-border-row: #f1f5f9;
+  --pmf-table-head: #eef2f8;
+  --pmf-table-border: #e8ecf1;
 
   --pmf-gold: #d4a017;
   --pmf-gold-soft: #fff6dd;
   --pmf-gold-border: #f4d36b;
   --pmf-gold-text: #b8860b;
 
+  --pmf-accent: #2563eb;
+  --pmf-accent-secondary: #3b82f6;
+  --pmf-accent-strong: #1d4ed8;
+  --pmf-accent-hover: #1d4ed8;
+  --pmf-accent-deep: #1e40af;
+  --pmf-accent-soft: #dbeafe;
+  --pmf-accent-muted: #eff6ff;
+  --pmf-accent-border: #bfdbfe;
+  --pmf-accent-mid: #93c5fd;
+  --pmf-accent-wash: #f8fbff;
+  --pmf-accent-panel: #dbe7f6;
+  --pmf-accent-line: #e0eaf8;
+  --pmf-hero-wash: #e8eef8;
+
   --pmf-success: #059669;
   --pmf-success-soft: #ecfdf5;
+  --pmf-success-fg: #166534;
+  --pmf-success-bg: #dcfce7;
+  --pmf-success-border: #bbf7d0;
+  --pmf-success-icon: #22c55e;
+
   --pmf-danger: #ef4444;
   --pmf-danger-soft: #fef2f2;
+  --pmf-danger-fg: #b91c1c;
+  --pmf-danger-bg: #fee2e2;
+  --pmf-danger-border: #fecaca;
+
   --pmf-warning: #f59e0b;
   --pmf-warning-soft: #fffbeb;
+  --pmf-warning-fg: #a16207;
+  --pmf-warning-bg: #fef3c7;
+  --pmf-warning-border: #fde68a;
+
   --pmf-info: #2563eb;
   --pmf-info-soft: #dbeafe;
+
+  --pmf-tag-secondary-bg: #f1f5f9;
+  --pmf-tag-secondary-fg: #475569;
+  --pmf-tag-secondary-border: #e2e8f0;
 
   --pmf-radius-sm: 0.5rem;
   --pmf-radius-md: 0.75rem;
@@ -30,6 +79,123 @@
 
   --pmf-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --pmf-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --pmf-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --pmf-focus-ring: rgba(37, 99, 235, 0.18);
+  --pmf-accent-glow: rgba(37, 99, 235, 0.1);
+
+  --pmf-overlay-nav: rgba(248, 250, 252, 0.92);
+  --pmf-overlay-surface: rgba(248, 251, 255, 0.96);
+  --pmf-footer-bg: rgba(255, 255, 255, 0.94);
+  --pmf-meta-wash: rgba(239, 246, 255, 0.55);
+  --pmf-scrollbar: #cbd5e1;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Graphite + Industrial Blue */
+  --pmf-text: #f1f5f9;
+  --pmf-text-secondary: #e2e8f0;
+  --pmf-text-muted: #94a3b8;
+  --pmf-text-subtle: #94a3b8;
+  --pmf-text-faint: #64748b;
+  --pmf-text-heading: #cbd5e1;
+  --pmf-navy: #93c5fd;
+  --pmf-ink-deep: #e2e8f0;
+  --pmf-auth-navy: #f1f5f9;
+
+  --pmf-page-bg: #111827;
+  --pmf-chrome: #161d29;
+  --pmf-sidebar: #151b26;
+  --pmf-navbar: #161d29;
+  --pmf-surface: #1c2533;
+  --pmf-surface-muted: #151b26;
+  --pmf-surface-hover: #243044;
+  --pmf-surface-raised: #222b3a;
+  --pmf-border: #303b4d;
+  --pmf-border-strong: #3a465c;
+  --pmf-border-soft: #273142;
+  --pmf-border-row: #273142;
+  --pmf-table-head: #161d29;
+  --pmf-table-border: #303b4d;
+
+  --pmf-gold: #eab308;
+  --pmf-gold-soft: #422006;
+  --pmf-gold-border: #a16207;
+  --pmf-gold-text: #facc15;
+
+  --pmf-accent: #3b82f6;
+  --pmf-accent-secondary: #60a5fa;
+  --pmf-accent-strong: #93c5fd;
+  --pmf-accent-hover: #2563eb;
+  --pmf-accent-deep: #bfdbfe;
+  --pmf-accent-soft: #1a2f4d;
+  --pmf-accent-muted: #17263d;
+  --pmf-accent-border: #2563eb;
+  --pmf-accent-mid: #3b82f6;
+  --pmf-accent-wash: #161d29;
+  --pmf-accent-panel: #243044;
+  --pmf-accent-line: #303b4d;
+  --pmf-hero-wash: #151b26;
+
+  --pmf-success: #34d399;
+  --pmf-success-soft: #0f2e24;
+  --pmf-success-fg: #86efac;
+  --pmf-success-bg: #14532d;
+  --pmf-success-border: #166534;
+  --pmf-success-icon: #4ade80;
+
+  --pmf-danger: #f87171;
+  --pmf-danger-soft: #3f1212;
+  --pmf-danger-fg: #fecaca;
+  --pmf-danger-bg: #7f1d1d;
+  --pmf-danger-border: #991b1b;
+
+  --pmf-warning: #fbbf24;
+  --pmf-warning-soft: #3b2a0a;
+  --pmf-warning-fg: #fde68a;
+  --pmf-warning-bg: #78350f;
+  --pmf-warning-border: #a16207;
+
+  --pmf-info: #60a5fa;
+  --pmf-info-soft: #17263d;
+
+  --pmf-tag-secondary-bg: #243044;
+  --pmf-tag-secondary-fg: #e2e8f0;
+  --pmf-tag-secondary-border: #303b4d;
+
+  --pmf-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --pmf-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --pmf-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --pmf-focus-ring: rgba(59, 130, 246, 0.35);
+  --pmf-accent-glow: rgba(59, 130, 246, 0.22);
+
+  --pmf-overlay-nav: rgba(22, 29, 41, 0.94);
+  --pmf-overlay-surface: rgba(28, 37, 51, 0.92);
+  --pmf-footer-bg: rgba(22, 29, 41, 0.94);
+  --pmf-meta-wash: rgba(36, 48, 68, 0.55);
+  --pmf-scrollbar: #3a465c;
+
+  /* Align PrimeReact Lara tokens with Graphite + Industrial Blue */
+  --primary-color: #3b82f6;
+  --primary-color-text: #ffffff;
+  --primary-50: #17263d;
+  --primary-100: #1a2f4d;
+  --primary-200: #1e3a5f;
+  --primary-300: #2563eb;
+  --primary-400: #3b82f6;
+  --primary-500: #3b82f6;
+  --primary-600: #2563eb;
+  --primary-700: #1d4ed8;
+  --surface-ground: #111827;
+  --surface-section: #151b26;
+  --surface-card: #1c2533;
+  --surface-overlay: #1c2533;
+  --surface-border: #303b4d;
+  --surface-hover: #243044;
+  --text-color: #f1f5f9;
+  --text-color-secondary: #94a3b8;
+  --maskbg: rgba(15, 23, 42, 0.65);
 }
 
 .nd-header {
@@ -38,12 +204,12 @@
   gap: 0.75rem;
   align-items: flex-start;
   justify-content: space-between;
-  background: #ffffff;
+  background: var(--pmf-surface);
   padding: 18px 22px;
   border-radius: 14px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--pmf-border);
   margin-bottom: 16px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--pmf-shadow-card);
   box-sizing: border-box;
   width: 100%;
 
@@ -72,8 +238,8 @@
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--pmf-accent-soft);
+  color: var(--pmf-accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -89,14 +255,14 @@
   font-size: 20px;
   font-weight: 600;
   letter-spacing: 0.4px;
-  color: #0f172a;
+  color: var(--pmf-text);
   line-height: 1;
 }
 
 .nd-header__subtitle {
   margin: 4px 0 0;
   font-size: 14px;
-  color: #64748b;
+  color: var(--pmf-text-muted);
   line-height: 1.4;
 }
 
@@ -115,11 +281,31 @@
   box-sizing: border-box;
 }
 
+html {
+  background: var(--pmf-page-bg);
+}
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: var(--pmf-text);
-  background: #f8fafc;
+  background: var(--pmf-page-bg);
+}
+
+.rc-theme-toggle {
+  color: var(--pmf-text-muted) !important;
+
+  &:enabled:hover {
+    background: var(--pmf-accent-soft) !important;
+    color: var(--pmf-accent-strong) !important;
+  }
+}
+
+.rc-hot-toast {
+  background: var(--pmf-surface) !important;
+  color: var(--pmf-text) !important;
+  border: 1px solid var(--pmf-border);
+  box-shadow: var(--pmf-shadow-md);
 }
 
 /* Compact confirm / dialog chrome (body gets .pmf-compact from AppProviders) */

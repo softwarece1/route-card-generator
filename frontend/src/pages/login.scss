@@ -1,13 +1,14 @@
 .rc-login {
-  --rc-auth-blue: #2563eb;
-  --rc-auth-navy: #0f2347;
-  --rc-auth-muted: #64748b;
-  --rc-auth-border: #dce3ed;
-  --rc-auth-bg: #f4f7fb;
-  --rc-auth-focus: rgba(37, 99, 235, 0.18);
+  --rc-auth-blue: var(--pmf-accent);
+  --rc-auth-navy: var(--pmf-auth-navy);
+  --rc-auth-muted: var(--pmf-text-muted);
+  --rc-auth-border: var(--pmf-border);
+  --rc-auth-bg: var(--pmf-chrome);
+  --rc-auth-focus: var(--pmf-focus-ring);
   --rc-auth-radius: 7px;
   --rc-auth-input-h: 42px;
 
+  position: relative;
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -15,6 +16,13 @@
   padding: 1.15rem 1.5rem;
   background: var(--rc-auth-bg);
   box-sizing: border-box;
+}
+
+.rc-login__theme {
+  position: fixed;
+  top: 0.85rem;
+  right: 0.85rem;
+  z-index: 20;
 }
 
 .rc-login__panel {
@@ -26,10 +34,10 @@
   /* Fixed height so hero image never reflows */
   height: min(720px, calc(100vh - 2.3rem));
   min-height: 0;
-  background: #fff;
+  background: var(--pmf-surface);
   border: 1px solid var(--rc-auth-border);
   border-radius: 0.75rem;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--pmf-shadow-card);
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -39,7 +47,7 @@
   min-height: 0;
   min-width: 0;
   height: 100%;
-  background: #e8eef8;
+  background: var(--pmf-hero-wash);
   overflow: hidden;
 }
 
@@ -57,7 +65,7 @@
   height: 100%;
   min-height: 0;
   margin: 0;
-  background: #fff;
+  background: var(--pmf-surface);
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -147,7 +155,7 @@
   margin: 0;
   font-size: 0.9rem;
   line-height: 1.5;
-  color: #334155;
+  color: var(--pmf-text-heading);
 }
 
 .rc-login__hint {
@@ -172,9 +180,9 @@
   margin: 0 0 0.65rem;
   padding: 0.45rem 0.6rem;
   border-radius: var(--rc-auth-radius);
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
+  border: 1px solid var(--pmf-danger-border);
+  background: var(--pmf-danger-soft);
+  color: var(--pmf-danger-fg);
   font-size: 0.75rem;
   line-height: 1.35;
 }
@@ -187,7 +195,7 @@
   height: var(--rc-auth-input-h);
   border: 1px solid var(--rc-auth-border);
   border-radius: var(--rc-auth-radius);
-  background: #fff;
+  background: var(--pmf-surface);
   color: var(--rc-auth-navy);
   font-size: 0.9rem;
   box-shadow: none;
@@ -201,13 +209,13 @@
 
 .rc-login .p-inputtext::placeholder,
 .rc-login .p-password-input::placeholder {
-  color: #94a3b8;
+  color: var(--pmf-text-faint);
 }
 
 .rc-login .p-inputtext:enabled:hover,
 .rc-login .p-password-input:enabled:hover,
 .rc-login .p-dropdown:not(.p-disabled):hover {
-  border-color: #c5d0e0;
+  border-color: var(--pmf-border-strong);
 }
 
 .rc-login .p-inputtext:enabled:focus,
@@ -221,21 +229,21 @@
 .rc-login .p-inputtext.p-invalid,
 .rc-login .p-password.p-invalid .p-password-input,
 .rc-login .p-dropdown.p-invalid {
-  border-color: #ef4444;
+  border-color: var(--pmf-danger);
 }
 
 .rc-login .p-inputtext.p-invalid:enabled:focus,
 .rc-login .p-password.p-invalid .p-password-input:enabled:focus,
 .rc-login .p-dropdown.p-invalid.p-focus {
-  border-color: #ef4444;
+  border-color: var(--pmf-danger);
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
 }
 
 .rc-login .p-inputtext:disabled,
 .rc-login .p-password-input:disabled,
 .rc-login .p-dropdown.p-disabled {
-  background: #f8fafc;
-  color: #64748b;
+  background: var(--pmf-page-bg);
+  color: var(--pmf-text-muted);
   opacity: 1;
 }
 
@@ -264,7 +272,7 @@
     color: var(--rc-auth-navy);
 
     &.p-placeholder {
-      color: #94a3b8;
+      color: var(--pmf-text-faint);
     }
   }
 
@@ -281,22 +289,22 @@
   border: 0;
   border-radius: var(--rc-auth-radius);
   background: var(--rc-auth-blue);
-  color: #fff;
+  color: var(--pmf-surface);
   font-size: 0.925rem;
   font-weight: 600;
   box-shadow: none;
 
   &:enabled:hover {
-    background: #1d4ed8;
+    background: var(--pmf-accent-strong);
   }
 
   &:enabled:active {
-    background: #1e40af;
+    background: var(--pmf-accent-deep);
   }
 
   &:disabled {
-    background: #93c5fd;
-    color: #fff;
+    background: var(--pmf-accent-mid);
+    color: var(--pmf-surface);
     opacity: 1;
   }
 
@@ -309,8 +317,8 @@
   margin-bottom: 0.65rem;
   padding: 0.5rem 0.65rem;
   border-radius: var(--rc-auth-radius);
-  border: 1px solid #a7f3d0;
-  background: #ecfdf5;
+  border: 1px solid var(--pmf-success-border);
+  background: var(--pmf-success-soft);
 
   .rc-login__verified-row {
     display: flex;

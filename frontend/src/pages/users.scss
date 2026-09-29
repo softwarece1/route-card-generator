@@ -7,8 +7,8 @@
 }
 
 .rc-users__table {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--pmf-surface);
+  border: 1px solid var(--pmf-border);
   border-radius: 0.75rem;
   overflow: hidden;
 }
@@ -37,7 +37,7 @@
   gap: 0.28rem;
   font-size: 0.8rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--pmf-text-heading);
   min-width: 0;
 }
 
@@ -100,7 +100,7 @@
 .rc-users__hint {
   margin: 0 0 0.7rem;
   font-size: 0.82rem;
-  color: #64748b;
+  color: var(--pmf-text-muted);
   line-height: 1.45;
 }
 

@@ -826,7 +826,7 @@ export default function OarcPreviewDialog({
                         <div className="om-create-order-card">
                           <div className="om-create-order-card__header">
                             <span className="om-create-order-card__title">Engineering Drawing</span>
-                            <i className="pi pi-file-pdf" style={{ color: "#2563eb" }} />
+                            <i className="pi pi-file-pdf" style={{ color: "var(--pmf-accent)" }} />
                           </div>
                           <div className="om-create-order-card__body">
                             <div className="field">
@@ -879,7 +879,7 @@ export default function OarcPreviewDialog({
                         <div className="om-create-order-card">
                           <div className="om-create-order-card__header">
                             <span className="om-create-order-card__title">Part List</span>
-                            <i className="pi pi-list" style={{ color: "#2563eb" }} />
+                            <i className="pi pi-list" style={{ color: "var(--pmf-accent)" }} />
                           </div>
                           <div className="om-create-order-card__body">
                             <div className="field">

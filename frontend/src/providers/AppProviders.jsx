@@ -3,7 +3,8 @@ import { PrimeReactProvider } from 'primereact/api';
 import { ConfirmDialog } from 'primereact/confirmdialog';
 import { Toaster } from 'react-hot-toast';
 
-import 'primereact/resources/themes/lara-light-blue/theme.css';
+import { ThemeProvider } from '@/providers/ThemeProvider';
+
 import 'primeicons/primeicons.css';
 import 'primeflex/primeflex.css';
 import '@/styles/tokens.scss';
@@ -21,19 +22,21 @@ export default function AppProviders({ children }) {
   }, []);
 
   return (
-    <PrimeReactProvider value={PRIME}>
-      <Toaster
-        position="bottom-center"
-        toastOptions={{
-          className: 'rc-hot-toast',
-          style: {
-            fontSize: '0.875rem',
-            maxWidth: '26rem',
-          },
-        }}
-      />
-      <ConfirmDialog className="p-confirm-dialog-sm" />
-      {children}
-    </PrimeReactProvider>
+    <ThemeProvider>
+      <PrimeReactProvider value={PRIME}>
+        <Toaster
+          position="bottom-center"
+          toastOptions={{
+            className: 'rc-hot-toast',
+            style: {
+              fontSize: '0.875rem',
+              maxWidth: '26rem',
+            },
+          }}
+        />
+        <ConfirmDialog className="p-confirm-dialog-sm" />
+        {children}
+      </PrimeReactProvider>
+    </ThemeProvider>
   );
 }

@@ -41,7 +41,7 @@
   label {
     font-size: 0.72rem;
     font-weight: 500;
-    color: #64748b;
+    color: var(--pmf-text-muted);
   }
 }
 
@@ -54,15 +54,15 @@
   h4 {
     margin: 0;
     font-size: 0.88rem;
-    color: #16325c;
+    color: var(--pmf-navy);
   }
 }
 
 .rc-otpl-step {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--pmf-border);
   border-radius: 0.5rem;
   padding: 0.5rem 0.6rem;
-  background: #fafbfc;
+  background: var(--pmf-surface-muted);
 }
 
 .rc-otpl-step__bar {
@@ -72,7 +72,7 @@
   margin-bottom: 0.35rem;
   font-size: 0.78rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--pmf-text-heading);
 }
 
 .rc-otpl-step__grid {
@@ -84,7 +84,7 @@
     display: block;
     font-size: 0.68rem;
     font-weight: 500;
-    color: #64748b;
+    color: var(--pmf-text-muted);
     margin-bottom: 0.12rem;
   }
 }
@@ -115,7 +115,7 @@
 
   .p-dialog-footer {
     padding: 0.5rem 1rem 0.7rem;
-    border-top: 1px solid #e5e7eb;
+    border-top: 1px solid var(--pmf-border);
   }
 }
 

@@ -80,7 +80,7 @@ export default function OpTemplatePickerDialog({
       }
     >
       {error ? <Message severity="error" text={error} className="w-full mb-3" /> : null}
-      <p className="m-0 mb-3 text-sm" style={{ color: "#64748b" }}>
+      <p className="m-0 mb-3 text-sm" style={{ color: "var(--pmf-text-muted)" }}>
         Choose a pack from your department. All steps are inserted at once using the
         pack&apos;s placement hint (you can reorder afterward).
       </p>

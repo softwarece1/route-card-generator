@@ -1,4 +1,4 @@
-/* Light blue chrome: sidebar + topbar #F4F7FB, main #F8FAFC */
+/* App shell chrome — colors from theme tokens */
 
 $rca-sidebar-width: 13.25rem;
 $rca-sidebar-collapsed: 3.6rem;
@@ -10,19 +10,20 @@ $rca-sidebar-collapsed: 3.6rem;
   height: auto;
   overflow-x: hidden;
 
-  --rca-chrome: #f4f7fb;
-  --rca-chrome-edge: #e5e7eb;
-  --rca-chrome-muted: #64748b;
-  --rca-chrome-text: #0f172a;
-  --rca-accent: #2563eb;
-  --rca-accent-secondary: #3b82f6;
-  --rca-accent-strong: #1d4ed8;
-  --rca-accent-soft: #dbeafe;
-  --rca-accent-border: #bfdbfe;
-  --rca-sidebar-bg: var(--rca-chrome);
+  --rca-chrome: var(--pmf-navbar);
+  --rca-chrome-edge: var(--pmf-border);
+  --rca-chrome-muted: var(--pmf-text-muted);
+  --rca-chrome-text: var(--pmf-text);
+  --rca-accent: var(--pmf-accent);
+  --rca-accent-secondary: var(--pmf-accent-secondary);
+  --rca-accent-strong: var(--pmf-accent-strong);
+  --rca-accent-hover: var(--pmf-accent-hover);
+  --rca-accent-soft: var(--pmf-accent-soft);
+  --rca-accent-border: var(--pmf-accent-border);
+  --rca-sidebar-bg: var(--pmf-sidebar);
   --rca-sidebar-edge: var(--rca-chrome-edge);
   --rca-sidebar-width: #{$rca-sidebar-width};
-  --rca-main-bg: #f8fafc;
+  --rca-main-bg: var(--pmf-page-bg);
 
   .p-button:not(.p-button-outlined):not(.p-button-text):not(.p-button-secondary):not(
       .p-button-success
@@ -34,8 +35,8 @@ $rca-sidebar-collapsed: 3.6rem;
     color: #fff !important;
 
     &:enabled:hover {
-      background: var(--rca-accent-strong) !important;
-      border-color: var(--rca-accent-strong) !important;
+      background: var(--rca-accent-hover) !important;
+      border-color: var(--rca-accent-hover) !important;
     }
   }
 
@@ -53,10 +54,10 @@ $rca-sidebar-collapsed: 3.6rem;
 
   .p-button.p-button-text.p-button-secondary,
   .p-button.p-button-text {
-    color: #64748b !important;
+    color: var(--pmf-text-muted) !important;
 
     &:enabled:hover {
-      background: #f1f5f9 !important;
+      background: var(--pmf-surface-hover) !important;
       color: var(--rca-accent-strong) !important;
     }
   }
@@ -71,7 +72,7 @@ $rca-sidebar-collapsed: 3.6rem;
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: var(--rca-chrome);
+  background: var(--rca-sidebar-bg);
   color: var(--rca-chrome-text);
   border-right: 1px solid var(--rca-chrome-edge);
   overflow-x: hidden;
@@ -112,7 +113,7 @@ $rca-sidebar-collapsed: 3.6rem;
 .rca-sidebar__brand-mark {
   font-size: 0.92rem;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--pmf-text);
   letter-spacing: -0.01em;
 }
 
@@ -137,7 +138,7 @@ $rca-sidebar-collapsed: 3.6rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: var(--pmf-text-faint);
 }
 
 .rca-sidebar__link {
@@ -146,7 +147,7 @@ $rca-sidebar-collapsed: 3.6rem;
   gap: 0.6rem;
   padding: 0.55rem 0.65rem;
   border-radius: 0.4rem;
-  color: #475569;
+  color: var(--pmf-text-subtle);
   text-decoration: none;
   font-size: 0.875rem;
   font-weight: 500;
@@ -157,12 +158,12 @@ $rca-sidebar-collapsed: 3.6rem;
     font-size: 0.92rem;
     width: 1.05rem;
     text-align: center;
-    color: #64748b;
+    color: var(--pmf-text-muted);
   }
 
   &:hover {
-    background: #ffffff;
-    color: #0f172a;
+    background: var(--pmf-surface);
+    color: var(--pmf-text);
     border-color: var(--rca-chrome-edge);
 
     i {
@@ -196,7 +197,6 @@ $rca-sidebar-collapsed: 3.6rem;
   box-sizing: border-box;
 }
 
-/* Same light blue as sidebar */
 .rca-shell--with-sidebar .rca-topbar {
   position: sticky;
   top: 0;
@@ -211,7 +211,7 @@ $rca-sidebar-collapsed: 3.6rem;
 
   .rca-topbar__title {
     h1 {
-      color: #0f172a;
+      color: var(--pmf-text);
     }
 
     p {
@@ -222,16 +222,17 @@ $rca-sidebar-collapsed: 3.6rem;
 
 .rca-shell--with-sidebar .rca-chip {
   border-color: var(--rca-accent-border);
-  background: #ffffff;
-  color: #0f172a;
+  background: var(--pmf-surface);
+  color: var(--pmf-text);
 
   i {
     color: var(--rca-accent);
   }
 }
 
-.rca-shell--with-sidebar .rca-topbar__logout {
-  color: #64748b !important;
+.rca-shell--with-sidebar .rca-topbar__logout,
+.rca-shell--with-sidebar .rca-topbar__theme {
+  color: var(--pmf-text-muted) !important;
 
   &:enabled:hover {
     background: var(--rca-accent-soft) !important;

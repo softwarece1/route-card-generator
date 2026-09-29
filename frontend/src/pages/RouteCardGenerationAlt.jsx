@@ -1141,7 +1141,7 @@ export default function RouteCardGenerationAlt() {
                     <div className="rca-panel">
                       <h3>Dimensions / interfaces</h3>
                       {(intelDims || []).length === 0 ? (
-                        <p style={{ margin: 0, color: "#64748b", fontSize: "0.85rem" }}>No dimension intelligence extracted.</p>
+                        <p style={{ margin: 0, color: "var(--pmf-text-muted)", fontSize: "0.85rem" }}>No dimension intelligence extracted.</p>
                       ) : (
                         (intelDims || []).map((item) => (
                           <div className="rca-kv mb-2" key={`${item.label}-${item.value}`}>
@@ -1159,7 +1159,7 @@ export default function RouteCardGenerationAlt() {
                     <div className="rca-panel">
                       <h3>Requirements</h3>
                       {(intelReqs || []).length === 0 ? (
-                        <p style={{ margin: 0, color: "#64748b", fontSize: "0.85rem" }}>No special requirements listed.</p>
+                        <p style={{ margin: 0, color: "var(--pmf-text-muted)", fontSize: "0.85rem" }}>No special requirements listed.</p>
                       ) : (
                         (intelReqs || []).map((item) => (
                           <div className="rca-kv mb-2" key={`${item.label}-${item.value}`}>
@@ -1365,7 +1365,7 @@ export default function RouteCardGenerationAlt() {
                 }
               >
                 <div id="rca-sec-review">
-                  <p style={{ marginTop: 0, color: "#64748b", fontSize: "0.9rem" }}>
+                  <p style={{ marginTop: 0, color: "var(--pmf-text-muted)", fontSize: "0.9rem" }}>
                     Review the extracted route, save a format template so similar layouts match
                     automatically next time (offline, no external model), and open{" "}
                     <strong>View OARC preview</strong> to check the Create-Order shaped form

@@ -17,8 +17,8 @@
   align-items: end;
   margin-bottom: 1rem;
   padding: 0.85rem 1rem;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--pmf-surface);
+  border: 1px solid var(--pmf-border);
   border-radius: 0.75rem;
 }
 
@@ -31,7 +31,7 @@
   label {
     font-size: 0.78rem;
     font-weight: 500;
-    color: #64748b;
+    color: var(--pmf-text-muted);
   }
 
   .p-calendar,
@@ -56,8 +56,8 @@
 .rc-hist__users-panel {
   margin-bottom: 1rem;
   padding: 0.85rem 1rem;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--pmf-surface);
+  border: 1px solid var(--pmf-border);
   border-radius: 0.75rem;
 }
 
@@ -72,7 +72,7 @@
     margin: 0;
     font-size: 0.95rem;
     font-weight: 600;
-    color: #16325c;
+    color: var(--pmf-navy);
   }
 }
 
@@ -87,8 +87,8 @@
 }
 
 .rc-hist__table {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--pmf-surface);
+  border: 1px solid var(--pmf-border);
   border-radius: 0.75rem;
   overflow: hidden;
 }
@@ -108,7 +108,7 @@
 
   dt {
     font-size: 0.72rem;
-    color: #64748b;
+    color: var(--pmf-text-muted);
     font-weight: 500;
   }
 
@@ -118,7 +118,7 @@
   }
 
   &__json {
-    color: #475569;
+    color: var(--pmf-text-subtle);
     font-size: 0.82rem !important;
   }
 
@@ -142,7 +142,7 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.55rem 0.65rem;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--pmf-border);
     border-radius: 0.5rem;
     font-size: 0.85rem;
   }
