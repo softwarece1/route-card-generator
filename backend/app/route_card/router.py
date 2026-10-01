@@ -2,7 +2,10 @@ from io import BytesIO
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException
 
+from .schemas import OarcToSapRequest
+from .sap_mapper import build_sap_payload
 from app.auth import get_current_user, require_admin, require_dept_head_or_admin
 from app.route_card import op_templates, service
 from app.route_card.schemas import (
@@ -315,3 +318,22 @@ def duplicate_operation_template(
     return op_templates.duplicate_template(
         template_id, body.model_dump(exclude_unset=True), current_user
     )
+
+@router.post("/oarc/to-sap")
+def convert_oarc_to_sap(payload: OarcToSapRequest) -> dict:
+    """
+    Convert frontend OARC JSON into SAP-style JSON.
+    """
+    try:
+        data = payload.model_dump(
+            by_alias=True,
+            exclude_none=False,
+        )
+
+        return build_sap_payload(data)
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OARC to SAP mapping failed: {exc}",
+        ) from exc
