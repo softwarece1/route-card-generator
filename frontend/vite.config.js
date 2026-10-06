@@ -17,6 +17,9 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8008',
         changeOrigin: true,
+        // Analyze + local VLM can exceed default ~2 min proxy idle timeout
+        timeout: 1_200_000,
+        proxyTimeout: 1_200_000,
       },
     },
   },

@@ -97,10 +97,16 @@ class CpuSpatialMind(DrawingMind):
         wire_list: dict[str, Any] | None = None,
         source_drawing_id: int | None = None,
         source_filename: str = "",
+        cancel_event=None,
+        page_indexes: list[int] | None = None,
+        prompt_addendum: str | None = None,
     ) -> MindResult:
         warnings: list[str] = []
         raw = ga_extraction.get("raw_text") or ""
         notes = [dict(n) for n in (ga_extraction.get("notes") or [])]
+        from app.route_card.analyze_jobs import check_cancelled
+
+        check_cancelled(cancel_event)
         graph = build_spatial_graph(spatial_pages or [], raw)
         unit = graph.get("unit") or (ga_extraction.get("title_block") or {}).get("unit") or "mm"
 
@@ -111,6 +117,7 @@ class CpuSpatialMind(DrawingMind):
 
         placements: list[PlacementFact] = []
         for note in notes:
+            check_cancelled(cancel_event)
             text = note.get("text") or ""
             items = list(note.get("items") or [])
             needs = bool(PLACEMENT_VERB.search(text) and (AS_SHOWN.search(text) or items))
@@ -207,7 +214,7 @@ class CpuSpatialMind(DrawingMind):
 
         surface = _pick_face_surface(surfaces, item_balloons)
         if not surface:
-            surface = "the indicated face"
+            surface = "the face shown on the drawing"
 
         offset_dims = [d for d in dimensions if d["value"] <= 50]
         fiveish = [d for d in offset_dims if abs(d["value"] - 5.0) < 0.05]
@@ -332,18 +339,18 @@ class CpuSpatialMind(DrawingMind):
 
         adhesive = ""
         if ADHESIVE.search(text):
-            adhesive = "Use suitable adhesive."
+            adhesive = "Use proper adhesive (glue)."
         elaborated = " ".join(s for s in sentences if s)
         if adhesive and adhesive.lower() not in elaborated.lower():
             elaborated = f"{elaborated} {adhesive}".strip()
-        if unit and "dimension" not in elaborated.lower():
+        if unit and "size" not in elaborated.lower() and "dimension" not in elaborated.lower():
             elaborated = (
-                f"{elaborated} (All dimensions are in {unit} unless otherwise specified.)"
+                f"{elaborated} (All sizes are in {unit}.)"
             ).strip()
 
         # Attach original note for traceability
         if text and text.upper() not in elaborated.upper():
-            elaborated = f"{elaborated} [Source note: {text}]"
+            elaborated = f"{elaborated} (From drawing: {text})"
 
         if not any(f.offsets for f in facts):
             warns.append(
@@ -356,28 +363,40 @@ class CpuSpatialMind(DrawingMind):
 
     def _sentence_for(self, fact: PlacementFact, unit: str) -> str:
         it = fact.item_no
-        surf = fact.surface or "the indicated face"
+        surf = fact.surface or "the face shown on the drawing"
+        rel_words = {
+            "below": "below",
+            "above": "above",
+            "left_of": "to the left of",
+            "right_of": "to the right of",
+        }
         # Relative to another item?
         rel = next((o for o in fact.offsets if o.get("from") == "item"), None)
         if rel:
             prev = rel.get("relativeToItem")
             val = rel.get("value")
-            relation = rel.get("relation") or "below"
+            relation = rel_words.get(rel.get("relation") or "below", "below")
             return (
-                f"Place Item {it} {val:g} {unit} {relation} Item {prev} "
-                f"on the {surf} surface."
+                f"Stick Item {it} on the {surf} side, "
+                f"{val:g} {unit} {relation} Item {prev}."
             )
         top = next((o for o in fact.offsets if o.get("from") == "top"), None)
         left = next((o for o in fact.offsets if o.get("from") == "left"), None)
-        parts = [f"Place Item {it} on the {surf} surface"]
+        right = next((o for o in fact.offsets if o.get("from") == "right"), None)
+        bottom = next((o for o in fact.offsets if o.get("from") == "bottom"), None)
+        parts = [f"Stick Item {it} on the {surf} side"]
         bits = []
         if top:
-            bits.append(f"{top['value']:g} {unit} from the top edge")
+            bits.append(f"keep {top['value']:g} {unit} gap from the top edge")
+        if bottom:
+            bits.append(f"keep {bottom['value']:g} {unit} gap from the bottom edge")
         if left:
-            bits.append(f"{left['value']:g} {unit} from the left edge")
+            bits.append(f"keep {left['value']:g} {unit} gap from the left edge")
+        if right:
+            bits.append(f"keep {right['value']:g} {unit} gap from the right edge")
         if bits:
             parts.append(", ".join(bits))
-        return (", ".join(parts) + ".").replace("surface, ", "surface, ")
+        return ", ".join(parts) + "."
 
     def _link_pcb_pl_wl(
         self,

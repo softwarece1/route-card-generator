@@ -120,15 +120,15 @@ def test_sticker_elaboration():
     assert "ITEM 2" in up
     assert "ITEM 3" in up
     # Item 2 must be placed first (top/left), Item 3 below Item 2 — not swapped
-    i2 = up.find("PLACE ITEM 2")
-    i3 = up.find("PLACE ITEM 3")
+    i2 = up.find("STICK ITEM 2")
+    i3 = up.find("STICK ITEM 3")
     assert i2 >= 0 and i3 >= 0 and i2 < i3, elaborated
     assert "BELOW ITEM 2" in up
     assert "DC OUT" in up
-    assert "POWER SUPPLY" not in up.split("[SOURCE")[0]  # face must not be sticker legend
+    assert "POWER SUPPLY" not in up.split("(FROM DRAWING")[0]  # face must not be sticker legend
     assert "5" in elaborated
     assert "MM" in up
-    assert "ADHESIVE" in up
+    assert "ADHESIVE" in up or "GLUE" in up
     assert result.placements
     assert result.placements[0].item_no == 2
     assert result.placements[1].item_no == 3

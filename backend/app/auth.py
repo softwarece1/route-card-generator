@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -17,6 +18,10 @@ from app.security import hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 security = HTTPBearer(auto_error=False)
+
+# Public / managed accounts: exactly 6 digits. Seeded admin login id is the only letter exception.
+_EMP_DIGITS_RE = re.compile(r"^\d{6}$")
+_ADMIN_EMP_ID = "admin"
 
 
 class SignupRequest(BaseModel):
@@ -39,6 +44,26 @@ class LoginResponse(BaseModel):
 
 def _normalize_emp_id(raw: str) -> str:
     return (raw or "").strip()
+
+
+def validate_employee_id(raw: str, *, allow_admin_id: bool = False) -> str:
+    """
+    Enforce Employee ID rules:
+    - Exactly 6 digits for all normal users
+    - Literal ``admin`` allowed only when allow_admin_id=True (seeded admin account)
+    """
+    emp_id = _normalize_emp_id(raw)
+    if not emp_id:
+        raise HTTPException(400, "Employee ID is required")
+    if allow_admin_id and emp_id.lower() == _ADMIN_EMP_ID:
+        return _ADMIN_EMP_ID
+    if _EMP_DIGITS_RE.fullmatch(emp_id):
+        return emp_id
+    raise HTTPException(
+        400,
+        "Employee ID must be exactly 6 digits (e.g. 112233). "
+        "Only the admin account may use a non-numeric ID.",
+    )
 
 
 def _user_public(user: RcUser) -> dict:
@@ -179,11 +204,11 @@ def emp_status(emp_id: str):
 @router.post("/signup", response_model=LoginResponse)
 @db_session
 def signup(body: SignupRequest):
-    emp_id = _normalize_emp_id(body.empId)
+    emp_id = validate_employee_id(body.empId, allow_admin_id=False)
     name = (body.name or "").strip()
     dept = (body.dept or "").strip()
-    if not emp_id or not name:
-        raise HTTPException(400, "empId and name are required")
+    if not name:
+        raise HTTPException(400, "name is required")
     if not dept:
         raise HTTPException(400, "dept is required")
 
@@ -217,6 +242,8 @@ def signup(body: SignupRequest):
 @db_session
 def login(body: LoginRequest):
     emp_id = _normalize_emp_id(body.empId)
+    if emp_id.lower() == _ADMIN_EMP_ID:
+        emp_id = _ADMIN_EMP_ID
     user = RcUser.get(emp_id=emp_id)
     if not user or not user.is_active or not verify_password(body.password, user.password_hash):
         raise HTTPException(

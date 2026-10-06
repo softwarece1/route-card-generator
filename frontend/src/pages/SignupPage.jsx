@@ -15,6 +15,11 @@ import heroImg from "@/assets/hero.png";
 import "./login.scss";
 
 const MIN_PASSWORD = 4;
+const EMP_ID_DIGITS = /^\d{6}$/;
+
+function isValidEmployeeId(value) {
+  return EMP_ID_DIGITS.test(String(value || "").trim());
+}
 
 export default function SignupPage() {
   const navigate = useNavigate();
@@ -85,14 +90,15 @@ export default function SignupPage() {
   const deptLocked = Boolean(verifiedEmployee?.dept);
 
   const empInvalid =
-    submitted && (!empId.trim() || Boolean(empStatus?.registered));
+    submitted &&
+    (!empId.trim() || !isValidEmployeeId(empId) || Boolean(empStatus?.registered));
   const nameInvalid = submitted && !name.trim() && !nameLocked;
   const deptInvalid = submitted && !dept && !deptLocked;
   const passwordInvalid = submitted && (!password || !passwordOk);
   const confirmInvalid = submitted && (!confirmPassword || !passwordsMatch);
 
   const canSubmit =
-    empId.trim() &&
+    isValidEmployeeId(empId) &&
     name.trim() &&
     dept &&
     passwordOk &&
@@ -154,18 +160,28 @@ export default function SignupPage() {
                 id="empId"
                 value={empId}
                 onChange={(e) => {
-                  setEmpId(e.target.value);
+                  const next = e.target.value.replace(/\D/g, "").slice(0, 6);
+                  setEmpId(next);
                   setEmpStatus(null);
                   setVerifiedEmployee(null);
                   if (formError) setFormError("");
                 }}
                 onBlur={() => checkEmpId(empId)}
-                placeholder="Enter employee ID"
+                placeholder="6-digit employee ID"
+                inputMode="numeric"
+                maxLength={6}
                 autoComplete="username"
                 disabled={loading}
                 className={empInvalid ? "p-invalid" : undefined}
                 aria-invalid={empInvalid}
               />
+              {submitted && empId.trim() && !isValidEmployeeId(empId) ? (
+                <small className="rc-login__hint" style={{ color: "var(--pmf-danger, #b91c1c)" }}>
+                  Employee ID must be exactly 6 digits
+                </small>
+              ) : (
+                <small className="rc-login__hint">Use your 6-digit employee ID</small>
+              )}
             </div>
 
             {verifiedEmployee ? (

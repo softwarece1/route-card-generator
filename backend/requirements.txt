@@ -28,6 +28,9 @@ pdfplumber==0.11.5
 pytesseract==0.3.13
 Pillow==11.1.0
 
+# Local VLM (Ollama HTTP)
+httpx==0.28.1
+
 # CAD + legacy Parts List
 ezdxf==1.4.2
 xlrd==2.0.1

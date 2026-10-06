@@ -1,4 +1,4 @@
-"""Pluggable drawing mind — CPU spatial now, local VLM later."""
+"""Pluggable drawing mind — CPU spatial or local VLM (Ollama)."""
 
 from __future__ import annotations
 
@@ -18,10 +18,9 @@ def get_drawing_mind(engine: str | None = None) -> DrawingMind:
         name = (engine or "cpu_spatial").lower()
 
     if name in {"local_vlm", "vlm"}:
-        # Placeholder until on-prem GPU VLM is wired — fall back with clear engine tag.
-        mind = CpuSpatialMind()
-        mind.engine = "local_vlm_fallback_cpu"
-        return mind
+        from app.route_card.drawing_mind.local_vlm import LocalVlmMind
+
+        return LocalVlmMind()
     return CpuSpatialMind()
 
 

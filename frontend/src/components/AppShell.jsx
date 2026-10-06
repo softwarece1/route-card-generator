@@ -1,9 +1,16 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
+import { Badge } from "primereact/badge";
+import { Sidebar } from "primereact/sidebar";
 import { getUser } from "@/lib/auth";
 import { logout } from "@/services/authApi";
 import ThemeToggle from "@/components/ThemeToggle";
+import {
+  fetchNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from "@/services/routeCardApi";
 import "./app-shell.scss";
 
 function roleLabel(role) {
@@ -17,6 +24,22 @@ function navItemsForRole(role) {
     { to: "/generator", end: true, icon: "pi pi-home", label: "Generator", id: "generator" },
     { to: "/history", end: false, icon: "pi pi-history", label: "Extractions", id: "history" },
   ];
+  if (role === "admin") {
+    base.push({
+      to: "/uploads",
+      end: false,
+      icon: "pi pi-folder-open",
+      label: "Uploads",
+      id: "uploads",
+    });
+    base.push({
+      to: "/system",
+      end: false,
+      icon: "pi pi-server",
+      label: "System",
+      id: "system",
+    });
+  }
   if (role === "admin" || role === "dept_head") {
     base.push({
       to: "/users",
@@ -44,6 +67,25 @@ export default function AppShell({ active = "generator", children }) {
   const location = useLocation();
   const user = getUser();
   const items = navItemsForRole(user?.role);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unread, setUnread] = useState(0);
+
+  const loadNotifs = useCallback(async () => {
+    try {
+      const data = await fetchNotifications();
+      setNotifications(data.items || []);
+      setUnread(data.unreadCount || 0);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadNotifs();
+    const t = setInterval(loadNotifs, 20000);
+    return () => clearInterval(t);
+  }, [loadNotifs]);
 
   useEffect(() => {
     if ("scrollRestoration" in window.history) {
@@ -102,6 +144,20 @@ export default function AppShell({ active = "generator", children }) {
             <p>From drawings to manufacturable route.</p>
           </div>
           <div className="rca-topbar__right">
+            <Button
+              type="button"
+              icon="pi pi-bell"
+              rounded
+              text
+              className="p-overlay-badge"
+              aria-label="Notifications"
+              onClick={() => {
+                setNotifOpen(true);
+                loadNotifs();
+              }}
+            >
+              {unread > 0 ? <Badge value={unread} severity="danger" /> : null}
+            </Button>
             <span className="rca-chip">
               <i className="pi pi-id-card" />
               {roleLabel(user?.role)}
@@ -135,6 +191,62 @@ export default function AppShell({ active = "generator", children }) {
 
         {children}
       </div>
+
+      <Sidebar
+        visible={notifOpen}
+        position="right"
+        onHide={() => setNotifOpen(false)}
+        header="Notifications"
+      >
+        <div className="flex justify-content-end mb-2">
+          <Button
+            type="button"
+            label="Mark all read"
+            text
+            size="small"
+            onClick={async () => {
+              await markAllNotificationsRead();
+              loadNotifs();
+            }}
+          />
+        </div>
+        {(notifications || []).length === 0 && (
+          <p style={{ color: "var(--pmf-text-muted)" }}>No notifications.</p>
+        )}
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {notifications.map((n) => (
+            <li
+              key={n.id}
+              style={{
+                padding: "0.75rem 0",
+                borderBottom: "1px solid var(--pmf-border, #333)",
+                opacity: n.readAt ? 0.65 : 1,
+              }}
+            >
+              <button
+                type="button"
+                style={{
+                  background: "none",
+                  border: 0,
+                  color: "inherit",
+                  textAlign: "left",
+                  width: "100%",
+                  cursor: "pointer",
+                }}
+                onClick={async () => {
+                  await markNotificationRead(n.id);
+                  if (n.link) navigate(n.link);
+                  setNotifOpen(false);
+                  loadNotifs();
+                }}
+              >
+                <strong>{n.title}</strong>
+                <div style={{ fontSize: "0.85rem", marginTop: 4 }}>{n.body}</div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Sidebar>
     </div>
   );
 }

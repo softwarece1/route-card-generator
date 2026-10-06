@@ -1,0 +1,128 @@
+.rc-system {
+  /* width / max-width / pad from tokens.scss (.rc-system) */
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.rc-system__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+
+  @media (max-width: 840px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rc-system__card {
+  background: var(--pmf-surface);
+  border: 1px solid var(--pmf-border);
+  border-radius: 0.85rem;
+  padding: 1rem 1.15rem 1.15rem;
+  box-shadow: var(--pmf-shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.rc-system__card--wide {
+  grid-column: 1 / -1;
+}
+
+.rc-system__card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+
+  h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--pmf-navy);
+  }
+
+  p {
+    margin: 0.2rem 0 0;
+    font-size: 0.8rem;
+    color: var(--pmf-text-muted);
+  }
+}
+
+.rc-system__icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.55rem;
+  display: grid;
+  place-items: center;
+  background: var(--pmf-accent-soft);
+  color: var(--pmf-navy);
+  flex-shrink: 0;
+
+  .pi {
+    font-size: 1rem;
+  }
+}
+
+.rc-system__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.55rem;
+}
+
+.rc-system__metric {
+  border-radius: 0.55rem;
+  padding: 0.65rem 0.75rem;
+  background: var(--pmf-page-bg);
+  border: 1px solid var(--pmf-border-soft);
+
+  .label {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--pmf-text-muted);
+    margin-bottom: 0.2rem;
+  }
+
+  .value {
+    font-size: 0.92rem;
+    font-weight: 650;
+    color: var(--pmf-text-heading);
+  }
+
+  &.is-ok .value {
+    color: var(--pmf-success);
+  }
+
+  &.is-bad .value {
+    color: var(--pmf-danger);
+  }
+}
+
+.rc-system__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.rc-system__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 10rem;
+
+  label {
+    font-size: 0.78rem;
+    color: var(--pmf-text-muted);
+    font-weight: 500;
+  }
+}
+
+.rc-system__hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--pmf-text-muted);
+  line-height: 1.4;
+}

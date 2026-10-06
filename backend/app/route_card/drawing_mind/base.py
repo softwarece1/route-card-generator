@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import threading
 from typing import Any
 
 from app.route_card.drawing_mind.types import MindResult
@@ -24,5 +25,8 @@ class DrawingMind(ABC):
         wire_list: dict[str, Any] | None = None,
         source_drawing_id: int | None = None,
         source_filename: str = "",
+        cancel_event: threading.Event | None = None,
+        page_indexes: list[int] | None = None,
+        prompt_addendum: str | None = None,
     ) -> MindResult:
         ...

@@ -1,0 +1,42 @@
+.rc-excel-preview-dialog {
+  .p-dialog-content {
+    padding-top: 0.5rem;
+  }
+}
+
+.rc-excel-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.rc-excel-preview__hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--pmf-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.rc-excel-preview__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.rc-excel-preview__table {
+  .p-datatable-thead > tr > th {
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  .p-datatable-tbody > tr > td {
+    font-size: 0.8rem;
+    max-width: 16rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

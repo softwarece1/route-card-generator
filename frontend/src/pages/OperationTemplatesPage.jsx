@@ -24,6 +24,7 @@ import {
   updateOperationTemplate,
 } from "@/services/routeCardApi";
 import "./route-card-generation-alt.scss";
+import DeptRulesPanel from "@/components/DeptRulesPanel";
 import "./operation-templates.scss";
 
 const PLACEMENT_OPTIONS = [
@@ -484,6 +485,9 @@ export default function OperationTemplatesPage() {
                 emptyMessage="No templates yet. Create a pack to get started."
                 columns={templateColumns({ includeDept: false, allowEdit: true })}
               />
+            </TabPanel>
+            <TabPanel header="Dept rules">
+              <DeptRulesPanel />
             </TabPanel>
             <TabPanel header="Other departments">
               <div className="rc-otpl__other-bar">

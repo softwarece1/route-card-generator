@@ -17,7 +17,12 @@ import { getToken, getUser } from "@/lib/auth";
 import { mapPayloadToOrderPrefill } from "@/lib/pmfOrderPrefill";
 import { printOarcPdf } from "@/lib/oarcPrint";
 import { fetchDepartments } from "@/services/authApi";
+import { useNavigate } from "react-router-dom";
 import {
+  // batchEnqueueAnalyze, // Analyze selected — commented out in UI
+  cloneRouteToSession,
+  compareRouteCards,
+  createSession,
   fetchAdminExtractions,
   fetchAdminExtractionDetail,
   fetchAdminUsers,
@@ -25,6 +30,7 @@ import {
   fetchMyExtractions,
   sessionDocumentFileUrl,
 } from "@/services/routeCardApi";
+import { toast } from "@/lib/toast";
 import "./route-card-generation-alt.scss";
 import "./extractions.scss";
 
@@ -97,6 +103,9 @@ export default function ExtractionsPage() {
   const [oarcOpen, setOarcOpen] = useState(false);
   const [oarcPayload, setOarcPayload] = useState(null);
   const [oarcDocs, setOarcDocs] = useState({});
+  const [selected, setSelected] = useState([]);
+  const [compareResult, setCompareResult] = useState(null);
+  const navigate = useNavigate();
 
   const empOptions = useMemo(
     () => [
@@ -305,6 +314,168 @@ export default function ExtractionsPage() {
           />
           {error ? <Message severity="error" text={error} className="w-full mb-3" /> : null}
 
+          <div className="flex gap-2 flex-wrap mb-3">
+            {/* Analyze selected / jobs — hidden for now (queue from Jobs page instead)
+            <Button
+              type="button"
+              label="Analyze selected"
+              icon="pi pi-play"
+              outlined
+              size="small"
+              disabled={(selected || []).length === 0}
+              onClick={async () => {
+                const ids = (selected || []).map((r) => r.sessionId).filter(Boolean);
+                try {
+                  await batchEnqueueAnalyze(ids);
+                  toast.success(`Queued ${ids.length} session(s)`);
+                  navigate("/jobs");
+                } catch (e) {
+                  toast.error(e.message || "Batch enqueue failed");
+                }
+              }}
+            />
+            */}
+            <Button
+              type="button"
+              label="Compare selected (2)"
+              icon="pi pi-arrows-h"
+              outlined
+              size="small"
+              disabled={(selected || []).length !== 2}
+              onClick={async () => {
+                const [a, b] = selected;
+                try {
+                  const res = await compareRouteCards(a.routeCardId, b.routeCardId);
+                  setCompareResult({
+                    ...res,
+                    metaA: {
+                      partNumber: a.partNumber || a.drawingNumber || "",
+                      sessionId: a.sessionId,
+                      status: a.status,
+                    },
+                    metaB: {
+                      partNumber: b.partNumber || b.drawingNumber || "",
+                      sessionId: b.sessionId,
+                      status: b.status,
+                    },
+                  });
+                } catch (e) {
+                  toast.error(e.message || "Compare failed");
+                }
+              }}
+            />
+          </div>
+          {compareResult && (
+            <Dialog
+              header="Route compare"
+              visible={!!compareResult}
+              onHide={() => setCompareResult(null)}
+              style={{ width: "min(96vw, 56rem)" }}
+              className="rc-compare-dialog"
+            >
+              <div className="rc-compare">
+                <div className="rc-compare__heads">
+                  <div className="rc-compare__card rc-compare__card--a">
+                    <span className="rc-compare__badge">Order A</span>
+                    <strong>
+                      {compareResult.metaA?.partNumber || `Route #${compareResult.a?.id}`}
+                    </strong>
+                    <span>
+                      Session {compareResult.metaA?.sessionId ?? "—"} ·{" "}
+                      {compareResult.a?.opCount ?? 0} ops · {compareResult.a?.status || "—"}
+                    </span>
+                  </div>
+                  <div className="rc-compare__vs">vs</div>
+                  <div className="rc-compare__card rc-compare__card--b">
+                    <span className="rc-compare__badge">Order B</span>
+                    <strong>
+                      {compareResult.metaB?.partNumber || `Route #${compareResult.b?.id}`}
+                    </strong>
+                    <span>
+                      Session {compareResult.metaB?.sessionId ?? "—"} ·{" "}
+                      {compareResult.b?.opCount ?? 0} ops · {compareResult.b?.status || "—"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="rc-compare__stats">
+                  <div className="rc-compare__stat rc-compare__stat--added">
+                    <strong>{(compareResult.added || []).length}</strong>
+                    <span>Only in B (added)</span>
+                  </div>
+                  <div className="rc-compare__stat rc-compare__stat--removed">
+                    <strong>{(compareResult.removed || []).length}</strong>
+                    <span>Only in A (removed)</span>
+                  </div>
+                  <div className="rc-compare__stat rc-compare__stat--changed">
+                    <strong>{(compareResult.changed || []).length}</strong>
+                    <span>Changed</span>
+                  </div>
+                </div>
+
+                {(compareResult.added || []).length > 0 && (
+                  <section className="rc-compare__section rc-compare__section--added">
+                    <h4>In Order B only</h4>
+                    <ul>
+                      {(compareResult.added || []).map((op, i) => (
+                        <li key={`add-${i}`}>
+                          <span className="rc-compare__opno">OP {op.opNo}</span>
+                          <span className="rc-compare__opname">{op.operation || "—"}</span>
+                          <span className="rc-compare__meta">
+                            {[op.workCentre, op.machine, op.tool].filter(Boolean).join(" · ") || "—"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+
+                {(compareResult.removed || []).length > 0 && (
+                  <section className="rc-compare__section rc-compare__section--removed">
+                    <h4>In Order A only</h4>
+                    <ul>
+                      {(compareResult.removed || []).map((op, i) => (
+                        <li key={`rem-${i}`}>
+                          <span className="rc-compare__opno">OP {op.opNo}</span>
+                          <span className="rc-compare__opname">{op.operation || "—"}</span>
+                          <span className="rc-compare__meta">
+                            {[op.workCentre, op.machine, op.tool].filter(Boolean).join(" · ") || "—"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+
+                {(compareResult.changed || []).length > 0 && (
+                  <section className="rc-compare__section rc-compare__section--changed">
+                    <h4>Changed steps</h4>
+                    <ul>
+                      {(compareResult.changed || []).map((row, i) => (
+                        <li key={`chg-${i}`} className="rc-compare__changed-row">
+                          <div>
+                            <span className="rc-compare__side">A</span>
+                            OP {row.before?.opNo}: {row.before?.operation} · {row.before?.workCentre}
+                          </div>
+                          <div>
+                            <span className="rc-compare__side">B</span>
+                            OP {row.after?.opNo}: {row.after?.operation} · {row.after?.workCentre}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+
+                {(compareResult.added || []).length === 0 &&
+                (compareResult.removed || []).length === 0 &&
+                (compareResult.changed || []).length === 0 ? (
+                  <p className="rc-compare__same">These two routes look the same.</p>
+                ) : null}
+              </div>
+            </Dialog>
+          )}
+
           {isAdmin ? (
             <div className="rc-hist__filters">
               <div className="rc-hist__filter">
@@ -401,6 +572,9 @@ export default function ExtractionsPage() {
             rows={10}
             emptyMessage="No extractions yet."
             dataKey="sessionId"
+            selectionMode="multiple"
+            selection={selected}
+            onSelectionChange={(e) => setSelected(e.value || [])}
             columns={[
               { type: "index", header: "#", style: { width: "3.25rem" } },
               {
@@ -526,6 +700,25 @@ export default function ExtractionsPage() {
                 icon="pi pi-print"
                 size="small"
                 onClick={() => printOarc(detail)}
+              />
+              <Button
+                type="button"
+                label="Clone route to new session"
+                icon="pi pi-copy"
+                outlined
+                size="small"
+                disabled={!detail?.routeCardId && !detail?.payload?.id}
+                onClick={async () => {
+                  try {
+                    const sess = await createSession();
+                    const fromId = detail.routeCardId || detail.payload?.id;
+                    await cloneRouteToSession(sess.id || sess.sessionId, fromId);
+                    toast.success("Cloned into new session — open Generator");
+                    navigate(`/generator?sessionId=${sess.id || sess.sessionId}`);
+                  } catch (e) {
+                    toast.error(e.message || "Clone failed");
+                  }
+                }}
               />
             </div>
           ) : null

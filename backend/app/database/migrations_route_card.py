@@ -276,6 +276,157 @@ def run_migrations():
             """
         )
 
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.analyze_jobs (
+                id SERIAL PRIMARY KEY,
+                session INTEGER NOT NULL
+                    REFERENCES route_card.sessions(id) ON DELETE CASCADE,
+                "user" INTEGER
+                    REFERENCES route_card.users(id) ON DELETE SET NULL,
+                status VARCHAR(32) NOT NULL DEFAULT 'queued',
+                progress INTEGER NOT NULL DEFAULT 0,
+                message TEXT NOT NULL DEFAULT '',
+                error_message TEXT,
+                vlm_page_indexes JSONB,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                started_at TIMESTAMP WITHOUT TIME ZONE,
+                finished_at TIMESTAMP WITHOUT TIME ZONE
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_analyze_jobs_status_created
+            ON route_card.analyze_jobs (status, created_at);
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.review_flags (
+                id SERIAL PRIMARY KEY,
+                session INTEGER
+                    REFERENCES route_card.sessions(id) ON DELETE CASCADE,
+                route_card INTEGER
+                    REFERENCES route_card.route_cards(id) ON DELETE CASCADE,
+                "user" INTEGER
+                    REFERENCES route_card.users(id) ON DELETE SET NULL,
+                kind VARCHAR(64) NOT NULL,
+                severity VARCHAR(16) NOT NULL DEFAULT 'medium',
+                message TEXT NOT NULL,
+                source VARCHAR(128) NOT NULL DEFAULT '',
+                resolved BOOLEAN NOT NULL DEFAULT FALSE,
+                resolved_at TIMESTAMP WITHOUT TIME ZONE,
+                resolved_by VARCHAR(128),
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_review_flags_route_resolved
+            ON route_card.review_flags (route_card, resolved);
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.audit_events (
+                id SERIAL PRIMARY KEY,
+                route_card INTEGER
+                    REFERENCES route_card.route_cards(id) ON DELETE CASCADE,
+                session INTEGER,
+                "user" INTEGER
+                    REFERENCES route_card.users(id) ON DELETE SET NULL,
+                action VARCHAR(64) NOT NULL,
+                detail JSONB,
+                comment TEXT,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.notifications (
+                id SERIAL PRIMARY KEY,
+                "user" INTEGER NOT NULL
+                    REFERENCES route_card.users(id) ON DELETE CASCADE,
+                title VARCHAR(255) NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                link VARCHAR(512) NOT NULL DEFAULT '',
+                read_at TIMESTAMP WITHOUT TIME ZONE,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_notifications_user_created
+            ON route_card.notifications ("user", created_at DESC);
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.user_favorites (
+                id SERIAL PRIMARY KEY,
+                "user" INTEGER NOT NULL
+                    REFERENCES route_card.users(id) ON DELETE CASCADE,
+                part_number VARCHAR(128) NOT NULL DEFAULT '',
+                label VARCHAR(255) NOT NULL DEFAULT '',
+                session_id INTEGER,
+                route_card_id INTEGER,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.dept_rules (
+                id SERIAL PRIMARY KEY,
+                dept VARCHAR(128) NOT NULL UNIQUE,
+                rules JSONB,
+                updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_by VARCHAR(128)
+            );
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.few_shot_examples (
+                id SERIAL PRIMARY KEY,
+                dept VARCHAR(128) NOT NULL,
+                doc_type VARCHAR(32) NOT NULL DEFAULT 'drawing',
+                title VARCHAR(255) NOT NULL,
+                input_excerpt TEXT,
+                output_excerpt TEXT NOT NULL,
+                created_by INTEGER
+                    REFERENCES route_card.users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                is_active BOOLEAN NOT NULL DEFAULT TRUE
+            );
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.machines (
+                id SERIAL PRIMARY KEY,
+                plant VARCHAR(128) NOT NULL DEFAULT '',
+                work_centre VARCHAR(128) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+
         print("route_card migrations applied")
 
         # Seed / upsert BEL department master (safe to re-run; BG excluded)

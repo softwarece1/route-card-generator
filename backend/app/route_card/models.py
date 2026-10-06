@@ -19,6 +19,12 @@ class RcUser(db.Entity):
     sessions = Set("RcSession")
     drawings = Set("RcDrawing")
     operation_templates = Set("RcOperationTemplate")
+    analyze_jobs = Set("RcAnalyzeJob")
+    review_flags = Set("RcReviewFlag")
+    audit_events = Set("RcAuditEvent")
+    notifications = Set("RcNotification")
+    favorites = Set("RcUserFavorite")
+    few_shot_examples = Set("RcFewShotExample")
 
 
 class RcDepartment(db.Entity):
@@ -44,6 +50,8 @@ class RcSession(db.Entity):
     updated_at = Required(datetime, default=datetime.utcnow)
     documents = Set("RcDocument")
     drawings = Set("RcDrawing")
+    analyze_jobs = Set("RcAnalyzeJob")
+    review_flags = Set("RcReviewFlag")
 
 
 class RcDocument(db.Entity):
@@ -116,6 +124,8 @@ class RcRouteCard(db.Entity):
     updated_at = Required(datetime, default=datetime.utcnow)
     operations = Set("RcOperation")
     inspection_chars = Set("RcInspectionChar")
+    review_flags = Set("RcReviewFlag")
+    audit_events = Set("RcAuditEvent")
 
 
 class RcOperation(db.Entity):
@@ -188,3 +198,112 @@ class RcOperationTemplateStep(db.Entity):
     generates_output_serial = Required(bool, default=False)
     requires_input_material = Required(bool, default=False)
     manual_operation = Required(bool, default=True)
+
+
+class RcAnalyzeJob(db.Entity):
+    """Durable analyze queue row (one VLM at a time via worker)."""
+
+    _table_ = ("route_card", "analyze_jobs")
+
+    id = PrimaryKey(int, auto=True)
+    session = Required(RcSession)
+    user = Optional(RcUser)
+    status = Required(str, default="queued")  # queued|running|done|failed|cancelled
+    progress = Required(int, default=0)
+    message = Optional(str, default="")
+    error_message = Optional(str)
+    vlm_page_indexes = Optional(Json)  # list[int] or null = auto
+    created_at = Required(datetime, default=datetime.utcnow)
+    started_at = Optional(datetime)
+    finished_at = Optional(datetime)
+
+
+class RcReviewFlag(db.Entity):
+    _table_ = ("route_card", "review_flags")
+
+    id = PrimaryKey(int, auto=True)
+    session = Optional(RcSession)
+    route_card = Optional(RcRouteCard)
+    user = Optional(RcUser)
+    kind = Required(str)  # low_confidence | warning | missing_pl | empty_ops | as_shown | pl_ga_mismatch
+    severity = Required(str, default="medium")  # high | medium | low
+    message = Required(str)
+    source = Optional(str, default="")
+    resolved = Required(bool, default=False)
+    resolved_at = Optional(datetime)
+    resolved_by = Optional(str)
+    created_at = Required(datetime, default=datetime.utcnow)
+
+
+class RcAuditEvent(db.Entity):
+    _table_ = ("route_card", "audit_events")
+
+    id = PrimaryKey(int, auto=True)
+    route_card = Optional(RcRouteCard)
+    session = Optional(int)
+    user = Optional(RcUser)
+    action = Required(str)
+    detail = Optional(Json)
+    comment = Optional(str)
+    created_at = Required(datetime, default=datetime.utcnow)
+
+
+class RcNotification(db.Entity):
+    _table_ = ("route_card", "notifications")
+
+    id = PrimaryKey(int, auto=True)
+    user = Required(RcUser)
+    title = Required(str)
+    body = Optional(str, default="")
+    link = Optional(str, default="")
+    read_at = Optional(datetime)
+    created_at = Required(datetime, default=datetime.utcnow)
+
+
+class RcUserFavorite(db.Entity):
+    _table_ = ("route_card", "user_favorites")
+
+    id = PrimaryKey(int, auto=True)
+    user = Required(RcUser)
+    part_number = Optional(str, default="")
+    label = Optional(str, default="")
+    session_id = Optional(int)
+    route_card_id = Optional(int)
+    created_at = Required(datetime, default=datetime.utcnow)
+
+
+class RcDeptRules(db.Entity):
+    _table_ = ("route_card", "dept_rules")
+
+    id = PrimaryKey(int, auto=True)
+    dept = Required(str, unique=True)
+    rules = Optional(Json)  # autoTemplateIds, keywords, wcAliases, promptAddendum, phrasing
+    updated_at = Required(datetime, default=datetime.utcnow)
+    updated_by = Optional(str)
+
+
+class RcFewShotExample(db.Entity):
+    _table_ = ("route_card", "few_shot_examples")
+
+    id = PrimaryKey(int, auto=True)
+    dept = Required(str)
+    doc_type = Optional(str, default="drawing")
+    title = Required(str)
+    input_excerpt = Optional(str)
+    output_excerpt = Required(str)
+    created_by = Optional(RcUser)
+    created_at = Required(datetime, default=datetime.utcnow)
+    is_active = Required(bool, default=True)
+
+
+class RcMachine(db.Entity):
+    _table_ = ("route_card", "machines")
+
+    id = PrimaryKey(int, auto=True)
+    plant = Optional(str, default="")
+    work_centre = Required(str)
+    name = Required(str)
+    description = Optional(str, default="")
+    is_active = Required(bool, default=True)
+    sort_order = Required(int, default=0)
+    created_at = Required(datetime, default=datetime.utcnow)

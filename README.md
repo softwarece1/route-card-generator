@@ -103,6 +103,15 @@ STORAGE_BACKEND=local
 
 (`auto` tries MinIO first with a **2s** connect timeout, then caches “down” for 60s so uploads do not stall ~1 minute each time MinIO is offline.)
 
+To store files **outside** the backend folder, set an absolute path in `backend/.env`:
+
+```env
+STORAGE_BACKEND=local
+LOCAL_UPLOAD_ROOT=D:/RouteCardData/uploads
+```
+
+Leave `LOCAL_UPLOAD_ROOT` empty to keep the default `backend/uploads/route-card/`.
+
 Optional DWG: set `ODA_CONVERTER_PATH` if ODA File Converter is installed.
 
 ### Offline OCR (graphic NOTES / scanned PDFs)
@@ -188,6 +197,51 @@ Vite proxies `/api` to the backend on **port 8008** by default in `vite.config.j
 
 If health checks fail with “connection refused on 5433”, an old backend is still running — stop it and start again so it reads `DB_PORT=5432`.
 
+## Auto-start on Windows (LAN server)
+
+If this PC is shared by other departments and shuts down on a schedule (e.g. 6 PM), register **Scheduled Tasks** so backend + frontend start again after reboot — no manual `uvicorn` / `npm run dev`.
+
+### One-time setup (Administrator)
+
+1. Ensure `backend\.venv` exists and dependencies are installed, and `frontend\node_modules` exists (`npm install`).
+2. Ensure **PostgreSQL** Windows service Startup type is **Automatic**.
+3. If you use `DRAWING_MIND_ENGINE=local_vlm`, confirm the **Ollama** Windows service is **Automatic**.
+4. Open **elevated** PowerShell:
+
+```powershell
+cd D:\PMF\route-card-app\deploy\windows
+powershell -ExecutionPolicy Bypass -File .\Install-StartupTasks.ps1
+```
+
+This creates tasks `RouteCard-Backend` and `RouteCard-Frontend` (start **90 s** after boot).
+
+### Verify
+
+```powershell
+Get-ScheduledTask -TaskName "RouteCard-*"
+Start-ScheduledTask -TaskName RouteCard-Backend
+Start-ScheduledTask -TaskName RouteCard-Frontend
+```
+
+- API health: http://localhost:8008/health  
+- UI (LAN): `http://<server-ip>:5174`
+
+Logs: `deploy\windows\logs\backend.log` and `frontend.log`.
+
+Manual stop (ports 8008 / 5174):
+
+```bat
+deploy\windows\stop-apps.bat
+```
+
+Remove auto-start:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Uninstall-StartupTasks.ps1
+```
+
+**Note:** Tasks run as the admin account that installed them (interactive). If the machine boots with **no user logon**, re-register the tasks to run as a dedicated service account, or enable auto-logon for that account.
+
 ## Workflow
 
 1. Sign in at `/login`  
@@ -206,6 +260,8 @@ If health checks fail with “connection refused on 5433”, an old backend is s
 | Still on old Docker DB | Stop container: `docker stop route-card-postgres` — app now uses local PG on 5432 |
 | Scanned PDF extracts nothing | Install Tesseract + set `TESSERACT_CMD`; confirm `OCR_ENABLED=true` |
 | OCR slow on large drawings | Lower `OCR_MAX_PAGES` or `OCR_DPI` in `.env` |
+| App missing after daily reboot | Run `deploy\windows\Install-StartupTasks.ps1` once as admin; check `deploy\windows\logs\` |
+| Frontend task fails at boot | Ensure Node/npm is on PATH for the task user; check `frontend.log` |
 
 ## Optional Docker DB
 
@@ -214,3 +270,16 @@ Only if you do not have local Postgres: `docker compose -f docker-compose.option
 ## Source
 
 Copied from `pmf-backend/app/route_card/` and the PMF Route Card frontend page.
+
+## Usefulness features (offline LAN)
+
+- **Review flags + Approve gate** — after analyze, resolve high/medium flags before approve (admin override available).
+- **PL↔GA item checklist** — mismatch report on Engineer Review.
+- **Clone / compare** — Extractions: clone route into a new session; compare two selected route cards.
+- **Analyze job queue** — Jobs page; batch enqueue from Extractions; single VLM lock.
+- **Dept rules + few-shots** — API `/dept-rules`, `/few-shot-examples` (VLM prompt addendum + auto op templates).
+- **Notifications** — bell inbox; optional `NOTIFY_WEBHOOK_URL` in `backend/.env`.
+- **System (admin)** — health, storage, backup zip, cleanup drafts, machines catalog.
+- **Create Order JSON** — Download / Copy from Engineer Review (`/route-cards/{id}/pmf-oarc`).
+- **Production frontend** — `npm run build` then `deploy/windows/start-frontend.bat` prefers `dist` (or use `start-frontend-prod.bat`).
+

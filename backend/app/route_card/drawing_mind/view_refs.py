@@ -443,31 +443,31 @@ def resolve_view_refs_for_notes(
                 sheet_lbl = f"sheet {match.sheet_no}" if match.sheet_no else "this drawing set"
                 if kind == "sheet":
                     resolved_bits.append(
-                        f"{label} is the uploaded file '{loc}'"
-                        + (f" (indexed as {sheet_lbl})" if match.sheet_no else "")
+                        f"Open {label} — file '{loc}'"
+                        + (f" ({sheet_lbl})" if match.sheet_no else "")
                         + (
-                            f" containing: {', '.join(sorted(match.named))}"
+                            f". It has: {', '.join(sorted(match.named))}"
                             if match.named
                             else ""
                         )
                     )
                 elif kind == "table" and snippet:
                     resolved_bits.append(
-                        f"Follow {label} on '{loc}' ({sheet_lbl}): {snippet}"
+                        f"Follow {label} in file '{loc}' ({sheet_lbl}): {snippet}"
                     )
                 elif kind == "figure":
                     cap = f" — {snippet}" if snippet else ""
-                    resolved_bits.append(f"See {label}{cap} on '{loc}' ({sheet_lbl})")
+                    resolved_bits.append(f"Open {label}{cap} in file '{loc}' ({sheet_lbl})")
                 elif kind == "detail":
-                    resolved_bits.append(f"See {label} on '{loc}' ({sheet_lbl})")
+                    resolved_bits.append(f"Open {label} in file '{loc}' ({sheet_lbl})")
                 elif kind == "named":
                     resolved_bits.append(
                         f"Use {label}"
                         + (f" ({snippet})" if snippet else "")
-                        + f" on '{loc}' ({sheet_lbl})"
+                        + f" in file '{loc}' ({sheet_lbl})"
                     )
                 else:
-                    resolved_bits.append(f"See {label} on '{loc}' ({sheet_lbl})")
+                    resolved_bits.append(f"Open {label} in file '{loc}' ({sheet_lbl})")
             else:
                 fact = ViewRefFact(
                     kind=kind,

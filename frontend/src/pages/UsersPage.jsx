@@ -26,6 +26,12 @@ function passwordValue(e) {
   return e?.target?.value ?? e?.value ?? "";
 }
 
+const EMP_ID_DIGITS = /^\d{6}$/;
+
+function isValidEmployeeId(value) {
+  return EMP_ID_DIGITS.test(String(value || "").trim());
+}
+
 const ROLE_OPTIONS_ADMIN = [
   { label: "Engineer", value: "engineer" },
   { label: "Dept head", value: "dept_head" },
@@ -173,6 +179,10 @@ export default function UsersPage() {
       setDialogError("Employee ID and name are required");
       return;
     }
+    if (!isValidEmployeeId(empId)) {
+      setDialogError("Employee ID must be exactly 6 digits");
+      return;
+    }
     if (createForm.password.length < 4) {
       setDialogError("Password must be at least 4 characters");
       return;
@@ -212,6 +222,10 @@ export default function UsersPage() {
     const name = editForm.name.trim();
     if (!empId || !name) {
       setDialogError("Employee ID and name are required");
+      return;
+    }
+    if (!isValidEmployeeId(empId)) {
+      setDialogError("Employee ID must be exactly 6 digits");
       return;
     }
     if (isAdmin && !editForm.dept) {
@@ -429,12 +443,20 @@ export default function UsersPage() {
           ) : null}
           <div className="rc-users__form rc-users__form--grid">
             <label>
-              Emp ID / Username
+              Emp ID (6 digits)
               <InputText
                 value={createForm.empId}
-                onChange={(e) => setCreateForm((f) => ({ ...f, empId: e.target.value }))}
+                onChange={(e) =>
+                  setCreateForm((f) => ({
+                    ...f,
+                    empId: e.target.value.replace(/\D/g, "").slice(0, 6),
+                  }))
+                }
                 disabled={saving}
                 autoComplete="off"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="e.g. 112233"
               />
             </label>
             <label>
@@ -533,12 +555,20 @@ export default function UsersPage() {
           ) : null}
           <div className="rc-users__form rc-users__form--grid">
             <label>
-              Emp ID / Username
+              Emp ID
               <InputText
                 value={editForm.empId}
-                onChange={(e) => setEditForm((f) => ({ ...f, empId: e.target.value }))}
+                onChange={(e) =>
+                  setEditForm((f) => ({
+                    ...f,
+                    empId: e.target.value.replace(/\D/g, "").slice(0, 6),
+                  }))
+                }
                 disabled={saving}
                 autoComplete="off"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="e.g. 112233"
               />
             </label>
             <label>

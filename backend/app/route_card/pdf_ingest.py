@@ -339,13 +339,19 @@ def _spatial_max_pages() -> int:
         return _ocr_max_pages()
 
 
-def extract_spatial_pages(data: bytes, max_pages: int | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+def extract_spatial_pages(
+    data: bytes,
+    max_pages: int | None = None,
+    cancel_event=None,
+) -> tuple[list[dict[str, Any]], list[str]]:
     """
     Per-page word bounding boxes for the drawing mind.
 
     Prefer PyMuPDF text dict (vector PDFs). If a page is sparse, fall back to
     Tesseract image_to_data on a rendered pixmap (CPU).
     """
+    from app.route_card.analyze_jobs import check_cancelled
+
     warnings: list[str] = []
     pages_out: list[dict[str, Any]] = []
     try:
@@ -364,6 +370,7 @@ def extract_spatial_pages(data: bytes, max_pages: int | None = None) -> tuple[li
         if n > limit:
             warnings.append(f"Spatial OCR limited to first {limit} of {n} pages.")
         for i in range(min(n, limit)):
+            check_cancelled(cancel_event)
             page = doc.load_page(i)
             rect = page.rect
             words: list[dict[str, Any]] = []
@@ -413,6 +420,7 @@ def extract_spatial_pages(data: bytes, max_pages: int | None = None) -> tuple[li
             # Sparse page → OCR word boxes (page coordinates via zoom)
             non_ws = sum(len(re.sub(r"\s+", "", w["text"])) for w in words)
             if non_ws < 40 and _ocr_enabled():
+                check_cancelled(cancel_event)
                 ok, warn = _configure_tesseract()
                 if not ok:
                     if warn:

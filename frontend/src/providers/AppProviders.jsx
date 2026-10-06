@@ -25,14 +25,16 @@ export default function AppProviders({ children }) {
     <ThemeProvider>
       <PrimeReactProvider value={PRIME}>
         <Toaster
-          position="bottom-center"
+          position="top-right"
           toastOptions={{
             className: 'rc-hot-toast',
             style: {
               fontSize: '0.875rem',
               maxWidth: '26rem',
+              padding: '0.75rem 1rem',
             },
           }}
+          containerStyle={{ top: 16, right: 16, zIndex: 99999 }}
         />
         <ConfirmDialog className="p-confirm-dialog-sm" />
         {children}

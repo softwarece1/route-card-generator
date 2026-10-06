@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "primereact/button";
 import { Column } from "primereact/column";
 import { DataTable } from "primereact/datatable";
@@ -11,17 +12,37 @@ import { TabPanel, TabView } from "primereact/tabview";
 import { Tag } from "primereact/tag";
 import { Tooltip } from "primereact/tooltip";
 import { toast } from "@/lib/toast";
+import { getVlmPageIndexes } from "@/lib/vlmPrefs";
+import { isExcelFilename, triggerBlobDownload } from "@/lib/excelPreview";
 import {
+  addFavorite,
   analyzeSession,
+  approveRouteCard,
+  cancelAnalyzeSession,
+  copyJsonToClipboard,
   createSession,
   deleteSessionDocument,
+  downloadJson,
+  exportPmfOarc,
   fetchDrawingFileBlob,
+  fetchFavorites,
+  fetchItemLinkReport,
   fetchMachinesQuietly,
+  fetchMyExtractionDetail,
+  fetchRecent,
+  fetchReviewFlags,
+  fetchSessionDocumentBlob,
+  getSession,
+  isCanceledError,
   learnFormatTemplate,
+  resolveReviewFlag,
   saveRouteDraft,
   updateRouteCard,
   uploadSessionDocument,
 } from "@/services/routeCardApi";
+import { getUser } from "@/lib/auth";
+import { Checkbox } from "primereact/checkbox";
+import ExcelPreviewDialog from "@/components/ExcelPreviewDialog";
 import OarcPreviewDialog from "@/components/OarcPreviewDialog";
 import OpTemplatePickerDialog from "@/components/OpTemplatePickerDialog";
 import AppShell from "@/components/AppShell";
@@ -265,6 +286,7 @@ function SectionHead({ title, badge, actionLabel, onAction, primaryAction }) {
 
 export default function RouteCardGenerationAlt() {
   const fileInputRefs = useRef({});
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [sessionId, setSessionId] = useState(null);
   const [docs, setDocs] = useState({ drawing: null, drawings: [], wirelist: null, partslist: null });
@@ -303,10 +325,39 @@ export default function RouteCardGenerationAlt() {
   const [extractedNotes, setExtractedNotes] = useState([]);
   const [mindInfo, setMindInfo] = useState(null);
   const [crossRefs, setCrossRefs] = useState([]);
+  const [reviewFlags, setReviewFlags] = useState([]);
+  const [itemLinkReport, setItemLinkReport] = useState(null);
+  const [recentItems, setRecentItems] = useState([]);
+  const [favorites, setFavorites] = useState([]);
+  const [sheetDialogOpen, setSheetDialogOpen] = useState(false);
+  const [openingSession, setOpeningSession] = useState(false);
+  const [excelPreview, setExcelPreview] = useState(null);
+  const [opComment, setOpComment] = useState("");
+  const analyzeAbortRef = useRef(null);
+  const analyzingRef = useRef(false);
+  const sessionIdRef = useRef(sessionId);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    analyzingRef.current = analyzing;
+  }, [analyzing]);
 
   const hasGa = Boolean(docs.drawing || (docs.drawings && docs.drawings.length));
   const canAnalyze = Boolean(hasGa && docs.partslist && drawingId && !analyzing && !uploadingRole);
   const showResults = analyzed && !analyzing;
+
+  const activeDrawing = useMemo(() => {
+    const list = docs.drawings || [];
+    if (!list.length) return docs.drawing || null;
+    return (
+      list.find((d) => d.drawingId === drawingId || d.id === drawingId) ||
+      list[list.length - 1] ||
+      null
+    );
+  }, [docs.drawing, docs.drawings, drawingId]);
 
   const applyPayload = useCallback((payload) => {
     if (!payload) return;
@@ -335,6 +386,9 @@ export default function RouteCardGenerationAlt() {
     setCrossRefs(payload.crossRefs || payload.mind?.crossRefs || []);
     if (payload.status === "approved") setReviewStatus("approved");
     else if (payload.status === "draft") setReviewStatus("draft");
+    else setReviewStatus("ready");
+    if (payload.reviewFlags) setReviewFlags(payload.reviewFlags);
+    if (payload.itemLinkReport) setItemLinkReport(payload.itemLinkReport);
     const tasks = payload.analysisTasks || [];
     setTaskProgress(Object.fromEntries(tasks.map((t) => [t.key, t.value ?? 100])));
   }, []);
@@ -347,6 +401,18 @@ export default function RouteCardGenerationAlt() {
   }, []);
 
   useEffect(() => () => clearPreview(), [clearPreview]);
+
+  // Leaving the page / unmount: abort HTTP + tell backend to stop Ollama
+  useEffect(() => {
+    return () => {
+      analyzeAbortRef.current?.abort();
+      analyzeAbortRef.current = null;
+      const sid = sessionIdRef.current;
+      if (sid && analyzingRef.current) {
+        cancelAnalyzeSession(sid);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -394,8 +460,48 @@ export default function RouteCardGenerationAlt() {
     }
   };
 
+  const selectDrawingPreview = async (drawing, { openViewer = false } = {}) => {
+    if (!drawing?.drawingId) return;
+    setDrawingId(drawing.drawingId);
+    setDocs((prev) => ({ ...prev, drawing }));
+    await loadPreview(drawing.drawingId, drawing.type);
+    if (openViewer) setViewerOpen(true);
+  };
+
+  const openSlotDocument = async (role, file, { downloadOnly = false } = {}) => {
+    if (!sessionId || !file) return;
+    try {
+      const blob = await fetchSessionDocumentBlob(sessionId, role, file.id || null);
+      const name = file.name || `${role}.xlsx`;
+      if (downloadOnly) {
+        triggerBlobDownload(blob, name);
+        toast.success(`Downloaded ${name}`);
+        return;
+      }
+      if (isExcelFilename(name) || isExcelFilename(file.type)) {
+        setExcelPreview({ blob, name });
+        return;
+      }
+      // PDF / other — open in a new tab
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      toast.error(e.message || "Could not open file");
+    }
+  };
+
+  const isDuplicateDrawingName = (fileName, drawings = docs.drawings) => {
+    const key = String(fileName || "").trim().toLowerCase();
+    if (!key) return false;
+    return (drawings || []).some((d) => String(d.name || "").trim().toLowerCase() === key);
+  };
+
   /** Clear UI only — session is created lazily on next upload. */
   const resetPage = () => {
+    if (analyzingRef.current) {
+      stopAnalysis({ silent: true });
+    }
     clearPreview();
     setDocs({ drawing: null, drawings: [], wirelist: null, partslist: null });
     setDrawingId(null);
@@ -473,6 +579,10 @@ export default function RouteCardGenerationAlt() {
     if (!file) return;
     const slot = UPLOAD_SLOTS.find((s) => s.role === role);
     const slotTitle = slot?.title || role;
+    if (role === "drawing" && isDuplicateDrawingName(file.name)) {
+      toast.warn(`${slotTitle}: “${file.name}” is already uploaded. Choose a different file.`);
+      return;
+    }
     const ext = `.${(file.name.split(".").pop() || "").toLowerCase()}`;
     const allowed = (slot?.accept || "")
       .split(",")
@@ -480,7 +590,8 @@ export default function RouteCardGenerationAlt() {
       .filter(Boolean);
     if (allowed.length && !allowed.includes(ext)) {
       toast.error(
-        `${slotTitle}: unsupported type ${ext || "(none)"}. Allowed: ${allowed.join(", ")}`
+        `${slotTitle}: “${file.name}” is not an allowed type (${ext || "unknown"}). ` +
+          `Please upload: ${allowed.join(", ")}.`
       );
       return;
     }
@@ -509,6 +620,13 @@ export default function RouteCardGenerationAlt() {
       setRouteOps([]);
       setRouteCardId(null);
       toast.success(`${slotTitle} uploaded.`);
+      const uploadWarns = [
+        ...(meta.warnings || []),
+        ...(meta.document?.warnings || []),
+      ].filter(Boolean);
+      for (const w of [...new Set(uploadWarns)]) {
+        toast.warn(w);
+      }
     } catch (error) {
       toast.error(error.message || "Upload failed");
     } finally {
@@ -517,12 +635,26 @@ export default function RouteCardGenerationAlt() {
   };
 
   const applySlotFiles = async (role, fileList) => {
-    const files = Array.from(fileList || []).filter(Boolean);
-    if (!files.length) return;
-    if (role !== "drawing" || files.length === 1) {
-      await applySlotFile(role, files[0]);
+    const incoming = Array.from(fileList || []).filter(Boolean);
+    if (!incoming.length) return;
+    if (role !== "drawing") {
+      await applySlotFile(role, incoming[0]);
       return;
     }
+
+    const seen = new Set();
+    const files = [];
+    for (const f of incoming) {
+      const key = String(f.name || "").trim().toLowerCase();
+      if (!key) continue;
+      if (seen.has(key) || isDuplicateDrawingName(f.name)) {
+        toast.warn(`Skipped duplicate drawing: ${f.name}`);
+        continue;
+      }
+      seen.add(key);
+      files.push(f);
+    }
+    if (!files.length) return;
     for (const f of files) {
       // Sequential so session state stays consistent
       // eslint-disable-next-line no-await-in-loop
@@ -589,8 +721,23 @@ export default function RouteCardGenerationAlt() {
     setResultTab(0);
   };
 
+  const stopAnalysis = useCallback(async ({ silent = false } = {}) => {
+    analyzeAbortRef.current?.abort();
+    analyzeAbortRef.current = null;
+    const sid = sessionIdRef.current;
+    if (sid) {
+      await cancelAnalyzeSession(sid);
+    }
+    setAnalyzing(false);
+    setTaskProgress({});
+    if (!silent) toast.info("Analysis stopped.");
+  }, []);
+
   const runAnalysis = async () => {
     if (!sessionId || !hasGa || analyzing) return;
+    analyzeAbortRef.current?.abort();
+    const ac = new AbortController();
+    analyzeAbortRef.current = ac;
     setAnalyzing(true);
     setAnalyzed(false);
     setResultTab(0);
@@ -606,7 +753,12 @@ export default function RouteCardGenerationAlt() {
       route: 5,
     });
     try {
-      const payload = await analyzeSession(sessionId);
+      const vlmPrefs = getVlmPageIndexes();
+      const payload = await analyzeSession(sessionId, {
+        signal: ac.signal,
+        vlmPageIndexes: vlmPrefs.length ? vlmPrefs : undefined,
+      });
+      if (ac.signal.aborted) return;
       applyPayload(payload);
       setAnalyzing(false);
       setAnalyzed(true);
@@ -614,7 +766,14 @@ export default function RouteCardGenerationAlt() {
       toast.success("OARC generated. Review the results in the tabs below.");
     } catch (error) {
       setAnalyzing(false);
+      if (isCanceledError(error) || ac.signal.aborted) {
+        return;
+      }
       toast.error(error.message || "Analysis failed");
+    } finally {
+      if (analyzeAbortRef.current === ac) {
+        analyzeAbortRef.current = null;
+      }
     }
   };
 
@@ -695,6 +854,128 @@ export default function RouteCardGenerationAlt() {
     }
   };
 
+  const unresolvedBlocking = (reviewFlags || []).filter(
+    (f) => !f.resolved && ["high", "medium"].includes((f.severity || "").toLowerCase()),
+  );
+  const userRole = getUser()?.role;
+  const canApprove =
+    Boolean(routeCardId) && (unresolvedBlocking.length === 0 || userRole === "admin");
+
+  const approveCard = async (override = false) => {
+    if (!routeCardId) return;
+    try {
+      const payload = await approveRouteCard(routeCardId, { adminOverride: override });
+      applyPayload(payload);
+      setReviewStatus("approved");
+      toast.success("Route card approved.");
+    } catch (error) {
+      toast.error(error.message || "Approve failed");
+    }
+  };
+
+  const downloadCreateOrder = async () => {
+    if (!routeCardId) return;
+    try {
+      const data = await exportPmfOarc(routeCardId);
+      downloadJson(`pmf-oarc-${routeCardId}.json`, data);
+      toast.success("Downloaded Create Order JSON");
+    } catch (e) {
+      toast.error(e.message || "Export failed");
+    }
+  };
+
+  const copyCreateOrder = async () => {
+    if (!routeCardId) return;
+    try {
+      const data = await exportPmfOarc(routeCardId);
+      await copyJsonToClipboard(data);
+      toast.success("Copied Create Order JSON");
+    } catch (e) {
+      toast.error(e.message || "Copy failed");
+    }
+  };
+
+  const toggleFlag = async (flag, resolved) => {
+    try {
+      await resolveReviewFlag(flag.id, resolved);
+      setReviewFlags((prev) =>
+        prev.map((f) => (f.id === flag.id ? { ...f, resolved } : f)),
+      );
+    } catch (e) {
+      toast.error(e.message || "Could not update flag");
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [r, f] = await Promise.all([fetchRecent(), fetchFavorites()]);
+        setRecentItems(r.items || []);
+        setFavorites(f.items || []);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
+  const openSessionById = useCallback(
+    async (sid, { fromUrl = false } = {}) => {
+      const id = Number(sid);
+      if (!id || Number.isNaN(id) || openingSession) return;
+      if (sessionId === id && analyzed) return;
+      setOpeningSession(true);
+      const loadingId = toast.loading(`Opening session ${id}…`);
+      try {
+        if (analyzingRef.current) {
+          await stopAnalysis({ silent: true });
+        }
+        const [sess, detail] = await Promise.all([
+          getSession(id),
+          fetchMyExtractionDetail(id),
+        ]);
+        setSessionId(id);
+        syncDocsFromSession(
+          sess.documents || [],
+          sess.drawingIds || (sess.drawingId ? [sess.drawingId] : []),
+        );
+        if (detail?.payload) {
+          applyPayload({ ...detail.payload, sessionId: id });
+          setAnalyzed(true);
+          setResultTab(1);
+        } else {
+          setAnalyzed(false);
+          setAnalysisPayload(null);
+          setRouteOps([]);
+          setExtractedNotes([]);
+        }
+        const drawings = (sess.documents || []).filter((d) => d.role === "drawing");
+        const last = drawings[drawings.length - 1];
+        if (last?.drawingId) {
+          await loadPreview(last.drawingId, last.file_type || last.fileType);
+        }
+        if (!fromUrl) {
+          setSearchParams({ sessionId: String(id) }, { replace: true });
+        }
+        toast.success(`Opened ${detail?.partNumber || `session ${id}`}`);
+      } catch (e) {
+        toast.error(e.message || "Could not open session");
+      } finally {
+        toast.dismiss(loadingId);
+        setOpeningSession(false);
+      }
+    },
+    [analyzed, applyPayload, openingSession, sessionId, setSearchParams, stopAnalysis],
+  );
+
+  // Deep-link: /generator?sessionId=290
+  useEffect(() => {
+    const q = searchParams.get("sessionId");
+    if (q && Number(q) !== sessionId) {
+      openSessionById(q, { fromUrl: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when URL sessionId changes
+  }, [searchParams]);
+
   const saveFormat = async (role) => {
     if (!sessionId) {
       toast.warn("No upload session.");
@@ -719,6 +1000,7 @@ export default function RouteCardGenerationAlt() {
   };
 
   const infoRows = [
+    ["File", activeDrawing?.name],
     ["Drawing Number", drawingInfo.drawingNumber],
     ["Part Name", drawingInfo.partName],
     ["Revision", drawingInfo.version || drawingInfo.revision],
@@ -730,6 +1012,29 @@ export default function RouteCardGenerationAlt() {
     ["Surface Finish", drawingInfo.surfaceFinish],
     ["Scale", drawingInfo.scale],
   ];
+
+  const drawingTabs =
+    (docs.drawings?.length || 0) > 1 ? (
+      <div className="rca-viewer__tabs" role="tablist" aria-label="Uploaded drawings">
+        {docs.drawings.map((g, i) => {
+          const selected = g.drawingId === drawingId || (activeDrawing && g.id === activeDrawing.id);
+          return (
+            <button
+              key={g.id || `${g.name}-${i}`}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              className={`rca-viewer__tab${selected ? " rca-viewer__tab--active" : ""}`}
+              title={g.name}
+              disabled={uploadingRole === "drawing"}
+              onClick={() => selectDrawingPreview(g)}
+            >
+              <span className="rca-viewer__tab-label">{g.name || `GA ${i + 1}`}</span>
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
 
   const taskEntries = Object.keys(ANALYSIS_LABELS)
     .filter((k) => taskProgress[k] != null || showResults)
@@ -760,6 +1065,38 @@ export default function RouteCardGenerationAlt() {
       ))}
 
         <div className="rca-content">
+          {(recentItems?.length > 0 || favorites?.length > 0) && (
+            <div className="rca-session-chips flex gap-2 flex-wrap mb-2 align-items-center">
+              <span className="rca-session-chips__hint">Recent / favorites — click to reopen:</span>
+              {recentItems.slice(0, 5).map((r) => (
+                <Button
+                  key={`r-${r.sessionId}`}
+                  type="button"
+                  size="small"
+                  outlined={sessionId !== r.sessionId}
+                  severity={sessionId === r.sessionId ? undefined : "secondary"}
+                  disabled={openingSession}
+                  label={r.partNumber || `Session ${r.sessionId}`}
+                  onClick={() => openSessionById(r.sessionId)}
+                  title={`Open session ${r.sessionId} in Generator`}
+                />
+              ))}
+              {favorites.slice(0, 5).map((f) => (
+                <Button
+                  key={`f-${f.id}`}
+                  type="button"
+                  size="small"
+                  outlined={sessionId !== f.sessionId}
+                  severity={sessionId === f.sessionId ? undefined : "secondary"}
+                  disabled={openingSession || !f.sessionId}
+                  icon="pi pi-star"
+                  label={f.label || f.partNumber || `Fav ${f.id}`}
+                  onClick={() => f.sessionId && openSessionById(f.sessionId)}
+                  title={f.sessionId ? `Open favorite session ${f.sessionId}` : "No session linked"}
+                />
+              ))}
+            </div>
+          )}
           <PageHeader
             title="Generator"
             subtitle="Upload drawing and parts list documents, then generate and review the OARC route."
@@ -776,6 +1113,17 @@ export default function RouteCardGenerationAlt() {
                   disabled={analyzing || !!uploadingRole}
                   onClick={resetPage}
                 />
+                {analyzing ? (
+                  <Button
+                    type="button"
+                    label="Stop"
+                    icon="pi pi-stop"
+                    size="small"
+                    severity="danger"
+                    outlined
+                    onClick={() => stopAnalysis()}
+                  />
+                ) : null}
                 <Button
                   type="button"
                   label={analyzing ? "Generating…" : "Generate OARC"}
@@ -862,44 +1210,54 @@ export default function RouteCardGenerationAlt() {
                         </div>
                       ) : multi ? (
                         <div className="rca-slot__file-list">
-                          {drawings.map((g) => (
-                            <div className="rca-slot__file" key={g.id || g.name}>
-                              <i className="pi pi-file-pdf rca-slot__file-icon" aria-hidden="true" />
-                              <div className="rca-slot__file-meta">
-                                <strong title={g.name}>{g.name}</strong>
-                                <span>{g.sizeLabel}</span>
+                          {drawings.map((g) => {
+                            const selected =
+                              g.drawingId === drawingId || (activeDrawing && g.id === activeDrawing.id);
+                            return (
+                              <div
+                                className={`rca-slot__file${selected ? " rca-slot__file--selected" : ""}`}
+                                key={g.id || g.name}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => selectDrawingPreview(g)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    selectDrawingPreview(g);
+                                  }
+                                }}
+                              >
+                                <i className="pi pi-file-pdf rca-slot__file-icon" aria-hidden="true" />
+                                <div className="rca-slot__file-meta">
+                                  <strong title={g.name}>{g.name}</strong>
+                                  <span>{g.sizeLabel}</span>
+                                </div>
+                                <div className="rca-slot__actions" onClick={(e) => e.stopPropagation()}>
+                                  <Button
+                                    type="button"
+                                    icon="pi pi-eye"
+                                    rounded
+                                    text
+                                    size="small"
+                                    disabled={uploading || !g.drawingId}
+                                    aria-label="View drawing"
+                                    onClick={() => selectDrawingPreview(g, { openViewer: true })}
+                                  />
+                                  <Button
+                                    type="button"
+                                    icon="pi pi-times"
+                                    rounded
+                                    text
+                                    size="small"
+                                    severity="secondary"
+                                    disabled={uploading}
+                                    aria-label={`Remove ${g.name}`}
+                                    onClick={() => removeSlot("drawing", g.id)}
+                                  />
+                                </div>
                               </div>
-                              <div className="rca-slot__actions">
-                                <Button
-                                  type="button"
-                                  icon="pi pi-eye"
-                                  rounded
-                                  text
-                                  size="small"
-                                  disabled={uploading || !g.drawingId}
-                                  aria-label="View drawing"
-                                  onClick={async () => {
-                                    if (g.drawingId) {
-                                      setDrawingId(g.drawingId);
-                                      await loadPreview(g.drawingId, g.type);
-                                      setViewerOpen(true);
-                                    }
-                                  }}
-                                />
-                                <Button
-                                  type="button"
-                                  icon="pi pi-times"
-                                  rounded
-                                  text
-                                  size="small"
-                                  severity="secondary"
-                                  disabled={uploading}
-                                  aria-label={`Remove ${g.name}`}
-                                  onClick={() => removeSlot("drawing", g.id)}
-                                />
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                           <Button
                             type="button"
                             label="Add another GA"
@@ -913,7 +1271,12 @@ export default function RouteCardGenerationAlt() {
                         </div>
                       ) : (
                         <div className="rca-slot__file">
-                          <i className="pi pi-file-pdf rca-slot__file-icon" aria-hidden="true" />
+                          <i
+                            className={`pi ${
+                              isExcelFilename(file.name) ? "pi-file-excel" : "pi-file-pdf"
+                            } rca-slot__file-icon`}
+                            aria-hidden="true"
+                          />
                           <div className="rca-slot__file-meta">
                             <strong title={file.name}>{file.name}</strong>
                             <span>{uploading ? "Uploading replacement…" : file.sizeLabel}</span>
@@ -924,6 +1287,28 @@ export default function RouteCardGenerationAlt() {
                             <i className="pi pi-check-circle rca-slot__ok" aria-hidden="true" />
                           )}
                           <div className="rca-slot__actions">
+                            <Button
+                              type="button"
+                              icon="pi pi-eye"
+                              rounded
+                              text
+                              size="small"
+                              disabled={uploading || !sessionId}
+                              aria-label={`View ${slot.role}`}
+                              title="View"
+                              onClick={() => openSlotDocument(slot.role, file)}
+                            />
+                            <Button
+                              type="button"
+                              icon="pi pi-download"
+                              rounded
+                              text
+                              size="small"
+                              disabled={uploading || !sessionId}
+                              aria-label={`Download ${slot.role}`}
+                              title="Download"
+                              onClick={() => openSlotDocument(slot.role, file, { downloadOnly: true })}
+                            />
                             <Button
                               type="button"
                               icon="pi pi-times"
@@ -982,8 +1367,9 @@ export default function RouteCardGenerationAlt() {
                     <Button type="button" icon="pi pi-window-maximize" rounded text size="small" onClick={() => setViewerOpen(true)} />
                   </div>
                 </div>
+                {drawingTabs}
                 <div className="rca-viewer__canvas" style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}>
-                  <DrawingPreview url={previewUrl} fileType={docs.drawing?.type} />
+                  <DrawingPreview url={previewUrl} fileType={activeDrawing?.type} />
                 </div>
               </div>
               <div className="rca-panel">
@@ -1416,8 +1802,89 @@ export default function RouteCardGenerationAlt() {
                       />
                     )}
                   </div>
+                  {(reviewFlags || []).length > 0 && (
+                    <div className="mb-3">
+                      <h4 style={{ marginBottom: "0.5rem" }}>Needs review</h4>
+                      <ul style={{ paddingLeft: "1.1rem", margin: 0 }}>
+                        {reviewFlags.map((f) => (
+                          <li key={f.id} style={{ marginBottom: 6 }}>
+                            <label className="flex align-items-start gap-2" style={{ cursor: "pointer" }}>
+                              <Checkbox
+                                checked={!!f.resolved}
+                                onChange={(e) => toggleFlag(f, e.checked)}
+                              />
+                              <span>
+                                <Tag
+                                  value={f.severity}
+                                  severity={
+                                    f.severity === "high"
+                                      ? "danger"
+                                      : f.severity === "medium"
+                                        ? "warning"
+                                        : "info"
+                                  }
+                                  className="mr-2"
+                                />
+                                {f.message}
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {itemLinkReport?.rows?.length > 0 && (
+                    <div className="mb-3">
+                      <h4 style={{ marginBottom: "0.5rem" }}>PL ↔ GA items</h4>
+                      <DataTable value={itemLinkReport.rows} size="small" paginator rows={8}>
+                        <Column field="itemNo" header="Item" style={{ width: 70 }} />
+                        <Column field="description" header="Description" />
+                        <Column field="status" header="Status" style={{ width: 100 }} />
+                      </DataTable>
+                    </div>
+                  )}
                   <div className="flex gap-2 flex-wrap">
                     <Button type="button" label="Save Draft" icon="pi pi-save" outlined size="small" onClick={saveDraft} disabled={!routeCardId} />
+                    <Button
+                      type="button"
+                      label="Approve"
+                      icon="pi pi-check"
+                      size="small"
+                      disabled={!canApprove}
+                      onClick={() => approveCard(false)}
+                    />
+                    {userRole === "admin" && unresolvedBlocking.length > 0 && (
+                      <Button
+                        type="button"
+                        label="Admin override approve"
+                        icon="pi pi-shield"
+                        outlined
+                        severity="warning"
+                        size="small"
+                        onClick={() => approveCard(true)}
+                      />
+                    )}
+                    <Button type="button" label="Download for Create Order" icon="pi pi-download" outlined size="small" onClick={downloadCreateOrder} disabled={!routeCardId} />
+                    <Button type="button" label="Copy JSON" icon="pi pi-copy" outlined size="small" onClick={copyCreateOrder} disabled={!routeCardId} />
+                    <Button
+                      type="button"
+                      label="Favorite"
+                      icon="pi pi-star"
+                      outlined
+                      size="small"
+                      disabled={!sessionId}
+                      onClick={async () => {
+                        await addFavorite({
+                          sessionId,
+                          routeCardId,
+                          partNumber: drawingInfo?.partNumber || "",
+                          label: drawingInfo?.partName || drawingInfo?.drawingNumber || `Session ${sessionId}`,
+                        });
+                        const fav = await fetchFavorites();
+                        setFavorites(fav.items || []);
+                        toast.success("Saved to favorites");
+                      }}
+                    />
                   </div>
                 </div>
               </TabPanel>
@@ -1462,15 +1929,23 @@ export default function RouteCardGenerationAlt() {
         onSelect={addFromTemplate}
       />
 
+      <ExcelPreviewDialog
+        visible={Boolean(excelPreview)}
+        blob={excelPreview?.blob || null}
+        filename={excelPreview?.name || ""}
+        onHide={() => setExcelPreview(null)}
+      />
+
       <Dialog
-        header="Drawing viewer"
+        header={activeDrawing?.name ? `Drawing viewer — ${activeDrawing.name}` : "Drawing viewer"}
         visible={viewerOpen}
         onHide={() => setViewerOpen(false)}
         style={{ width: "min(92vw, 56rem)" }}
         maximizable
       >
+        {drawingTabs}
         <div style={{ height: "70vh" }}>
-          <DrawingPreview url={previewUrl} fileType={docs.drawing?.type} />
+          <DrawingPreview url={previewUrl} fileType={activeDrawing?.type} />
         </div>
       </Dialog>
 

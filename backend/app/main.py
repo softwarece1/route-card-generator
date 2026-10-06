@@ -14,7 +14,19 @@ from app.route_card.router import router as route_card_router
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     connect_to_db()
+    try:
+        from app.route_card.job_queue import start_queue_worker
+
+        start_queue_worker()
+    except Exception:
+        pass
     yield
+    try:
+        from app.route_card.job_queue import stop_queue_worker
+
+        stop_queue_worker()
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -42,4 +54,9 @@ app.include_router(route_card_router, dependencies=_protect)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "auth_enabled": settings.AUTH_ENABLED}
+    try:
+        from app.route_card import admin_ops
+
+        return admin_ops.health_extended()
+    except Exception:
+        return {"status": "ok", "auth_enabled": settings.AUTH_ENABLED}

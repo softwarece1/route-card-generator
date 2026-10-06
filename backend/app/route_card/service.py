@@ -43,7 +43,6 @@ ROLE_ALLOWED = {
     "partslist": {".pdf", ".xls", ".xlsx"},
 }
 MAX_BYTES = 10 * 1024 * 1024
-LOCAL_ROOT = Path("uploads") / "route-card"
 CONTENT_TYPES = {
     ".pdf": "application/pdf",
     ".tif": "image/tiff",
@@ -51,6 +50,19 @@ CONTENT_TYPES = {
     ".xls": "application/vnd.ms-excel",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
+
+
+def get_local_upload_root() -> Path:
+    """Directory for local GA/PL/WL files (configurable; not required under backend/)."""
+    from app.config.settings import settings
+
+    raw = (getattr(settings, "LOCAL_UPLOAD_ROOT", None) or "").strip()
+    if raw:
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        return p.resolve()
+    return (Path.cwd() / "uploads" / "route-card").resolve()
 
 _PL_USER_MSG = (
     "Parts List could not be read or does not match the expected format. "
@@ -170,8 +182,9 @@ def _minio_cache_sec() -> float:
 
 
 def _store_local(prefix: str, filename: str, data: bytes) -> tuple[str, str]:
-    LOCAL_ROOT.mkdir(parents=True, exist_ok=True)
-    dest_dir = LOCAL_ROOT / prefix.replace("/", "_")
+    root = get_local_upload_root()
+    root.mkdir(parents=True, exist_ok=True)
+    dest_dir = root / prefix.replace("/", "_")
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / filename
     dest.write_bytes(data)
@@ -200,10 +213,15 @@ async def read_upload(file: UploadFile, role: str | None = None) -> tuple[bytes,
     if allowed is None:
         raise HTTPException(400, f"Unknown document role: {role}")
     if ext not in allowed:
+        role_label = {
+            "drawing": "Drawing (GA)",
+            "partslist": "Parts List",
+            "wirelist": "Wire List",
+        }.get(role or "", role or "upload")
         raise HTTPException(
             400,
-            f"Unsupported type {ext or '(none)'} for {role or 'upload'}. "
-            f"Allowed: {', '.join(sorted(allowed))}",
+            f"{role_label}: unsupported file type “{ext or '(none)'}”. "
+            f"Allowed: {', '.join(sorted(allowed))}.",
         )
     data = await file.read()
     if not data:
@@ -254,6 +272,115 @@ def _user_prefix(user: dict | None) -> str:
     return f"users/{safe}_{uid}"
 
 
+def _session_storage_prefix(user: dict | None, session_id: int) -> str:
+    """One folder per session for GA + PL + WL (not per role)."""
+    return f"{_user_prefix(user)}/sessions/{session_id}"
+
+
+def _safe_store_filename(role: str, filename: str, *, unique: bool = False) -> str:
+    """Prefix with role so GA/PL/WL coexist in the same session folder."""
+    base = os.path.basename(filename or "document")
+    stem = Path(base).stem
+    suffix = Path(base).suffix
+    role_key = re.sub(r"[^a-z0-9]+", "", (role or "file").lower()) or "file"
+    if unique:
+        return f"{role_key}__{stem}__{int(datetime.utcnow().timestamp())}{suffix}"
+    return f"{role_key}__{base}"
+
+
+def _try_unlink_local(object_path: str | None, storage_backend: str | None) -> None:
+    if not object_path:
+        return
+    backend = (storage_backend or "").lower()
+    path = Path(object_path)
+    looks_local = (
+        backend.startswith("local")
+        or str(object_path).startswith("uploads/")
+        or path.is_absolute()
+    )
+    if not looks_local:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _sniff_upload_warnings(role: str, data: bytes, filename: str, ext: str) -> list[str]:
+    """Soft checks — upload still succeeds; UI shows warnings."""
+    role = (role or "").lower().strip()
+    name = (filename or "").lower()
+    warnings: list[str] = []
+
+    if role == "drawing":
+        if ext not in {".pdf", ".tif", ".tiff"}:
+            warnings.append(
+                f"Unexpected drawing type {ext}. Expected PDF or TIFF engineering drawing."
+            )
+            return warnings
+        if ext == ".pdf":
+            text = ""
+            try:
+                from app.route_card.pdf_ingest import ingest_pdf
+
+                text = (ingest_pdf(data, want_tables=False).text or "")[:8000]
+            except Exception:
+                text = ""
+            cues = re.search(
+                r"\b(NOTE|NOTES|GA\b|ASSEMBLY|ITEM\s*\d|AS\s+SHOWN|REVISION|SCALE|SHEET)\b",
+                text,
+                re.I,
+            )
+            name_cue = re.search(r"\b(ga|drawing|dwg|assy|assembly)\b", name, re.I)
+            if not cues and not name_cue:
+                warnings.append(
+                    "This file may not be a GA / engineering drawing "
+                    "(few drawing cues found). Confirm you uploaded the correct sheet."
+                )
+        return warnings
+
+    if role == "partslist":
+        try:
+            from app.route_card.partslist_parser import parse_partslist_bytes
+
+            parsed = parse_partslist_bytes(data, filename)
+            items = parsed.get("items") or []
+            if not items:
+                warnings.append(
+                    "Parts List uploaded, but no item rows were detected. "
+                    "Check that the file is a PL (PDF/Excel) in the expected layout."
+                )
+            elif not re.search(r"\b(pl|parts?\s*list|bom)\b", name, re.I) and len(items) < 2:
+                warnings.append(
+                    "Parts List looks sparse — verify this is the correct Parts List file."
+                )
+        except Exception:
+            warnings.append(
+                "Parts List could not be pre-checked. Analyze may still fail if the format is wrong."
+            )
+        return warnings
+
+    if role == "wirelist":
+        try:
+            from app.route_card.wirelist_parser import parse_wirelist_bytes
+
+            parsed = parse_wirelist_bytes(data, filename)
+            wires = parsed.get("wires") or parsed.get("materials") or []
+            count = parsed.get("wireCount") or len(wires)
+            if not count:
+                warnings.append(
+                    "Wire List uploaded, but no wire/material rows were detected. "
+                    "Check that the file is a WL (PDF/Excel) in the expected layout."
+                )
+        except Exception:
+            warnings.append(
+                "Wire List could not be pre-checked. Analyze may still fail if the format is wrong."
+            )
+        return warnings
+
+    return warnings
+
+
 def _resolve_user(user: dict | None) -> RcUser | None:
     if not user:
         return None
@@ -291,8 +418,15 @@ def _store(drawing_id: int, filename: str, data: bytes, content_type: str) -> tu
 
 
 def load_path_bytes(object_path: str, storage_backend: str) -> bytes:
-    if storage_backend.startswith("local") or object_path.startswith("uploads/"):
-        return Path(object_path).read_bytes()
+    path = Path(object_path)
+    if (
+        storage_backend.startswith("local")
+        or object_path.startswith("uploads/")
+        or path.is_file()
+    ):
+        if not path.is_file():
+            raise FileNotFoundError(f"File not found on disk: {object_path}")
+        return path.read_bytes()
     stream = minio().get_file(object_path)
     try:
         return stream.read()
@@ -452,10 +586,8 @@ def build_payload(
     warnings.extend(mind_info.get("warnings") or [])
     warnings = user_facing_warnings(list(dict.fromkeys(warnings)))
 
-    # Keep mind diagnostics internal — do not surface to end-user clients
+    # Keep mind diagnostics for the client (engine + warnings) so fallbacks are visible
     mind_public = dict(mind_info) if mind_info else {}
-    if mind_public:
-        mind_public["warnings"] = []
 
     return {
         "id": route.id if route else None,
@@ -718,7 +850,7 @@ def regenerate_route(drawing_id: int) -> dict:
 
 
 @db_session
-def update_route(route_id: int, body: dict) -> dict:
+def update_route(route_id: int, body: dict, user: dict | None = None) -> dict:
     card = RcRouteCard.get(id=route_id)
     if not card:
         raise HTTPException(404, "Route card not found")
@@ -770,20 +902,72 @@ def update_route(route_id: int, body: dict) -> dict:
         ]
     persist_route(card.drawing, generated, card)
     commit()
+    comment = (body.get("comment") or "").strip()
+    if comment or ops:
+        try:
+            from app.route_card import audit
+
+            audit.record_audit(
+                action="update_route",
+                user=user,
+                route_card_id=route_id,
+                session_id=card.drawing.session.id if card.drawing.session else None,
+                detail={"opCount": len(ops)},
+                comment=comment or None,
+            )
+        except Exception:
+            pass
     return build_payload(card.drawing, extraction, card)
 
 
 @db_session
-def set_route_status(route_id: int, status: str) -> dict:
+def set_route_status(
+    route_id: int,
+    status: str,
+    user: dict | None = None,
+    *,
+    admin_override: bool = False,
+    comment: str | None = None,
+) -> dict:
+    from app.route_card import audit
+    from app.route_card import notifications
+    from app.route_card import review as review_mod
+
     card = RcRouteCard.get(id=route_id)
     if not card:
         raise HTTPException(404, "Route card not found")
+    if status == "approved":
+        blocking = review_mod.unresolved_blocking(route_id)
+        is_admin = (user or {}).get("role") == "admin"
+        if blocking and not (admin_override and is_admin):
+            raise HTTPException(
+                400,
+                detail={
+                    "message": "Resolve review flags before approve (or admin override).",
+                    "blockingFlags": blocking,
+                },
+            )
     card.status = status
     card.updated_at = datetime.utcnow()
     if status == "approved":
         for op in card.operations:
             op.status = "Released"
     commit()
+    audit.record_audit(
+        action=f"status_{status}",
+        user=user,
+        route_card_id=route_id,
+        session_id=card.drawing.session.id if card.drawing.session else None,
+        detail={"adminOverride": bool(admin_override)},
+        comment=comment,
+    )
+    if status == "approved" and card.drawing.session and card.drawing.session.user:
+        notifications.create_notification(
+            card.drawing.session.user.id,
+            "Route card approved",
+            f"Route card #{route_id} was approved.",
+            link="/history",
+        )
     extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
     return build_payload(card.drawing, extraction, card)
 
@@ -799,6 +983,7 @@ def drawing_file_meta(drawing_id: int) -> tuple[bytes, str, str]:
 
 def _doc_dict(doc: RcDocument) -> dict:
     drawing_id = None
+    uploaded_by = None
     try:
         # Match linked drawing by shared object path within the same session
         sess = doc.session
@@ -806,7 +991,10 @@ def _doc_dict(doc: RcDocument) -> dict:
             for d in sess.drawings:
                 if d.object_path == doc.object_path:
                     drawing_id = d.id
+                    uploaded_by = d.uploaded_by or None
                     break
+            if not uploaded_by and sess.user:
+                uploaded_by = sess.user.emp_id or sess.user.name
     except Exception:
         drawing_id = None
     return {
@@ -819,6 +1007,10 @@ def _doc_dict(doc: RcDocument) -> dict:
         "status": doc.status,
         "warnings": doc.warnings or [],
         "drawingId": drawing_id,
+        "uploadedBy": uploaded_by,
+        "createdAt": doc.created_at.isoformat() if doc.created_at else None,
+        "objectPath": doc.object_path,
+        "contentType": doc.content_type,
     }
 
 
@@ -906,15 +1098,21 @@ def upload_session_document(
     if role != "drawing":
         existing = _get_role_doc(session, role)
         if existing:
+            _try_unlink_local(existing.object_path, existing.storage_backend)
             existing.delete()
+    else:
+        # Reject duplicate GA filenames in the same session (case-insensitive).
+        name_key = (filename or "").strip().lower()
+        for existing in session.documents.select(lambda d: d.role == "drawing"):
+            if (existing.filename or "").strip().lower() == name_key:
+                raise HTTPException(
+                    409,
+                    f'Drawing "{filename}" is already uploaded in this session.',
+                )
 
-    prefix = f"{_user_prefix(user)}/sessions/{session_id}/{role}"
-    # Unique object name when multiple GAs share a session
-    store_name = filename
-    if role == "drawing":
-        stem = Path(filename).stem
-        suffix = Path(filename).suffix
-        store_name = f"{stem}__{int(datetime.utcnow().timestamp())}{suffix}"
+    # All roles for one session share a single folder
+    prefix = _session_storage_prefix(user, session_id)
+    store_name = _safe_store_filename(role, filename, unique=(role == "drawing"))
 
     path, backend = _store_path(
         prefix,
@@ -922,6 +1120,7 @@ def upload_session_document(
         data,
         CONTENT_TYPES.get(ext, "application/octet-stream"),
     )
+    sniff_warns = _sniff_upload_warnings(role, data, filename, ext)
     doc = RcDocument(
         session=session,
         role=role,
@@ -932,7 +1131,7 @@ def upload_session_document(
         storage_backend=backend,
         size_bytes=len(data),
         status="uploaded",
-        warnings=[],
+        warnings=sniff_warns,
     )
 
     drawing_id = None
@@ -953,7 +1152,6 @@ def upload_session_document(
         )
         commit()
         drawing_id = drawing.id
-        doc.warnings = []
     else:
         commit()
         drawing = session.drawings.select().order_by(desc(RcDrawing.created_at)).first()
@@ -970,6 +1168,7 @@ def upload_session_document(
         "drawingId": drawing_id or (drawing_ids[-1] if drawing_ids else None),
         "drawingIds": drawing_ids,
         "canAnalyze": bool(drawing_ids),
+        "warnings": sniff_warns,
     }
 
 
@@ -1023,7 +1222,14 @@ def delete_session_document(
 
 
 @db_session
-def analyze_session(session_id: int, user: dict | None = None) -> dict:
+def analyze_session(
+    session_id: int,
+    user: dict | None = None,
+    cancel_event=None,
+    vlm_page_indexes: list[int] | None = None,
+) -> dict:
+    from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled
+
     session = RcSession.get(id=session_id)
     if not session:
         raise HTTPException(404, "Session not found")
@@ -1032,6 +1238,7 @@ def analyze_session(session_id: int, user: dict | None = None) -> dict:
     if not drawings:
         raise HTTPException(400, "Upload at least one drawing before starting analysis")
 
+    check_cancelled(cancel_event)
     session.status = "analyzing"
     for drawing in drawings:
         drawing.status = "analyzing"
@@ -1039,7 +1246,21 @@ def analyze_session(session_id: int, user: dict | None = None) -> dict:
             drawing.user = session.user
     commit()
 
-    return _analyze_session_body(session, drawings)
+    try:
+        return _analyze_session_body(
+            session,
+            drawings,
+            cancel_event=cancel_event,
+            user=user,
+            vlm_page_indexes=vlm_page_indexes,
+        )
+    except AnalysisCancelled:
+        session.status = "cancelled"
+        for drawing in drawings:
+            if drawing.status == "analyzing":
+                drawing.status = "uploaded"
+        commit()
+        raise
 
 
 def _analyze_one_ga(
@@ -1048,10 +1269,16 @@ def _analyze_one_ga(
     format_matches: dict,
     parts_list: dict | None = None,
     wire_list: dict | None = None,
+    cancel_event=None,
+    vlm_page_indexes: list[int] | None = None,
+    prompt_addendum: str | None = None,
 ) -> dict:
     """Extract + drawing-mind for a single GA; returns enriched parse dict."""
+    from app.route_card.analyze_jobs import check_cancelled
     from app.route_card.drawing_mind import get_drawing_mind
     from app.route_card.pdf_ingest import extract_spatial_pages
+
+    check_cancelled(cancel_event)
 
     data = load_bytes(drawing)
     ext = Path(drawing.filename).suffix.lower()
@@ -1082,8 +1309,11 @@ def _analyze_one_ga(
     spatial_pages: list = []
     spatial_warns: list[str] = []
     if ext == ".pdf":
-        spatial_pages, spatial_warns = extract_spatial_pages(data)
+        spatial_pages, spatial_warns = extract_spatial_pages(
+            data, cancel_event=cancel_event
+        )
 
+    check_cancelled(cancel_event)
     mind = get_drawing_mind()
     mind_result = mind.understand(
         pdf_bytes=data if ext == ".pdf" else None,
@@ -1093,6 +1323,9 @@ def _analyze_one_ga(
         wire_list=wire_list,
         source_drawing_id=drawing.id,
         source_filename=drawing.filename,
+        cancel_event=cancel_event,
+        page_indexes=vlm_page_indexes,
+        prompt_addendum=prompt_addendum,
     )
     parsed["notes"] = mind_result.notes
     parsed["mind"] = mind_result.to_dict()
@@ -1112,7 +1345,14 @@ def _analyze_one_ga(
     return parsed
 
 
-def _analyze_session_body(session: RcSession, drawings: list[RcDrawing]) -> dict:
+def _analyze_session_body(
+    session: RcSession,
+    drawings: list[RcDrawing],
+    cancel_event=None,
+    user: dict | None = None,
+    vlm_page_indexes: list[int] | None = None,
+) -> dict:
+    from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled
     from app.route_card.drawing_mind import merge_ga_extractions
 
     extra_warnings: list[str] = []
@@ -1122,6 +1362,7 @@ def _analyze_session_body(session: RcSession, drawings: list[RcDrawing]) -> dict
     primary = drawings[-1]
 
     try:
+        check_cancelled(cancel_event)
         # --- Wire List / Parts List first so mind can cross-link ---
         wl_doc = _get_role_doc(session, "wirelist")
         if wl_doc:
@@ -1197,11 +1438,31 @@ def _analyze_session_body(session: RcSession, drawings: list[RcDrawing]) -> dict
         ga_results: list[dict] = []
         mind_payloads: list[dict] = []
         for drawing in drawings:
+            check_cancelled(cancel_event)
+            dept = ""
+            prompt_addendum = ""
+            if user:
+                dept = (user.get("dept") or "").strip()
+            elif session.user:
+                dept = (session.user.dept or "").strip()
+            try:
+                from app.route_card.dept_config import few_shot_prompt_block, get_dept_rules
+
+                rules = (get_dept_rules(dept).get("rules") or {}) if dept else {}
+                prompt_addendum = (rules.get("promptAddendum") or "").strip()
+                fs = few_shot_prompt_block(dept or None, limit=3)
+                if fs:
+                    prompt_addendum = (prompt_addendum + "\n\n" + fs).strip()
+            except Exception:
+                prompt_addendum = ""
             parsed_one = _analyze_one_ga(
                 drawing,
                 format_matches=format_matches,
                 parts_list=parts_list,
                 wire_list=wire_list,
+                cancel_event=cancel_event,
+                vlm_page_indexes=vlm_page_indexes,
+                prompt_addendum=prompt_addendum or None,
             )
             ga_results.append(parsed_one)
             if parsed_one.get("mind"):
@@ -1293,6 +1554,24 @@ def _analyze_session_body(session: RcSession, drawings: list[RcDrawing]) -> dict
 
         generated = generate_route(parsed)
 
+        # Auto-apply department operation templates when configured
+        try:
+            from app.route_card.workflow import apply_auto_templates
+
+            dept = ""
+            if user:
+                dept = (user.get("dept") or "").strip()
+            elif session.user:
+                dept = (session.user.dept or "").strip()
+            generated["operations"] = apply_auto_templates(
+                generated.get("operations") or [],
+                dept=dept,
+                title_block=parsed.get("title_block") or {},
+                notes=parsed.get("notes") or [],
+            )
+        except Exception:
+            pass
+
         if wire_list:
             ga_pn = re.sub(
                 r"\s+", "", (parsed.get("title_block") or {}).get("partNumber") or ""
@@ -1358,9 +1637,33 @@ def _analyze_session_body(session: RcSession, drawings: list[RcDrawing]) -> dict
         primary.updated_at = datetime.utcnow()
         commit()
 
+        # Phase 1: review flags + item link report
+        review_flags = []
+        item_link = {}
+        try:
+            from app.route_card import review as review_mod
+
+            item_link = review_mod.build_item_link_report(
+                parsed, parts_list, mind=combined_mind
+            )
+            u_ent = session.user
+            review_flags = review_mod.rebuild_review_flags(
+                session=session,
+                card=card,
+                user=u_ent,
+                parsed=parsed,
+                parts_list=parts_list,
+                mind=combined_mind,
+                extra_warnings=extra_warnings,
+                operations=generated.get("operations") or [],
+            )
+        except Exception:
+            review_flags = []
+            item_link = {}
+
         extraction.bom_items = parsed.get("bom_items") or extraction.bom_items
         extraction.notes = parsed.get("notes") or extraction.notes
-        return build_payload(
+        payload = build_payload(
             primary,
             extraction,
             card,
@@ -1383,6 +1686,11 @@ def _analyze_session_body(session: RcSession, drawings: list[RcDrawing]) -> dict
             cross_refs=combined_mind.get("crossRefs") or [],
             view_refs=combined_mind.get("viewRefs") or [],
         )
+        payload["reviewFlags"] = review_flags
+        payload["itemLinkReport"] = item_link
+        return payload
+    except AnalysisCancelled:
+        raise
     except HTTPException:
         for d in drawings:
             d.status = "failed"
@@ -1627,21 +1935,39 @@ def _session_summary(session: RcSession) -> dict:
             op_count = len(card.operations)
             if card.part_info and isinstance(card.part_info, dict):
                 title = {**title, **dict(card.part_info or {})}
-    docs = [
-        {
-            "id": d.id,
-            "role": d.role,
-            "filename": d.filename,
-            "fileType": d.file_type,
-            "sizeBytes": d.size_bytes,
-            "sizeLabel": format_bytes(d.size_bytes),
-            "status": d.status,
-            "storageBackend": d.storage_backend,
-            "objectPath": d.object_path,
-        }
-        for d in sorted(session.documents, key=lambda x: x.role)
-    ]
     owner = session.user
+    owner_label = ""
+    if owner:
+        owner_label = owner.emp_id or owner.name or ""
+    docs = []
+    for d in sorted(session.documents, key=lambda x: (x.role, x.id)):
+        uploaded_by = owner_label
+        if d.role == "drawing":
+            for dr in session.drawings:
+                if dr.object_path == d.object_path and dr.uploaded_by:
+                    uploaded_by = dr.uploaded_by
+                    break
+        docs.append(
+            {
+                "id": d.id,
+                "role": d.role,
+                "filename": d.filename,
+                "fileType": d.file_type,
+                "sizeBytes": d.size_bytes,
+                "sizeLabel": format_bytes(d.size_bytes),
+                "status": d.status,
+                "storageBackend": d.storage_backend,
+                "objectPath": d.object_path,
+                "contentType": d.content_type,
+                "createdAt": d.created_at.isoformat() if d.created_at else None,
+                "uploadedBy": uploaded_by or None,
+                "warnings": d.warnings or [],
+            }
+        )
+    folder_key = _session_storage_prefix(
+        {"empId": owner.emp_id, "id": owner.id} if owner else None,
+        session.id,
+    ).replace("/", "_")
     return {
         "sessionId": session.id,
         "status": session.status,
@@ -1655,6 +1981,7 @@ def _session_summary(session: RcSession) -> dict:
         "routeStatus": route_status,
         "operationCount": op_count,
         "documents": docs,
+        "folder": str(get_local_upload_root() / folder_key).replace("\\", "/"),
         "user": (
             {
                 "id": owner.id,
@@ -1837,8 +2164,11 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
     name = (body.get("name") or "").strip()
     password = body.get("password") or ""
     role_n = (body.get("role") or "engineer").strip().lower()
-    if not emp_id or not name:
-        raise HTTPException(400, "empId and name are required")
+    if not name:
+        raise HTTPException(400, "name is required")
+    from app.auth import validate_employee_id
+
+    emp_id = validate_employee_id(emp_id, allow_admin_id=False)
     if len(str(password)) < 4:
         raise HTTPException(400, "password must be at least 4 characters")
 
@@ -1902,9 +2232,12 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
                 raise HTTPException(403, "Department heads cannot change department")
 
     if "empId" in body and body.get("empId") is not None:
-        emp_id = str(body.get("empId") or "").strip()
-        if not emp_id:
-            raise HTTPException(400, "empId is required")
+        from app.auth import validate_employee_id
+
+        emp_id = validate_employee_id(
+            str(body.get("empId") or ""),
+            allow_admin_id=(target.role == "admin"),
+        )
         if emp_id != target.emp_id:
             clash = RcUser.get(emp_id=emp_id)
             if clash and clash.id != target.id:
@@ -1924,7 +2257,7 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
             role_n = str(body.get("role") or "").strip().lower()
             if role_n not in {"dept_head", "engineer"}:
                 raise HTTPException(400, "role must be dept_head or engineer")
-    target.role = role_n
+            target.role = role_n
 
     commit()
     return _public_user_row(target)
@@ -2062,5 +2395,62 @@ def session_document_file(
         doc = _get_role_doc(session, (role or "").lower().strip())
         if not doc:
             raise HTTPException(404, f"No {role} document in this session")
-    data = load_path_bytes(doc.object_path, doc.storage_backend)
+    try:
+        data = load_path_bytes(doc.object_path, doc.storage_backend)
+    except FileNotFoundError:
+        raise HTTPException(
+            404,
+            f"File “{doc.filename}” is missing from storage. "
+            "It may have been moved or deleted — re-upload the document.",
+        ) from None
+    return data, doc.filename, doc.content_type or "application/octet-stream"
+
+
+@db_session
+def list_admin_uploads(
+    user: dict | None,
+    emp_id: str | None = None,
+    dept: str | None = None,
+    status: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict:
+    """Admin uploads browser — same filters as extractions, includes open sessions with files."""
+    return list_admin_extractions(
+        user,
+        emp_id=emp_id,
+        dept=dept,
+        status=status,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+
+@db_session
+def get_admin_upload_session(session_id: int, user: dict | None) -> dict:
+    if not _is_admin(user):
+        raise HTTPException(403, "Admin access required")
+    session = RcSession.get(id=session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    summary = _session_summary(session)
+    summary["documentCount"] = len(summary.get("documents") or [])
+    return summary
+
+
+@db_session
+def admin_document_file(document_id: int, user: dict | None) -> tuple[bytes, str, str]:
+    if not _is_admin(user):
+        raise HTTPException(403, "Admin access required")
+    doc = RcDocument.get(id=int(document_id))
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    try:
+        data = load_path_bytes(doc.object_path, doc.storage_backend)
+    except FileNotFoundError:
+        raise HTTPException(
+            404,
+            f"File “{doc.filename}” is missing from storage. "
+            "It may have been moved or deleted — re-upload the document.",
+        ) from None
     return data, doc.filename, doc.content_type or "application/octet-stream"

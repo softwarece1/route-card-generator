@@ -2,15 +2,90 @@ import http from '@/lib/http';
 
 const BASE = '/route-card';
 
+function detailFromPayload(data) {
+  if (data == null) return '';
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      return detailFromPayload(parsed);
+    } catch {
+      return data.trim();
+    }
+  }
+  if (typeof data?.detail === 'string') return data.detail;
+  if (Array.isArray(data?.detail)) {
+    return data.detail.map((d) => d?.msg || d).join('; ');
+  }
+  if (typeof data?.message === 'string') return data.message;
+  return '';
+}
+
+/** Prefer API detail; map bare axios status messages to readable text. */
 function asError(error, fallback) {
   if (!error?.response && (error?.message === 'Network Error' || error?.code === 'ERR_NETWORK')) {
     return 'Cannot reach API. Start the backend on port 8008, then refresh.';
   }
-  const detail = error?.response?.data?.detail;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) return detail.map((d) => d?.msg || d).join('; ');
-  return error?.message || fallback;
+  if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
+    return 'Analysis cancelled.';
+  }
+  if (
+    error?.code === 'ECONNABORTED' ||
+    /timeout/i.test(error?.message || '')
+  ) {
+    return (
+      'Analysis timed out waiting for the local vision model. ' +
+      'Keep Ollama running (model warm), or try again — first run can take several minutes.'
+    );
+  }
+  const detail = detailFromPayload(error?.response?.data);
+  if (detail) return detail;
+
+  const status = error?.response?.status;
+  if (status === 404) {
+    return fallback || 'File or record not found.';
+  }
+  if (status === 403) {
+    return 'You do not have permission for this action.';
+  }
+  if (status === 401) {
+    return 'Please sign in again.';
+  }
+  if (status >= 500) {
+    return fallback || 'Server error — please try again or contact support.';
+  }
+  if (error?.message && !/^Request failed with status code \d+$/i.test(error.message)) {
+    return error.message;
+  }
+  return fallback || error?.message || 'Request failed';
 }
+
+/** Parse FastAPI JSON error when axios used responseType: 'blob'. */
+async function asBlobError(error, fallback) {
+  const data = error?.response?.data;
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      const patched = {
+        ...error,
+        response: { ...error.response, data: text ? JSON.parse(text) : null },
+      };
+      return asError(patched, fallback);
+    } catch {
+      /* fall through */
+    }
+  }
+  return asError(error, fallback);
+}
+
+export function isCanceledError(error) {
+  return (
+    error?.code === 'ERR_CANCELED' ||
+    error?.name === 'CanceledError' ||
+    error?.response?.status === 409 ||
+    /cancelled/i.test(error?.message || '')
+  );
+}
+
 
 export async function createSession() {
   try {
@@ -52,12 +127,16 @@ export async function deleteSessionDocument(sessionId, role, documentId = null) 
   }
 }
 
-export async function analyzeSession(sessionId) {
+export async function cancelAnalyzeSession(sessionId) {
   try {
-    const { data } = await http.post(`${BASE}/sessions/${sessionId}/analyze`);
+    const { data } = await http.post(
+      `${BASE}/sessions/${sessionId}/analyze/cancel`,
+      null,
+      { timeout: 15_000 },
+    );
     return data;
-  } catch (error) {
-    throw new Error(asError(error, 'Analysis failed'));
+  } catch {
+    return { sessionId, cancelled: false };
   }
 }
 
@@ -75,7 +154,11 @@ export async function uploadDrawing(file) {
 
 export async function analyzeDrawing(drawingId) {
   try {
-    const { data } = await http.post(`${BASE}/drawings/${drawingId}/analyze`);
+    const { data } = await http.post(
+      `${BASE}/drawings/${drawingId}/analyze`,
+      null,
+      { timeout: 1_200_000 },
+    );
     return data;
   } catch (error) {
     throw new Error(asError(error, 'Analysis failed'));
@@ -109,8 +192,12 @@ export async function saveRouteDraft(routeId) {
   return data;
 }
 
-export async function approveRouteCard(routeId) {
-  const { data } = await http.post(`${BASE}/route-cards/${routeId}/approve`);
+export async function approveRouteCard(routeId, { adminOverride = false } = {}) {
+  const { data } = await http.post(
+    `${BASE}/route-cards/${routeId}/approve`,
+    null,
+    { params: adminOverride ? { adminOverride: true } : undefined },
+  );
   return data;
 }
 
@@ -141,6 +228,207 @@ export function downloadJson(filename, obj) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export async function copyJsonToClipboard(obj) {
+  const text = JSON.stringify(obj, null, 2);
+  await navigator.clipboard.writeText(text);
+}
+
+export async function fetchReviewFlags(routeId) {
+  const { data } = await http.get(`${BASE}/route-cards/${routeId}/review-flags`);
+  return data;
+}
+
+export async function resolveReviewFlag(flagId, resolved = true) {
+  const { data } = await http.patch(`${BASE}/review-flags/${flagId}`, null, {
+    params: { resolved },
+  });
+  return data;
+}
+
+export async function fetchItemLinkReport(sessionId) {
+  const { data } = await http.get(`${BASE}/sessions/${sessionId}/item-link-report`);
+  return data;
+}
+
+export async function cloneRouteToSession(sessionId, fromRouteCardId) {
+  const { data } = await http.post(
+    `${BASE}/sessions/${sessionId}/clone-route`,
+    null,
+    { params: { fromRouteCardId } },
+  );
+  return data;
+}
+
+export async function compareRouteCards(a, b) {
+  const { data } = await http.get(`${BASE}/route-cards/compare`, { params: { a, b } });
+  return data;
+}
+
+export async function fetchRouteAudit(routeId) {
+  const { data } = await http.get(`${BASE}/route-cards/${routeId}/audit`);
+  return data;
+}
+
+export async function fetchFavorites() {
+  const { data } = await http.get(`${BASE}/my/favorites`);
+  return data;
+}
+
+export async function addFavorite(payload) {
+  const { data } = await http.post(`${BASE}/my/favorites`, payload);
+  return data;
+}
+
+export async function deleteFavorite(favId) {
+  const { data } = await http.delete(`${BASE}/my/favorites/${favId}`);
+  return data;
+}
+
+export async function fetchRecent() {
+  const { data } = await http.get(`${BASE}/my/recent`);
+  return data;
+}
+
+export async function enqueueAnalyze(sessionId, { vlmPageIndexes, async: asAsync = true } = {}) {
+  const { data } = await http.post(
+    `${BASE}/sessions/${sessionId}/analyze`,
+    { vlmPageIndexes, async: asAsync },
+    { timeout: 30_000 },
+  );
+  return data;
+}
+
+export async function analyzeSession(sessionId, { signal, vlmPageIndexes } = {}) {
+  try {
+    const { data } = await http.post(
+      `${BASE}/sessions/${sessionId}/analyze`,
+      vlmPageIndexes ? { vlmPageIndexes, async: false } : { async: false },
+      { timeout: 1_200_000, signal },
+    );
+    return data;
+  } catch (error) {
+    if (isCanceledError(error)) {
+      const err = new Error('Analysis cancelled.');
+      err.code = 'ERR_CANCELED';
+      throw err;
+    }
+    throw new Error(asError(error, 'Analysis failed'));
+  }
+}
+
+export async function fetchAnalyzeJobs({ mineOnly = true } = {}) {
+  const { data } = await http.get(`${BASE}/analyze-jobs`, { params: { mineOnly } });
+  return data;
+}
+
+export async function fetchAnalyzeJob(jobId) {
+  const { data } = await http.get(`${BASE}/analyze-jobs/${jobId}`);
+  return data;
+}
+
+export async function cancelAnalyzeJob(jobId) {
+  const { data } = await http.post(`${BASE}/analyze-jobs/${jobId}/cancel`);
+  return data;
+}
+
+export async function batchEnqueueAnalyze(sessionIds) {
+  const { data } = await http.post(`${BASE}/analyze-jobs/batch`, { sessionIds });
+  return data;
+}
+
+export async function fetchQueueStats() {
+  const { data } = await http.get(`${BASE}/analyze-jobs/stats/queue`);
+  return data;
+}
+
+export async function fetchNotifications({ unreadOnly = false } = {}) {
+  const { data } = await http.get(`${BASE}/notifications`, { params: { unreadOnly } });
+  return data;
+}
+
+export async function markNotificationRead(id) {
+  const { data } = await http.post(`${BASE}/notifications/${id}/read`);
+  return data;
+}
+
+export async function markAllNotificationsRead() {
+  const { data } = await http.post(`${BASE}/notifications/read-all`);
+  return data;
+}
+
+export async function fetchDeptRules(dept) {
+  const { data } = await http.get(`${BASE}/dept-rules`, { params: dept ? { dept } : undefined });
+  return data;
+}
+
+export async function saveDeptRules(payload) {
+  const { data } = await http.put(`${BASE}/dept-rules`, payload);
+  return data;
+}
+
+export async function fetchFewShots(dept) {
+  const { data } = await http.get(`${BASE}/few-shot-examples`, {
+    params: dept ? { dept } : undefined,
+  });
+  return data;
+}
+
+export async function createFewShot(payload) {
+  const { data } = await http.post(`${BASE}/few-shot-examples`, payload);
+  return data;
+}
+
+export async function deleteFewShot(id) {
+  const { data } = await http.delete(`${BASE}/few-shot-examples/${id}`);
+  return data;
+}
+
+export async function fetchMachinesQuietly() {
+  try {
+    const { data } = await http.get(`${BASE}/machines`);
+    return data?.items || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchSystemHealth() {
+  const { data } = await http.get(`${BASE}/system/health`);
+  return data;
+}
+
+export async function fetchStorageStats() {
+  const { data } = await http.get(`${BASE}/admin/storage-stats`);
+  return data;
+}
+
+export async function runAdminBackup() {
+  const { data } = await http.post(`${BASE}/admin/backup`, null, { timeout: 600_000 });
+  return data;
+}
+
+export async function runAdminCleanup({ days = 90, dryRun = true } = {}) {
+  const { data } = await http.post(`${BASE}/admin/cleanup`, null, {
+    params: { days, dryRun },
+  });
+  return data;
+}
+
+export async function createMachine(payload) {
+  const { data } = await http.post(`${BASE}/machines`, payload);
+  return data;
+}
+
+export async function updateMachine(id, payload) {
+  const { data } = await http.put(`${BASE}/machines/${id}`, payload);
+  return data;
+}
+
+export async function deleteMachine(id) {
+  const { data } = await http.delete(`${BASE}/machines/${id}`);
+  return data;
 }
 
 export async function listFormatTemplates() {
@@ -331,12 +619,82 @@ export async function fetchAdminExtractionDetail(sessionId) {
   }
 }
 
+export async function fetchAdminUploads({
+  empId,
+  dept,
+  status,
+  fromDate,
+  toDate,
+} = {}) {
+  try {
+    const params = {};
+    if (empId) params.empId = empId;
+    if (dept) params.dept = dept;
+    if (status) params.status = status;
+    if (fromDate) params.fromDate = fromDate;
+    if (toDate) params.toDate = toDate;
+    const { data } = await http.get(`${BASE}/admin/uploads`, { params });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not load uploads'));
+  }
+}
+
+export async function fetchAdminUploadSession(sessionId) {
+  try {
+    const { data } = await http.get(`${BASE}/admin/uploads/${sessionId}`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not load session uploads'));
+  }
+}
+
+export function adminDocumentFileUrl(documentId) {
+  const base = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+  return `${base}/route-card/admin/documents/${documentId}/file`;
+}
+
+export async function fetchAdminDocumentBlob(documentId) {
+  try {
+    const { data, headers } = await http.get(
+      `${BASE}/admin/documents/${documentId}/file`,
+      { responseType: 'blob' },
+    );
+    // Some proxies still return 200 with JSON error body as a blob
+    const ctype = String(headers?.['content-type'] || '');
+    if (ctype.includes('application/json') && data instanceof Blob) {
+      const text = await data.text();
+      let detail = 'Could not open document';
+      try {
+        detail = detailFromPayload(JSON.parse(text)) || detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof Error && !error.response) throw error;
+    throw new Error(await asBlobError(error, 'Could not open document'));
+  }
+}
+
 export function sessionDocumentFileUrl(sessionId, role) {
   const base = import.meta.env.VITE_API_BASE_URL || '/api/v1';
   return `${base}/route-card/sessions/${sessionId}/documents/${role}/file`;
 }
 
-/** Standalone app has no plant machines API — panel stays hidden. */
-export async function fetchMachinesQuietly() {
-  return [];
+export async function fetchSessionDocumentBlob(sessionId, role, documentId = null) {
+  try {
+    const { data } = await http.get(
+      `${BASE}/sessions/${sessionId}/documents/${role}/file`,
+      {
+        responseType: 'blob',
+        params: documentId != null ? { documentId } : undefined,
+      },
+    );
+    return data;
+  } catch (error) {
+    throw new Error(await asBlobError(error, 'Could not download document'));
+  }
 }

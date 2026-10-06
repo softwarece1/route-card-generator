@@ -4,9 +4,11 @@ import LoginPage from '@/pages/LoginPage';
 import SignupPage from '@/pages/SignupPage';
 import ExtractionsPage from '@/pages/ExtractionsPage';
 import OperationTemplatesPage from '@/pages/OperationTemplatesPage';
+import UploadsPage from '@/pages/UploadsPage';
 import UsersPage from '@/pages/UsersPage';
 import AboutPage from '@/pages/AboutPage';
 import RouteCardGenerationAlt from '@/pages/RouteCardGenerationAlt';
+import SystemPage from '@/pages/SystemPage';
 
 export default function App() {
   return (
@@ -27,6 +29,22 @@ export default function App() {
         element={
           <ProtectedRoute>
             <ExtractionsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/system"
+        element={
+          <ProtectedRoute>
+            <SystemPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/uploads"
+        element={
+          <ProtectedRoute>
+            <UploadsPage />
           </ProtectedRoute>
         }
       />

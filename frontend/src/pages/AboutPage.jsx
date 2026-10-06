@@ -152,7 +152,7 @@ export default function AboutPage() {
         <section className="rc-landing__hero">
           <div className="rc-landing__hero-copy">
             <p className="rc-landing__eyebrow">Automated Operation &amp; Route Card</p>
-            <h1>From drawings to a manufacturable OARC</h1>
+            <h1>Automated OARC from your drawings</h1>
             <p className="rc-landing__lead">
               Upload your GA drawing and Parts List, turn operation instructions into a draft route,
               then review, edit, and print a shop-ready OARC.

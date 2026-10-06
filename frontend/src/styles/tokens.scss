@@ -77,6 +77,12 @@
   --pmf-radius-md: 0.75rem;
   --pmf-radius-lg: 1rem;
 
+  /* Shared app page content width (Generator, Extractions, Uploads, …) */
+  --pmf-page-max: 92rem;
+  --pmf-page-pad-x: 1.35rem;
+  --pmf-page-pad-top: 0.75rem;
+  --pmf-page-pad-bottom: 3rem;
+
   --pmf-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --pmf-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
   --pmf-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
@@ -306,6 +312,76 @@ body {
   color: var(--pmf-text) !important;
   border: 1px solid var(--pmf-border);
   box-shadow: var(--pmf-shadow-md);
+  font-weight: 500;
+}
+
+.rc-hot-toast--success {
+  background: var(--pmf-success-bg) !important;
+  color: var(--pmf-success-fg) !important;
+  border-color: var(--pmf-success-border) !important;
+}
+
+.rc-hot-toast--error {
+  background: var(--pmf-danger-bg) !important;
+  color: var(--pmf-danger-fg) !important;
+  border-color: var(--pmf-danger-border) !important;
+}
+
+.rc-hot-toast--warn {
+  background: var(--pmf-warning-bg) !important;
+  color: var(--pmf-warning-fg) !important;
+  border-color: var(--pmf-warning-border) !important;
+}
+
+.rc-hot-toast--info,
+.rc-hot-toast--loading {
+  background: var(--pmf-info-soft) !important;
+  color: var(--pmf-accent-deep, var(--pmf-navy)) !important;
+  border-color: var(--pmf-accent-border) !important;
+}
+
+.rc-hot-toast--loading {
+  background: #e0f2fe !important;
+}
+
+/* Comfortable header row height across Prime DataTables */
+.p-datatable .p-datatable-thead > tr > th {
+  padding-top: 1.05rem;
+  padding-bottom: 1.05rem;
+}
+
+/* Shared page shell — keep main content the same width across routes */
+.pmf-page,
+.rca-content,
+.rc-hist,
+.rc-uploads,
+.rc-system,
+.rc-users,
+.rc-otpl,
+.rc-jobs {
+  width: 100%;
+  max-width: var(--pmf-page-max);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--pmf-page-pad-x);
+  padding-right: var(--pmf-page-pad-x);
+  box-sizing: border-box;
+}
+
+.pmf-page,
+.rc-hist,
+.rc-system,
+.rc-users,
+.rc-otpl,
+.rc-jobs {
+  padding-top: var(--pmf-page-pad-top);
+  padding-bottom: var(--pmf-page-pad-bottom);
+}
+
+@media (max-width: 960px) {
+  :root {
+    --pmf-page-pad-x: 1rem;
+  }
 }
 
 /* Compact confirm / dialog chrome (body gets .pmf-compact from AppProviders) */

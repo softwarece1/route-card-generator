@@ -12,17 +12,18 @@
   .p-datatable-thead > tr > th {
     background: var(--pmf-table-head);
     color: var(--pmf-navy, var(--pmf-navy));
-    font-size: 1.05rem !important;
+    font-size: 1rem !important;
     font-weight: 600;
     letter-spacing: 0.01em;
     border: none;
     border-bottom: 1px solid var(--pmf-border-strong);
-    padding: 0.95rem 1rem;
+    padding: 1.25rem 1.1rem;
+    line-height: 1.35;
     white-space: nowrap;
   }
 
   .p-sortable-column .p-sortable-column-icon {
-    font-size: 0.8rem;
+    font-size: 0.6rem;
     color: var(--pmf-text-faint);
     margin-left: 0.25rem;
   }
