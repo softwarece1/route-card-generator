@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import { isAuthenticated } from '@/lib/auth';
 import LoginPage from '@/pages/LoginPage';
 import SignupPage from '@/pages/SignupPage';
 import ExtractionsPage from '@/pages/ExtractionsPage';
@@ -10,12 +11,18 @@ import AboutPage from '@/pages/AboutPage';
 import RouteCardGenerationAlt from '@/pages/RouteCardGenerationAlt';
 import SystemPage from '@/pages/SystemPage';
 
+/** `/` → generator when signed in, otherwise login. */
+function HomeRedirect() {
+  return <Navigate to={isAuthenticated() ? '/generator' : '/login'} replace />;
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<AboutPage />} />
+      <Route path="/" element={<HomeRedirect />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/about" element={<AboutPage />} />
       <Route
         path="/generator"
         element={
@@ -64,10 +71,9 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="/about" element={<Navigate to="/" replace />} />
       <Route path="/new" element={<Navigate to="/generator" replace />} />
       <Route path="/classic" element={<Navigate to="/generator" replace />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<HomeRedirect />} />
     </Routes>
   );
 }

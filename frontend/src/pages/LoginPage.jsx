@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
-import { InputText } from "primereact/inputtext";
 import { Password } from "primereact/password";
+import { isAuthenticated } from "@/lib/auth";
+import { sanitizeInput } from "@/lib/inputSafe";
 import { login } from "@/services/authApi";
 import AuthLogo from "@/components/AuthLogo";
+import SafeInputText from "@/components/SafeInputText";
 import ThemeToggle from "@/components/ThemeToggle";
 import heroImg from "@/assets/hero.png";
 import "./login.scss";
@@ -18,6 +20,10 @@ export default function LoginPage() {
   const [submitted, setSubmitted] = useState(false);
   const [formError, setFormError] = useState("");
   const [forgotOpen, setForgotOpen] = useState(false);
+
+  if (isAuthenticated()) {
+    return <Navigate to="/generator" replace />;
+  }
 
   const empInvalid = submitted && !empId.trim();
   const passwordInvalid = submitted && !password;
@@ -66,8 +72,9 @@ export default function LoginPage() {
               <label className="rc-login__label" htmlFor="empId">
                 Employee ID
               </label>
-              <InputText
+              <SafeInputText
                 id="empId"
+                profile="empId"
                 value={empId}
                 onChange={(e) => {
                   setEmpId(e.target.value);
@@ -78,6 +85,7 @@ export default function LoginPage() {
                 disabled={loading}
                 className={empInvalid ? "p-invalid" : undefined}
                 aria-invalid={empInvalid}
+                maxLength={64}
               />
             </div>
 
@@ -98,7 +106,7 @@ export default function LoginPage() {
                 id="password"
                 value={password}
                 onChange={(e) => {
-                  setPassword(e.target.value);
+                  setPassword(sanitizeInput(e.target.value, "password").value);
                   if (formError) setFormError("");
                 }}
                 placeholder="Enter password"
@@ -123,7 +131,7 @@ export default function LoginPage() {
             <p className="rc-login__hint">
               New here? <Link to="/signup">Create an account</Link>
               <br />
-              <Link to="/">Back to home</Link>
+              <Link to="/about">About the app</Link>
             </p>
           </form>
         </div>

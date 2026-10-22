@@ -5,8 +5,8 @@ import { Column } from "primereact/column";
 import { DataTable } from "primereact/datatable";
 import { Dialog } from "primereact/dialog";
 import { InputNumber } from "primereact/inputnumber";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
+import SafeInputText from "@/components/SafeInputText";
+import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { Message } from "primereact/message";
 import { TabPanel, TabView } from "primereact/tabview";
 import { Tooltip } from "primereact/tooltip";
@@ -342,7 +342,7 @@ export default function OarcPreviewDialog({
                 <div className="grid formgrid om-grid">
                   <div className="field col-12">
                     <label>Production Order *</label>
-                    <InputText
+                    <SafeInputText profile="text"
                       className="om-input"
                       value={header.production_order}
                       onChange={(e) => setH("production_order", e.target.value)}
@@ -351,7 +351,7 @@ export default function OarcPreviewDialog({
                   </div>
                   <div className="field col-12">
                     <label>WBS Element *</label>
-                    <InputText
+                    <SafeInputText profile="text"
                       className="om-input"
                       value={header.wbs_element}
                       onChange={(e) => setH("wbs_element", e.target.value)}
@@ -360,7 +360,7 @@ export default function OarcPreviewDialog({
                   </div>
                   <div className="field col-12">
                     <label>Sales Order *</label>
-                    <InputText
+                    <SafeInputText profile="text"
                       className="om-input"
                       value={header.sale_order}
                       onChange={(e) => setH("sale_order", e.target.value)}
@@ -369,7 +369,7 @@ export default function OarcPreviewDialog({
                   </div>
                   <div className="field col-12">
                     <label>Project Name *</label>
-                    <InputText
+                    <SafeInputText profile="text"
                       className="om-input"
                       value={header.project_name}
                       onChange={(e) => setH("project_name", e.target.value)}
@@ -378,7 +378,7 @@ export default function OarcPreviewDialog({
                   </div>
                   <div className="field col-12">
                     <label>Priority *</label>
-                    <InputText
+                    <SafeInputText profile="text"
                       className="om-input"
                       value={header.priority}
                       onChange={(e) => setH("priority", e.target.value)}
@@ -396,7 +396,7 @@ export default function OarcPreviewDialog({
                 <div className="grid formgrid om-grid">
                   <div className="field col-12">
                     <label>Part Number *</label>
-                    <InputText
+                    <SafeInputText profile="text"
                       className="om-input"
                       value={header.part_number}
                       onChange={(e) => setH("part_number", e.target.value)}
@@ -405,7 +405,7 @@ export default function OarcPreviewDialog({
                   </div>
                   <div className="field col-12">
                     <label>Part Description *</label>
-                    <InputText
+                    <SafeInputText profile="text"
                       className="om-input"
                       value={header.part_description}
                       onChange={(e) => setH("part_description", e.target.value)}
@@ -432,7 +432,7 @@ export default function OarcPreviewDialog({
                   </div>
                   <div className="field col-12 md:col-6">
                     <label>Plant ID *</label>
-                    <InputText
+                    <SafeInputText profile="text"
                       className="om-input"
                       value={header.plant_id === "" || header.plant_id == null ? "" : String(header.plant_id)}
                       onChange={(e) => setH("plant_id", e.target.value)}
@@ -557,7 +557,7 @@ export default function OarcPreviewDialog({
                         header="Workcenter"
                         style={{ minWidth: "14rem" }}
                         body={(row) => (
-                          <InputText
+                          <SafeInputText profile="text"
                             value={row["Wc/Plant"]}
                             className="w-full"
                             placeholder="Select workcenter"
@@ -572,7 +572,7 @@ export default function OarcPreviewDialog({
                           const hasInstruction = Boolean(String(row.LongText || "").trim());
                           return (
                             <div className="om-op-desc-field">
-                              <InputText
+                              <SafeInputText profile="text"
                                 value={row.Operation}
                                 placeholder="Enter operation description"
                                 className="om-op-desc-field__input w-full"
@@ -747,7 +747,7 @@ export default function OarcPreviewDialog({
                         header="Part Number"
                         style={{ minWidth: "12rem" }}
                         body={(row) => (
-                          <InputText
+                          <SafeInputText profile="text"
                             value={row["Child Part No"]}
                             className="w-full"
                             onChange={(e) => updateMat(row._rowId, "Child Part No", e.target.value)}
@@ -758,7 +758,7 @@ export default function OarcPreviewDialog({
                         header="Description"
                         style={{ minWidth: "22rem" }}
                         body={(row) => (
-                          <InputText
+                          <SafeInputText profile="text"
                             value={row.Description}
                             className="w-full"
                             onChange={(e) => updateMat(row._rowId, "Description", e.target.value)}
@@ -780,7 +780,7 @@ export default function OarcPreviewDialog({
                         header="UoM"
                         style={{ minWidth: "6rem", width: "6rem" }}
                         body={(row) => (
-                          <InputText
+                          <SafeInputText profile="text"
                             value={row.UoM}
                             className="w-full"
                             onChange={(e) => updateMat(row._rowId, "UoM", e.target.value)}
@@ -831,7 +831,7 @@ export default function OarcPreviewDialog({
                           <div className="om-create-order-card__body">
                             <div className="field">
                               <label>Document Name *</label>
-                              <InputText
+                              <SafeInputText profile="text"
                                 className="w-full om-input"
                                 value={drawingMeta.name}
                                 onChange={(e) => setDrawingMeta((m) => ({ ...m, name: e.target.value }))}
@@ -840,7 +840,7 @@ export default function OarcPreviewDialog({
                             </div>
                             <div className="field">
                               <label>Description</label>
-                              <InputTextarea
+                              <SafeInputTextarea profile="multiline"
                                 className="w-full"
                                 rows={2}
                                 value={drawingMeta.description}
@@ -852,7 +852,7 @@ export default function OarcPreviewDialog({
                             </div>
                             <div className="field">
                               <label>Version *</label>
-                              <InputText
+                              <SafeInputText profile="text"
                                 className="w-full om-input"
                                 value={drawingMeta.version}
                                 onChange={(e) =>
@@ -884,7 +884,7 @@ export default function OarcPreviewDialog({
                           <div className="om-create-order-card__body">
                             <div className="field">
                               <label>Document Name *</label>
-                              <InputText
+                              <SafeInputText profile="text"
                                 className="w-full om-input"
                                 value={plMeta.name}
                                 onChange={(e) => setPlMeta((m) => ({ ...m, name: e.target.value }))}
@@ -893,7 +893,7 @@ export default function OarcPreviewDialog({
                             </div>
                             <div className="field">
                               <label>Description</label>
-                              <InputTextarea
+                              <SafeInputTextarea profile="multiline"
                                 className="w-full"
                                 rows={2}
                                 value={plMeta.description}
@@ -905,7 +905,7 @@ export default function OarcPreviewDialog({
                             </div>
                             <div className="field">
                               <label>Version *</label>
-                              <InputText
+                              <SafeInputText profile="text"
                                 className="w-full om-input"
                                 value={plMeta.version}
                                 onChange={(e) => setPlMeta((m) => ({ ...m, version: e.target.value }))}
@@ -954,7 +954,7 @@ export default function OarcPreviewDialog({
         }
       >
         <p className="oarc-instr-dialog__hint">Operator instructions (printed on OARC).</p>
-        <InputTextarea
+        <SafeInputTextarea profile="multiline"
           value={instr.draft}
           onChange={(e) => setInstr((s) => ({ ...s, draft: e.target.value }))}
           rows={6}

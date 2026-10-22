@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 import { Dropdown } from "primereact/dropdown";
-import { InputText } from "primereact/inputtext";
+import SafeInputText from "@/components/SafeInputText";
 import { Message } from "primereact/message";
 import { Navigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import PageHeader from "@/components/PageHeader";
 import TableComponent, { TableActions, TableStatusBadge } from "@/components/TableComponent";
 import { getUser } from "@/lib/auth";
+import { sanitizeInput } from "@/lib/inputSafe";
 import { toast } from "@/lib/toast";
 import { fetchDepartments } from "@/services/authApi";
 import {
@@ -23,7 +24,8 @@ import "./users.scss";
 
 /** PrimeReact Password can miss React state updates inside Dialogs; use plain input. */
 function passwordValue(e) {
-  return e?.target?.value ?? e?.value ?? "";
+  const raw = e?.target?.value ?? e?.value ?? "";
+  return sanitizeInput(raw, "password").value;
 }
 
 const EMP_ID_DIGITS = /^\d{6}$/;
@@ -444,7 +446,8 @@ export default function UsersPage() {
           <div className="rc-users__form rc-users__form--grid">
             <label>
               Emp ID (6 digits)
-              <InputText
+              <SafeInputText
+                profile="empId"
                 value={createForm.empId}
                 onChange={(e) =>
                   setCreateForm((f) => ({
@@ -461,7 +464,8 @@ export default function UsersPage() {
             </label>
             <label>
               Name
-              <InputText
+              <SafeInputText
+                profile="personName"
                 value={createForm.name}
                 onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
                 disabled={saving}
@@ -482,7 +486,7 @@ export default function UsersPage() {
             ) : (
               <label>
                 Department
-                <InputText value={user?.dept || dept || ""} disabled />
+                <SafeInputText profile="text" value={user?.dept || dept || ""} disabled />
               </label>
             )}
             <label>
@@ -497,7 +501,7 @@ export default function UsersPage() {
             </label>
             <label>
               Password
-              <InputText
+              <SafeInputText profile="password"
                 type="password"
                 value={createForm.password}
                 onChange={(e) =>
@@ -509,7 +513,7 @@ export default function UsersPage() {
             </label>
             <label>
               Confirm password
-              <InputText
+              <SafeInputText profile="password"
                 type="password"
                 value={createForm.confirmPassword}
                 onChange={(e) =>
@@ -556,7 +560,8 @@ export default function UsersPage() {
           <div className="rc-users__form rc-users__form--grid">
             <label>
               Emp ID
-              <InputText
+              <SafeInputText
+                profile="empId"
                 value={editForm.empId}
                 onChange={(e) =>
                   setEditForm((f) => ({
@@ -573,7 +578,8 @@ export default function UsersPage() {
             </label>
             <label>
               Name
-              <InputText
+              <SafeInputText
+                profile="personName"
                 value={editForm.name}
                 onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
                 disabled={saving}
@@ -591,7 +597,7 @@ export default function UsersPage() {
                   className="w-full"
                 />
               ) : (
-                <InputText value={editForm.dept || user?.dept || dept || ""} disabled />
+                <SafeInputText profile="text" value={editForm.dept || user?.dept || dept || ""} disabled />
               )}
             </label>
             <label>
@@ -605,7 +611,7 @@ export default function UsersPage() {
                   className="w-full"
                 />
               ) : (
-                <InputText value={roleLabel(editForm.role)} disabled />
+                <SafeInputText profile="text" value={roleLabel(editForm.role)} disabled />
               )}
             </label>
           </div>
@@ -653,7 +659,7 @@ export default function UsersPage() {
           <div className="rc-users__form rc-users__form--grid">
             <label>
               New password
-              <InputText
+              <SafeInputText profile="password"
                 type="password"
                 value={resetPassword}
                 onChange={(e) => setResetPassword(passwordValue(e))}
@@ -663,7 +669,7 @@ export default function UsersPage() {
             </label>
             <label>
               Confirm password
-              <InputText
+              <SafeInputText profile="password"
                 type="password"
                 value={resetConfirm}
                 onChange={(e) => setResetConfirm(passwordValue(e))}

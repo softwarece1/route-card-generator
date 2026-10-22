@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "primereact/button";
 import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
-import { InputText } from "primereact/inputtext";
+import SafeInputText from "@/components/SafeInputText";
 import { InputNumber } from "primereact/inputnumber";
 import { MultiSelect } from "primereact/multiselect";
 import AppShell from "@/components/AppShell";
@@ -285,17 +285,16 @@ export default function SystemPage() {
               </div>
             </div>
             <div className="rc-system__actions">
-              <InputText
-                placeholder="Name"
+              <SafeInputText profile="label" placeholder="Name"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
-              <InputText
+              <SafeInputText profile="code"
                 placeholder="Work centre"
                 value={form.workCentre}
                 onChange={(e) => setForm({ ...form, workCentre: e.target.value })}
               />
-              <InputText
+              <SafeInputText profile="code"
                 placeholder="Plant"
                 value={form.plant}
                 onChange={(e) => setForm({ ...form, plant: e.target.value })}

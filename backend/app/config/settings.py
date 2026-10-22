@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     AUTH_ENABLED: bool = True
+    # RSA private key PEM for decrypting login/signup credentials (empty = auto-generate under backend/data/)
+    AUTH_RSA_PRIVATE_KEY_PATH: str = ""
 
     # Optional outbound webhook for in-app notification events (offline LAN)
     # Empty = disabled. POST JSON {title, body, link, userEmpId, createdAt}

@@ -254,17 +254,17 @@ $rca-sidebar-collapsed: 3.6rem;
   color: var(--rca-accent-strong) !important;
 }
 
-/* Compact tables */
+/* Compact tables (skip shared .rc-table — it has its own chrome) */
 .rca-shell--with-sidebar {
-  .p-datatable.p-datatable-sm .p-datatable-thead > tr > th,
-  .p-datatable .p-datatable-thead > tr > th {
+  .p-datatable.p-datatable-sm:not(.rc-table__dt) .p-datatable-thead > tr > th,
+  .p-datatable:not(.rc-table__dt) .p-datatable-thead > tr > th {
     padding: 0.4rem 0.55rem !important;
     font-size: 0.75rem !important;
     font-weight: 600;
   }
 
-  .p-datatable.p-datatable-sm .p-datatable-tbody > tr > td,
-  .p-datatable .p-datatable-tbody > tr > td {
+  .p-datatable.p-datatable-sm:not(.rc-table__dt) .p-datatable-tbody > tr > td,
+  .p-datatable:not(.rc-table__dt) .p-datatable-tbody > tr > td {
     padding: 0.35rem 0.55rem !important;
     font-size: 0.8rem !important;
   }

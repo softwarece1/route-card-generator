@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-06T05:56:47+00:00",
+  "updatedAt": "2026-10-14T08:06:02+00:00",
   "templates": [
     {
       "id": "bel-ga-default",
@@ -97,11 +97,11 @@
         "noteHeaderCountMin": 0
       },
       "stats": {
-        "useCount": 47,
+        "useCount": 55,
         "learnCount": 0
       },
       "createdAt": "2026-09-24T06:42:40+00:00",
-      "updatedAt": "2026-10-06T05:56:46+00:00"
+      "updatedAt": "2026-10-07T09:20:52+00:00"
     },
     {
       "id": "bel-wl-default",
@@ -133,11 +133,11 @@
         "noteHeaderCountMin": 0
       },
       "stats": {
-        "useCount": 0,
+        "useCount": 2,
         "learnCount": 0
       },
       "createdAt": "2026-09-24T06:42:40+00:00",
-      "updatedAt": "2026-09-24T06:42:40+00:00"
+      "updatedAt": "2026-10-07T06:05:29+00:00"
     },
     {
       "id": "learned-ga-a8d64859e2",
@@ -223,13 +223,13 @@
         ]
       },
       "stats": {
-        "useCount": 42,
+        "useCount": 50,
         "learnCount": 1
       },
       "sourceSessionId": 94,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-24T06:45:12+00:00",
-      "updatedAt": "2026-10-06T05:56:47+00:00"
+      "updatedAt": "2026-10-13T05:03:32+00:00"
     },
     {
       "id": "learned-pl-14a3a701cd",
@@ -296,13 +296,13 @@
         ]
       },
       "stats": {
-        "useCount": 27,
+        "useCount": 31,
         "learnCount": 1
       },
       "sourceSessionId": 94,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-24T06:45:14+00:00",
-      "updatedAt": "2026-09-29T08:46:39+00:00"
+      "updatedAt": "2026-10-14T08:06:01+00:00"
     },
     {
       "id": "learned-ga-f5ed4e252b",
@@ -803,13 +803,110 @@
         ]
       },
       "stats": {
-        "useCount": 3,
+        "useCount": 5,
         "learnCount": 1
       },
       "sourceSessionId": 275,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-28T11:18:11+00:00",
-      "updatedAt": "2026-09-29T09:21:35+00:00"
+      "updatedAt": "2026-10-07T05:55:47+00:00"
+    },
+    {
+      "id": "learned-ga-b80d291367",
+      "name": "GA drawing \u2014 112185749834",
+      "docType": "GA",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "ASSY INSTRUCTIONS",
+          "ASSEMBLY INSTRUCTIONS",
+          "CTQ POINTS",
+          "CTQ POINT",
+          "CRITICAL TO QUALITY POINTS"
+        ],
+        "plColumns": {},
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "GA",
+        "keywords": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "ASSY INSTRUCTIONS",
+          "notes",
+          "wire_list",
+          "title",
+          "ga",
+          "bel_pn"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": false,
+        "hasWireListHeader": true,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "---",
+          "00",
+          "001",
+          "100",
+          "1121",
+          "115.0",
+          "119.5",
+          "224.0",
+          "24.02.23",
+          "25.01.2024",
+          "3-PCU",
+          "325VDC",
+          "34",
+          "498",
+          "5.0",
+          "55.0",
+          "857",
+          "A3",
+          "ADHESIVE.",
+          "ALL",
+          "ALLOWED",
+          "ANY",
+          "APPRD",
+          "ARE",
+          "AS",
+          "ASSY",
+          "BANGALORE",
+          "BHARAT",
+          "CD6",
+          "CHANGE",
+          "CHECKED",
+          "CN.",
+          "CODE",
+          "CONSENT",
+          "DATE",
+          "DIMENSIONS",
+          "DISCLOSURE",
+          "DO",
+          "DOC",
+          "DOCUMENT"
+        ]
+      },
+      "stats": {
+        "useCount": 3,
+        "learnCount": 1
+      },
+      "sourceSessionId": 9,
+      "notes": "Saved after engineer review",
+      "createdAt": "2026-10-13T06:25:44+00:00",
+      "updatedAt": "2026-10-14T08:06:02+00:00"
     }
   ]
 }

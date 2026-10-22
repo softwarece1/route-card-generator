@@ -34,10 +34,11 @@ ITEM_PAIR = re.compile(
     r"(?:ITEMS?|ITMS?)\s*(?:NO\.?|NOS\.?|#)?\s*-?\s*(\d{1,3})\s*(?:&|AND|,)\s*(\d{1,3})",
     re.I,
 )
+# Capital N required for the unit (Nm / N·m / N-m / NM). Not re.I —
+# otherwise "850 nm" (IR wavelength) is misread as 850 Nm torque.
 TORQUE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*(?:N\s*[-.]?\s*m|Nm|NEWTON\s*M)"
-    r"|(\d+(?:\.\d+)?)\s*(?:N\s*[-.]?\s*m|Nm)",
-    re.I,
+    r"(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*(?:N\s*[-.]?\s*[mM]|N[mM]|N·[mM]|[Nn]ewton\s*[Mm])"
+    r"|(\d+(?:\.\d+)?)\s*(?:N\s*[-.]?\s*[mM]|N[mM]|N·[mM])"
 )
 CONNECTOR = re.compile(r"\bJ\d+\b", re.I)
 STANDARD = re.compile(r"\bPS\s*\d{3}\b", re.I)
@@ -46,7 +47,7 @@ WEIGHT = re.compile(
     r"(?:WEIGHT|MASS|WT\.?)\s*:?\s*(\d+(?:\.\d+)?)\s*(?:\+/?-|±)\s*(\d+(?:\.\d+)?)\s*(?:kg|kgs)?",
     re.I,
 )
-FINISH_UM = re.compile(r"(\d+)\s*[μµu]m", re.I)
+FINISH_UM = re.compile(r"(\d+(?:\.\d+)?)\s*[μµu]m", re.I)
 THRU_HOLE = re.compile(
     r"(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(?:THRU|THROUGH|THR\.?)",
     re.I,

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
 import { Password } from "primereact/password";
 import { Dropdown } from "primereact/dropdown";
 import {
@@ -9,7 +8,10 @@ import {
   fetchDepartments,
   fetchEmpStatus,
 } from "@/services/authApi";
+import { isAuthenticated } from "@/lib/auth";
+import { sanitizeInput } from "@/lib/inputSafe";
 import AuthLogo from "@/components/AuthLogo";
+import SafeInputText from "@/components/SafeInputText";
 import ThemeToggle from "@/components/ThemeToggle";
 import heroImg from "@/assets/hero.png";
 import "./login.scss";
@@ -24,6 +26,10 @@ function isValidEmployeeId(value) {
 export default function SignupPage() {
   const navigate = useNavigate();
   const empCheckSeq = useRef(0);
+
+  if (isAuthenticated()) {
+    return <Navigate to="/generator" replace />;
+  }
 
   const [empId, setEmpId] = useState("");
   const [name, setName] = useState("");
@@ -156,11 +162,12 @@ export default function SignupPage() {
               <label className="rc-login__label" htmlFor="empId">
                 Employee ID
               </label>
-              <InputText
+              <SafeInputText
                 id="empId"
+                profile="empId"
                 value={empId}
                 onChange={(e) => {
-                  const next = e.target.value.replace(/\D/g, "").slice(0, 6);
+                  const next = String(e.target.value || "").replace(/\D/g, "").slice(0, 6);
                   setEmpId(next);
                   setEmpStatus(null);
                   setVerifiedEmployee(null);
@@ -206,8 +213,9 @@ export default function SignupPage() {
                 <label className="rc-login__label" htmlFor="name">
                   Name
                 </label>
-                <InputText
+                <SafeInputText
                   id="name"
+                  profile="personName"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Enter full name"
@@ -215,6 +223,7 @@ export default function SignupPage() {
                   disabled={loading}
                   className={nameInvalid ? "p-invalid" : undefined}
                   aria-invalid={nameInvalid}
+                  maxLength={255}
                 />
               </div>
             ) : null}
@@ -246,7 +255,7 @@ export default function SignupPage() {
               <Password
                 id="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => setPassword(sanitizeInput(e.target.value, "password").value)}
                 placeholder="Enter password"
                 feedback={false}
                 toggleMask
@@ -264,7 +273,9 @@ export default function SignupPage() {
               <Password
                 id="confirmPassword"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
+                onChange={(e) =>
+                  setConfirmPassword(sanitizeInput(e.target.value, "password").value)
+                }
                 placeholder="Confirm password"
                 feedback={false}
                 toggleMask
@@ -286,7 +297,7 @@ export default function SignupPage() {
             <p className="rc-login__hint">
               Already registered? <Link to="/login">Sign in</Link>
               <br />
-              <Link to="/">Back to home</Link>
+              <Link to="/about">About the app</Link>
             </p>
           </form>
         </div>

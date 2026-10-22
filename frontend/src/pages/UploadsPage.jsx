@@ -3,7 +3,7 @@ import { Button } from "primereact/button";
 import { Column } from "primereact/column";
 import { DataTable } from "primereact/datatable";
 import { Dialog } from "primereact/dialog";
-import { InputText } from "primereact/inputtext";
+import SafeInputText from "@/components/SafeInputText";
 import { Message } from "primereact/message";
 import AppShell from "@/components/AppShell";
 import ExcelPreviewDialog from "@/components/ExcelPreviewDialog";
@@ -431,7 +431,7 @@ export default function UploadsPage() {
             </div>
             <div className="rc-up-side__search">
               <i className="pi pi-search" aria-hidden />
-              <InputText
+              <SafeInputText profile="search"
                 value={folderQuery}
                 onChange={(e) => setFolderQuery(e.target.value)}
                 placeholder="Search folders…"
@@ -486,7 +486,7 @@ export default function UploadsPage() {
             <div className="rc-up-toolbar">
               <div className="rc-up-search">
                 <i className="pi pi-search" aria-hidden />
-                <InputText
+                <SafeInputText profile="search"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search documents (min. 2 characters)…"

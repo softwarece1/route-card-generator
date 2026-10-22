@@ -4,8 +4,8 @@ import { Button } from "primereact/button";
 import { Column } from "primereact/column";
 import { DataTable } from "primereact/datatable";
 import { Dialog } from "primereact/dialog";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
+import SafeInputText from "@/components/SafeInputText";
+import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { Message } from "primereact/message";
 import { ProgressBar } from "primereact/progressbar";
 import { TabPanel, TabView } from "primereact/tabview";
@@ -1982,7 +1982,7 @@ export default function RouteCardGenerationAlt() {
             ].map(([key, label]) => (
               <div className="field col-12 md:col-6" key={key}>
                 <label htmlFor={`rca-${key}`}>{label}</label>
-                <InputText
+                <SafeInputText profile="text"
                   id={`rca-${key}`}
                   value={editRow[key] ?? ""}
                   onChange={(e) => setEditRow((r) => ({ ...r, [key]: e.target.value }))}
@@ -1991,7 +1991,7 @@ export default function RouteCardGenerationAlt() {
             ))}
             <div className="field col-12">
               <label htmlFor="rca-instructionText">Operation instruction</label>
-              <InputTextarea
+              <SafeInputTextarea profile="multiline"
                 id="rca-instructionText"
                 rows={4}
                 value={editRow.instructionText ?? ""}

@@ -2160,13 +2160,15 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
     if actor_role not in {"admin", "dept_head"}:
         raise HTTPException(403, "Department head or admin access required")
 
-    emp_id = (body.get("empId") or "").strip()
-    name = (body.get("name") or "").strip()
-    password = body.get("password") or ""
+    from app.auth import validate_employee_id
+    from app.input_safe import require_safe
+
+    emp_id = require_safe((body.get("empId") or "").strip(), "empId", field="empId")
+    name = require_safe((body.get("name") or "").strip(), "personName", field="name")
+    password = require_safe(str(body.get("password") or ""), "password", field="password")
     role_n = (body.get("role") or "engineer").strip().lower()
     if not name:
         raise HTTPException(400, "name is required")
-    from app.auth import validate_employee_id
 
     emp_id = validate_employee_id(emp_id, allow_admin_id=False)
     if len(str(password)) < 4:
@@ -2233,9 +2235,10 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
 
     if "empId" in body and body.get("empId") is not None:
         from app.auth import validate_employee_id
+        from app.input_safe import require_safe
 
         emp_id = validate_employee_id(
-            str(body.get("empId") or ""),
+            require_safe(str(body.get("empId") or ""), "empId", field="empId"),
             allow_admin_id=(target.role == "admin"),
         )
         if emp_id != target.emp_id:
@@ -2245,7 +2248,9 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
             target.emp_id = emp_id
 
     if "name" in body and body.get("name") is not None:
-        name = str(body.get("name") or "").strip()
+        from app.input_safe import require_safe
+
+        name = require_safe(str(body.get("name") or "").strip(), "personName", field="name")
         if not name:
             raise HTTPException(400, "name is required")
         target.name = name
@@ -2270,7 +2275,10 @@ def reset_managed_user_password(actor: dict | None, user_id: int, password: str)
     actor_role = (actor.get("role") or "").strip().lower()
     if actor_role not in {"admin", "dept_head"}:
         raise HTTPException(403, "Department head or admin access required")
-    raw = str(password or "")
+    from app.input_safe import require_safe
+    from app.security import hash_password, verify_password
+
+    raw = require_safe(str(password or ""), "password", field="password")
     if len(raw) < 4:
         raise HTTPException(400, "password must be at least 4 characters")
 
@@ -2284,8 +2292,6 @@ def reset_managed_user_password(actor: dict | None, user_id: int, password: str)
         _assert_can_manage_target(actor, target)
         if target.role != "engineer":
             raise HTTPException(403, "Department heads can only reset engineer passwords")
-
-    from app.security import hash_password, verify_password
 
     new_hash = hash_password(raw)
     target.password_hash = new_hash

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
+import SafeInputText from "@/components/SafeInputText";
+import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { getUser } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import {
@@ -54,11 +54,11 @@ export default function DeptRulesPanel() {
         Auto-apply operation template IDs on analyze (when keywords match), and add VLM prompt guidance.
       </p>
       <label className="block mb-2">Auto template IDs (comma-separated)</label>
-      <InputText className="w-full mb-3" value={autoIds} onChange={(e) => setAutoIds(e.target.value)} />
+      <SafeInputText profile="text" className="w-full mb-3" value={autoIds} onChange={(e) => setAutoIds(e.target.value)} />
       <label className="block mb-2">Keywords (comma-separated; empty = always)</label>
-      <InputText className="w-full mb-3" value={keywords} onChange={(e) => setKeywords(e.target.value)} />
+      <SafeInputText profile="text" className="w-full mb-3" value={keywords} onChange={(e) => setKeywords(e.target.value)} />
       <label className="block mb-2">VLM prompt addendum</label>
-      <InputTextarea className="w-full mb-3" rows={4} value={addendum} onChange={(e) => setAddendum(e.target.value)} />
+      <SafeInputTextarea profile="multiline" className="w-full mb-3" rows={4} value={addendum} onChange={(e) => setAddendum(e.target.value)} />
       <Button
         type="button"
         label="Save rules"
@@ -85,13 +85,13 @@ export default function DeptRulesPanel() {
       />
 
       <h3>Few-shot elaborations</h3>
-      <InputText
+      <SafeInputText profile="text"
         className="w-full mb-2"
         placeholder="Title"
         value={exTitle}
         onChange={(e) => setExTitle(e.target.value)}
       />
-      <InputTextarea
+      <SafeInputTextarea profile="multiline"
         className="w-full mb-2"
         rows={3}
         placeholder="Simple shop-floor wording (e.g. Stick Item 2 on DC OUT face. Keep 5 mm from top...)"

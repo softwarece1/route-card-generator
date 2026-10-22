@@ -11,7 +11,7 @@ WIRE_ROW = re.compile(
     r"(?P<frm>(?:J\d+-\d+|P\d+-[A-Z]))\s+"
     r"(?P<to>PK\d+-P\d+-\d+)\s+"
     r"(?P<fn>[A-Z0-9_]+)\s+"
-    r"(?P<wtype>WIRE\s+LFH[^\d]*?)\s+"
+    r"(?P<wtype>WIRE\s+LFH.*?)\s+"
     r"(?P<pno>\d{4}\s+\d{3}\s+\d{3}\s+\d{2})\s+"
     r"(?P<length>\d{3,5})"
     r"(?:\s+(?P<remarks>.+))?",
@@ -67,23 +67,27 @@ def parse_wirelist_text(text: str, filename: str = "", *, format_aliases: dict |
     flat = re.sub(r"[ \t]+", " ", text)
     joined = re.sub(r"\n+", "\n", flat)
 
-    wires = []
-    for m in WIRE_ROW.finditer(joined.replace("\n", " ")):
-        wires.append(
-            {
-                "slNo": int(m.group("sl")),
-                "from": m.group("frm"),
-                "to": m.group("to"),
-                "function": m.group("fn"),
-                "wireType": re.sub(r"\s+", " ", m.group("wtype")).strip(),
-                "partNo": re.sub(r"\s+", " ", m.group("pno")).strip(),
-                "lengthMm": int(m.group("length")),
-                "remarks": (m.group("remarks") or "").strip()[:200],
-            }
-        )
+    def _row_from_match(m) -> dict:
+        return {
+            "slNo": int(m.group("sl")),
+            "from": m.group("frm"),
+            "to": m.group("to"),
+            "function": m.group("fn"),
+            "wireType": re.sub(r"\s+", " ", m.group("wtype")).strip(),
+            "partNo": re.sub(r"\s+", " ", m.group("pno")).strip(),
+            "lengthMm": int(m.group("length")),
+            "remarks": (m.group("remarks") or "").strip()[:200],
+        }
+
+    # Per-line pass first: keeps remarks bounded to their own row (Excel/TSV exports).
+    wires = [_row_from_match(m) for line in joined.splitlines() if (m := WIRE_ROW.search(line))]
+    if not wires:
+        wires = [_row_from_match(m) for m in WIRE_ROW.finditer(joined.replace("\n", " "))]
 
     if len(wires) < 10:
-        wires = _loose_rows(text)
+        loose = _loose_rows(text)
+        if len(loose) > len(wires):
+            wires = loose
         if not wires:
             warnings.append("Wire List text found but few/no wire rows parsed. Prefer a clean PDF export.")
 
@@ -99,17 +103,30 @@ def parse_wirelist_text(text: str, filename: str = "", *, format_aliases: dict |
 
     notes = []
     for line in text.splitlines():
-        low = line.lower()
+        cleaned = re.sub(r"\s+", " ", line).strip()
+        if len(cleaned) < 8:
+            continue
+        # Skip wire table header / data rows (Excel TSV flattens them into text).
+        if WIRE_ROW.search(cleaned) or _loose_rows(cleaned):
+            continue
+        cells = [c.strip() for c in line.split("\t") if str(c).strip()]
+        if cells and re.fullmatch(r"\d+", cells[0]) and len(cells) >= 4:
+            if any(FROM_RE.match(c) for c in cells[1:3]):
+                continue
+        if re.match(r"^SL\b", cleaned, re.I) and re.search(r"\bFROM\b", cleaned, re.I):
+            continue
+        low = cleaned.lower()
+        is_note = bool(re.match(r"^\d+\.\s+", cleaned)) or bool(
+            re.match(r"^notes?\s*:?\s*$", cleaned, re.I)
+        )
         if (
-            WL_NOTE_LINE.search(line)
+            is_note
+            or (WL_NOTE_LINE.search(cleaned) and "part no" not in low)
             or "fold back" in low
-            or "twist" in low
+            or (low.startswith("twist") and not FROM_RE.search(cleaned))
             or "note 1" in low
-            or "remark" in low
         ):
-            cleaned = re.sub(r"\s+", " ", line).strip()
-            if len(cleaned) >= 8:
-                notes.append(cleaned)
+            notes.append(cleaned)
     pl_refs = [{"itemNo": int(x), "source": "WL note"} for x in NOTE_PL.findall(text)]
 
     return {

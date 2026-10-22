@@ -12,7 +12,10 @@ from jose import JWTError, jwt
 from pony.orm import db_session, select
 from pydantic import BaseModel, Field
 
+from app.auth_crypto import ALG as CREDS_ALG
+from app.auth_crypto import decrypt_creds_cipher, public_key_info
 from app.config.settings import settings
+from app.input_safe import require_safe
 from app.route_card.models import RcDepartment, RcUser
 from app.security import hash_password, verify_password
 
@@ -25,15 +28,17 @@ _ADMIN_EMP_ID = "admin"
 
 
 class SignupRequest(BaseModel):
-    empId: str = Field(..., min_length=1, max_length=64)
+    """name/dept stay plaintext; empId+password arrive in RSA cipher."""
+
     name: str = Field(..., min_length=1, max_length=255)
     dept: str = Field(..., min_length=1, max_length=128)
-    password: str = Field(..., min_length=4, max_length=128)
+    cipher: str = Field(..., min_length=1)
+    alg: str = Field(default=CREDS_ALG, max_length=64)
 
 
 class LoginRequest(BaseModel):
-    empId: str = Field(..., min_length=1, max_length=64)
-    password: str = Field(..., min_length=1, max_length=128)
+    cipher: str = Field(..., min_length=1)
+    alg: str = Field(default=CREDS_ALG, max_length=64)
 
 
 class LoginResponse(BaseModel):
@@ -201,12 +206,25 @@ def emp_status(emp_id: str):
     }
 
 
+@router.get("/public-key")
+def auth_public_key():
+    """SPKI PEM for encrypting empId+password before login/signup."""
+    return public_key_info()
+
+
 @router.post("/signup", response_model=LoginResponse)
 @db_session
 def signup(body: SignupRequest):
-    emp_id = validate_employee_id(body.empId, allow_admin_id=False)
-    name = (body.name or "").strip()
-    dept = (body.dept or "").strip()
+    creds = decrypt_creds_cipher(body.cipher, body.alg)
+    emp_id = validate_employee_id(
+        require_safe(str(creds.get("empId") or ""), "empId", field="empId"),
+        allow_admin_id=False,
+    )
+    password = require_safe(str(creds.get("password") or ""), "password", field="password")
+    if len(password) < 4:
+        raise HTTPException(400, "password must be at least 4 characters")
+    name = require_safe((body.name or "").strip(), "personName", field="name")
+    dept = require_safe((body.dept or "").strip(), "label", field="dept")
     if not name:
         raise HTTPException(400, "name is required")
     if not dept:
@@ -223,7 +241,7 @@ def signup(body: SignupRequest):
         emp_id=emp_id,
         name=name,
         dept=dept,
-        password_hash=hash_password(body.password),
+        password_hash=hash_password(password),
         role="engineer",
         is_active=True,
     )
@@ -241,11 +259,13 @@ def signup(body: SignupRequest):
 @router.post("/login", response_model=LoginResponse)
 @db_session
 def login(body: LoginRequest):
-    emp_id = _normalize_emp_id(body.empId)
+    creds = decrypt_creds_cipher(body.cipher, body.alg)
+    emp_id = require_safe(_normalize_emp_id(str(creds.get("empId") or "")), "empId", field="empId")
+    password = require_safe(str(creds.get("password") or ""), "password", field="password")
     if emp_id.lower() == _ADMIN_EMP_ID:
         emp_id = _ADMIN_EMP_ID
     user = RcUser.get(emp_id=emp_id)
-    if not user or not user.is_active or not verify_password(body.password, user.password_hash):
+    if not user or not user.is_active or not verify_password(password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid empId or password",

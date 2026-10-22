@@ -116,7 +116,7 @@ export default function AboutPage() {
 
       <header className="rc-landing__nav">
         <div className="rc-landing__nav-inner">
-          <Link to="/" className="rc-landing__brand">
+          <Link to="/about" className="rc-landing__brand">
             <img src={logoSvg} alt="" className="rc-landing__brand-logo" />
             <span>
               <strong>OARC</strong>

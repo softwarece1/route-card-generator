@@ -56,6 +56,13 @@ function navItemsForRole(role) {
     label: "Templates",
     id: "templates",
   });
+  base.push({
+    to: "/about",
+    end: false,
+    icon: "pi pi-info-circle",
+    label: "About",
+    id: "about",
+  });
   return base;
 }
 
@@ -183,7 +190,7 @@ export default function AppShell({ active = "generator", children }) {
               tooltipOptions={{ position: "bottom" }}
               onClick={() => {
                 logout();
-                navigate("/");
+                navigate("/login", { replace: true });
               }}
             />
           </div>

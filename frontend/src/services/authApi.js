@@ -1,14 +1,47 @@
 import http from '@/lib/http';
 import { setAuth, clearAuth, getUser } from '@/lib/auth';
+import { encryptCredentials } from '@/lib/credCrypto';
+import { sanitizeInput } from '@/lib/inputSafe';
+
+let publicKeyPromise = null;
+
+async function fetchPublicKey() {
+  if (!publicKeyPromise) {
+    publicKeyPromise = http
+      .get('/auth/public-key')
+      .then(({ data }) => data)
+      .catch((err) => {
+        publicKeyPromise = null;
+        throw err;
+      });
+  }
+  return publicKeyPromise;
+}
+
+async function encryptedCredsBody(empId, password) {
+  const keyInfo = await fetchPublicKey();
+  const safeEmp = sanitizeInput(empId, 'empId').value;
+  const safePass = sanitizeInput(password, 'password').value;
+  return encryptCredentials(keyInfo, { empId: safeEmp, password: safePass });
+}
 
 export async function login(empId, password) {
-  const { data } = await http.post('/auth/login', { empId, password });
+  const body = await encryptedCredsBody(empId, password);
+  const { data } = await http.post('/auth/login', body);
   setAuth(data.access_token, data.user);
   return data;
 }
 
 export async function signup({ empId, name, dept, password }) {
-  const { data } = await http.post('/auth/signup', { empId, name, dept, password });
+  const { cipher, alg } = await encryptedCredsBody(empId, password);
+  const safeName = sanitizeInput(name, 'personName').value;
+  const safeDept = sanitizeInput(dept, 'label').value;
+  const { data } = await http.post('/auth/signup', {
+    name: safeName,
+    dept: safeDept,
+    cipher,
+    alg,
+  });
   setAuth(data.access_token, data.user);
   return data;
 }
@@ -45,6 +78,7 @@ export async function fetchEmpStatus(empId) {
 
 export function logout() {
   clearAuth();
+  publicKeyPromise = null;
 }
 
 export { getUser };

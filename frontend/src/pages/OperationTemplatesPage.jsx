@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 import { Dropdown } from "primereact/dropdown";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
+import SafeInputText from "@/components/SafeInputText";
+import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { Message } from "primereact/message";
 import { TabPanel, TabView } from "primereact/tabview";
 import AppShell from "@/components/AppShell";
@@ -557,7 +557,7 @@ export default function OperationTemplatesPage() {
         <div className="rc-otpl-form">
           <div className="rc-otpl-form__row">
             <label>Name *</label>
-            <InputText
+            <SafeInputText profile="text"
               value={editor.name}
               onChange={(e) => setEditor((x) => ({ ...x, name: e.target.value }))}
               className="w-full"
@@ -587,7 +587,7 @@ export default function OperationTemplatesPage() {
           </div>
           <div className="rc-otpl-form__row">
             <label>Description</label>
-            <InputTextarea
+            <SafeInputTextarea profile="multiline"
               value={editor.description}
               onChange={(e) => setEditor((x) => ({ ...x, description: e.target.value }))}
               rows={2}
@@ -644,7 +644,7 @@ export default function OperationTemplatesPage() {
               <div className="rc-otpl-step__grid">
                 <div>
                   <label>Operation *</label>
-                  <InputText
+                  <SafeInputText profile="text"
                     value={step.operation}
                     onChange={(e) => updateStep(step._key, "operation", e.target.value)}
                     className="w-full"
@@ -653,7 +653,7 @@ export default function OperationTemplatesPage() {
                 </div>
                 <div>
                   <label>Work centre</label>
-                  <InputText
+                  <SafeInputText profile="text"
                     value={step.workCentre}
                     onChange={(e) => updateStep(step._key, "workCentre", e.target.value)}
                     className="w-full"
@@ -662,7 +662,7 @@ export default function OperationTemplatesPage() {
                 </div>
                 <div>
                   <label>Setup</label>
-                  <InputText
+                  <SafeInputText profile="text"
                     value={step.setup}
                     onChange={(e) => updateStep(step._key, "setup", e.target.value)}
                     className="w-full"
@@ -670,7 +670,7 @@ export default function OperationTemplatesPage() {
                 </div>
                 <div>
                   <label>Per pc time</label>
-                  <InputText
+                  <SafeInputText profile="text"
                     value={step.time}
                     onChange={(e) => updateStep(step._key, "time", e.target.value)}
                     className="w-full"
@@ -678,7 +678,7 @@ export default function OperationTemplatesPage() {
                 </div>
                 <div className="rc-otpl-step__full">
                   <label>Instruction (LongText)</label>
-                  <InputTextarea
+                  <SafeInputTextarea profile="multiline"
                     value={step.instructionText}
                     onChange={(e) => updateStep(step._key, "instructionText", e.target.value)}
                     rows={2}
@@ -724,7 +724,7 @@ export default function OperationTemplatesPage() {
           <strong>{user?.dept || "your department"}</strong>.
         </p>
         <label className="block mb-1 text-sm">New name</label>
-        <InputText
+        <SafeInputText profile="text"
           value={dup.name}
           onChange={(e) => setDup((d) => ({ ...d, name: e.target.value }))}
           className="w-full"
