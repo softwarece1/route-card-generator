@@ -1,12 +1,19 @@
 /**
  * Encrypt login/signup credentials with the server RSA public key (RSA-OAEP SHA-256).
  * Payload is JSON: { empId, password } — never send those fields in cleartext.
+ *
+ * Uses Web Crypto when available (HTTPS / localhost). On plain HTTP LAN IPs,
+ * browsers hide crypto.subtle — fall back to node-forge (same OAEP+SHA-256).
  */
+
+import forge from 'node-forge';
 
 const ALG = 'RSA-OAEP-SHA256';
 
-let cachedKey = null;
-let cachedPem = '';
+let cachedSubtleKey = null;
+let cachedSubtlePem = '';
+let cachedForgeKey = null;
+let cachedForgePem = '';
 
 function pemToArrayBuffer(pem) {
   const b64 = String(pem || '')
@@ -21,8 +28,16 @@ function pemToArrayBuffer(pem) {
   return bytes.buffer;
 }
 
-async function importPublicKey(pem) {
-  if (cachedKey && cachedPem === pem) return cachedKey;
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+async function importSubtleKey(pem) {
+  if (cachedSubtleKey && cachedSubtlePem === pem) return cachedSubtleKey;
   const key = await crypto.subtle.importKey(
     'spki',
     pemToArrayBuffer(pem),
@@ -30,13 +45,37 @@ async function importPublicKey(pem) {
     false,
     ['encrypt'],
   );
-  cachedKey = key;
-  cachedPem = pem;
+  cachedSubtleKey = key;
+  cachedSubtlePem = pem;
   return key;
 }
 
+function importForgeKey(pem) {
+  if (cachedForgeKey && cachedForgePem === pem) return cachedForgeKey;
+  const key = forge.pki.publicKeyFromPem(pem);
+  cachedForgeKey = key;
+  cachedForgePem = pem;
+  return key;
+}
+
+async function encryptWithSubtle(pem, payload) {
+  const key = await importSubtleKey(pem);
+  const encoded = new TextEncoder().encode(payload);
+  const cipherBuf = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, encoded);
+  return bytesToBase64(new Uint8Array(cipherBuf));
+}
+
+function encryptWithForge(pem, payload) {
+  const key = importForgeKey(pem);
+  const encrypted = key.encrypt(payload, 'RSA-OAEP', {
+    md: forge.md.sha256.create(),
+    mgf1: { md: forge.md.sha256.create() },
+  });
+  return forge.util.encode64(encrypted);
+}
+
 /**
- * @param {{ publicKeyPem: string }} keyInfo from GET /auth/public-key
+ * @param {{ publicKeyPem: string, alg?: string }} keyInfo from GET /auth/public-key
  * @param {{ empId: string, password: string }} creds
  * @returns {Promise<{ cipher: string, alg: string }>}
  */
@@ -45,23 +84,20 @@ export async function encryptCredentials(keyInfo, creds) {
   if (!pem) {
     throw new Error('Server public key is missing');
   }
-  if (!window.crypto?.subtle) {
-    throw new Error('Web Crypto is not available in this browser (use HTTPS or localhost)');
-  }
-  const key = await importPublicKey(pem);
   const payload = JSON.stringify({
     empId: String(creds?.empId || '').trim(),
     password: String(creds?.password || ''),
   });
-  const encoded = new TextEncoder().encode(payload);
-  const cipherBuf = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, encoded);
-  const bytes = new Uint8Array(cipherBuf);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 1) {
-    binary += String.fromCharCode(bytes[i]);
+
+  let cipher;
+  if (window.crypto?.subtle) {
+    cipher = await encryptWithSubtle(pem, payload);
+  } else {
+    cipher = encryptWithForge(pem, payload);
   }
+
   return {
-    cipher: btoa(binary),
+    cipher,
     alg: keyInfo?.alg || ALG,
   };
 }
