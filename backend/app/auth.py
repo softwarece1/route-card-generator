@@ -25,6 +25,10 @@ import base64
 # In‑memory revocation store (shared across workers only if using a single process)
 _revoked_tokens: Set[str] = set()
 
+# Mapping of user ID to the current active token's jti (session identifier)
+_active_sessions: dict[int, str] = {}
+
+
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 security = HTTPBearer(auto_error=False)
 
@@ -103,6 +107,8 @@ def create_access_token(*, emp_id: str, role: str, user_id: int) -> str:
         "exp": expire,
         "jti": jti,
     }
+    # Store the active session identifier for this user
+    _active_sessions[user_id] = jti
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
@@ -164,6 +170,13 @@ def get_current_user(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found or inactive",
+            )
+        # Verify session identifier matches active session
+        active_jti = _active_sessions.get(user.id)
+        if active_jti != jti:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Your account has been signed in from another browser. Please sign in again."
             )
         return _user_public(user)
 

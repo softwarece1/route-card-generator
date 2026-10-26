@@ -396,7 +396,9 @@
   background: var(--pmf-surface);
   color: var(--rc-auth-navy);
   padding: 0;
-  display: grid;
+  display: flex;
+  align-items: bottom;
+  justify-content: bottom;
   place-items: center;
 
   &:hover:not(:disabled) {
@@ -451,4 +453,11 @@
     max-width: 400px;
     margin: auto 0;
   }
+}
+
+/* Fix CAPTCHA refresh button icon vertical alignment */
+.rc-login .p-button.rc-login__captcha-refresh .p-button.icon {
+  display: flex;
+  align-items: bottom;
+  justify-content: bottom;
 }
