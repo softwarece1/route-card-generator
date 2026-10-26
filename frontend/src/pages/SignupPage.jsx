@@ -16,8 +16,40 @@ import ThemeToggle from "@/components/ThemeToggle";
 import heroImg from "@/assets/hero.png";
 import "./login.scss";
 
-const MIN_PASSWORD = 4;
 const EMP_ID_DIGITS = /^\d{6}$/;
+
+const PASSWORD_RULES = [
+  { id: "length", label: "Contain at least 12 characters", test: (p) => p.length >= 12 },
+  { id: "maxLength", label: "Not exceed 64 characters", test: (p) => p.length <= 64 },
+  { id: "noSpaces", label: "Not contain spaces", test: (p) => !/\s/.test(p) },
+  { id: "uppercase", label: "Contain at least one uppercase letter", test: (p) => /[A-Z]/.test(p) },
+  { id: "lowercase", label: "Contain at least one lowercase letter", test: (p) => /[a-z]/.test(p) },
+  { id: "digit", label: "Contain at least one number", test: (p) => /\d/.test(p) },
+  {
+    id: "special",
+    label: "Contain at least one special character",
+    test: (p) => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/.test(p),
+  },
+];
+
+const COMMON_PASSWORDS = new Set([
+  "password", "password123", "admin123456", "123456789012",
+  "welcome12345", "qwerty123456", "routecard123", "administrator",
+]);
+
+function getPasswordErrors(pwd) {
+  if (!pwd) return ["Contain at least 12 characters", "Contain at least one uppercase letter", "Contain at least one lowercase letter", "Contain at least one number", "Contain at least one special character", "Not contain spaces"];
+  const failed = [];
+  for (const rule of PASSWORD_RULES) {
+    if (!rule.test(pwd)) {
+      failed.push(rule.label);
+    }
+  }
+  if (COMMON_PASSWORDS.has(pwd.toLowerCase())) {
+    failed.push("Not be a commonly used or compromised password");
+  }
+  return failed;
+}
 
 function isValidEmployeeId(value) {
   return EMP_ID_DIGITS.test(String(value || "").trim());
@@ -38,6 +70,8 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [passwordTouched, setPasswordTouched] = useState(false);
+  const [passwordServerError, setPasswordServerError] = useState("");
   const [formError, setFormError] = useState("");
 
   const [departments, setDepartments] = useState([]);
@@ -90,8 +124,10 @@ export default function SignupPage() {
     }
   }, []);
 
-  const passwordOk = password.length >= MIN_PASSWORD;
+  const passwordErrors = getPasswordErrors(password);
+  const passwordOk = password.length > 0 && passwordErrors.length === 0 && !passwordServerError;
   const passwordsMatch = password.length > 0 && password === confirmPassword;
+  const confirmMismatch = Boolean(confirmPassword) && password !== confirmPassword;
   const nameLocked = Boolean(verifiedEmployee?.name);
   const deptLocked = Boolean(verifiedEmployee?.dept);
 
@@ -100,8 +136,8 @@ export default function SignupPage() {
     (!empId.trim() || !isValidEmployeeId(empId) || Boolean(empStatus?.registered));
   const nameInvalid = submitted && !name.trim() && !nameLocked;
   const deptInvalid = submitted && !dept && !deptLocked;
-  const passwordInvalid = submitted && (!password || !passwordOk);
-  const confirmInvalid = submitted && (!confirmPassword || !passwordsMatch);
+  const passwordInvalid = (submitted || passwordTouched) && !passwordOk;
+  const confirmInvalid = (submitted && !confirmPassword) || confirmMismatch;
 
   const canSubmit =
     isValidEmployeeId(empId) &&
@@ -109,6 +145,7 @@ export default function SignupPage() {
     dept &&
     passwordOk &&
     passwordsMatch &&
+    !confirmMismatch &&
     !empStatus?.registered &&
     !deptsLoading &&
     departments.length > 0;
@@ -116,7 +153,9 @@ export default function SignupPage() {
   const onSubmit = async (e) => {
     e.preventDefault();
     setSubmitted(true);
+    setPasswordTouched(true);
     setFormError("");
+    setPasswordServerError("");
     if (!canSubmit) return;
 
     setLoading(true);
@@ -130,13 +169,23 @@ export default function SignupPage() {
       navigate("/generator", { replace: true });
     } catch (err) {
       const detail = err?.response?.data?.detail;
-      setFormError(
-        typeof detail === "string" ? detail : err?.message || "Could not create account"
-      );
+      const msg = typeof detail === "string" ? detail : err?.message || "Could not create account";
+      const lower = msg.toLowerCase();
+      if (
+        lower.includes("password") ||
+        lower.includes("compromised") ||
+        lower.includes("too common") ||
+        lower.includes("complexity")
+      ) {
+        setPasswordServerError(msg);
+      } else {
+        setFormError(msg);
+      }
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="rc-login">

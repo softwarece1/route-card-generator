@@ -18,16 +18,31 @@ async function fetchPublicKey() {
   return publicKeyPromise;
 }
 
-async function encryptedCredsBody(empId, password) {
+export async function fetchCaptcha() {
+  const { data } = await http.get('/auth/captcha');
+  return data;
+}
+
+async function encryptedCredsBody(empId, password, captchaId, captchaAnswer) {
   const keyInfo = await fetchPublicKey();
   const safeEmp = sanitizeInput(empId, 'empId').value;
   const safePass = sanitizeInput(password, 'password').value;
-  return encryptCredentials(keyInfo, { empId: safeEmp, password: safePass });
+  const safeCaptchaAnswer = sanitizeInput(captchaAnswer || '', 'text').value;
+  return encryptCredentials(keyInfo, {
+    empId: safeEmp,
+    password: safePass,
+    captchaId: captchaId || '',
+    captchaAnswer: safeCaptchaAnswer,
+  });
 }
 
-export async function login(empId, password) {
-  const body = await encryptedCredsBody(empId, password);
-  const { data } = await http.post('/auth/login', body);
+export async function login(empId, password, captchaId, captchaAnswer) {
+  const body = await encryptedCredsBody(empId, password, captchaId, captchaAnswer);
+  const { data } = await http.post('/auth/login', {
+    ...body,
+    captchaId: captchaId || '',
+    captchaAnswer: (captchaAnswer || '').trim(),
+  });
   setAuth(data.access_token, data.user);
   return data;
 }

@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 import { Password } from "primereact/password";
 import { isAuthenticated } from "@/lib/auth";
 import { sanitizeInput } from "@/lib/inputSafe";
-import { login } from "@/services/authApi";
+import { fetchCaptcha, login } from "@/services/authApi";
 import AuthLogo from "@/components/AuthLogo";
 import SafeInputText from "@/components/SafeInputText";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -16,10 +16,34 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [empId, setEmpId] = useState("");
   const [password, setPassword] = useState("");
+  const [captchaId, setCaptchaId] = useState("");
+  const [captchaImg, setCaptchaImg] = useState("");
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const [captchaLoading, setCaptchaLoading] = useState(false);
+  const [captchaError, setCaptchaError] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [formError, setFormError] = useState("");
   const [forgotOpen, setForgotOpen] = useState(false);
+
+  const loadCaptcha = useCallback(async () => {
+    setCaptchaLoading(true);
+    setCaptchaError("");
+    try {
+      const data = await fetchCaptcha();
+      setCaptchaId(data.captchaId);
+      setCaptchaImg(data.imageData);
+      setCaptchaAnswer("");
+    } catch (err) {
+      setCaptchaError("Failed to load CAPTCHA. Click refresh to retry.");
+    } finally {
+      setCaptchaLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCaptcha();
+  }, [loadCaptcha]);
 
   if (isAuthenticated()) {
     return <Navigate to="/generator" replace />;
@@ -27,22 +51,28 @@ export default function LoginPage() {
 
   const empInvalid = submitted && !empId.trim();
   const passwordInvalid = submitted && !password;
+  const captchaInvalid = submitted && !captchaAnswer.trim();
 
   const onSubmit = async (e) => {
     e.preventDefault();
     setSubmitted(true);
     setFormError("");
     if (!empId.trim() || !password) return;
+    if (!captchaAnswer.trim()) {
+      setFormError("Please enter the CAPTCHA code");
+      return;
+    }
 
     setLoading(true);
     try {
-      await login(empId.trim(), password);
+      await login(empId.trim(), password, captchaId, captchaAnswer.trim());
       navigate("/generator", { replace: true });
     } catch (err) {
       const detail = err?.response?.data?.detail;
       setFormError(
         typeof detail === "string" ? detail : err?.message || "Sign in failed"
       );
+      loadCaptcha();
     } finally {
       setLoading(false);
     }
@@ -117,6 +147,57 @@ export default function LoginPage() {
                 className={passwordInvalid ? "p-invalid w-full" : "w-full"}
                 inputClassName="w-full"
                 aria-invalid={passwordInvalid}
+              />
+            </div>
+
+            <div className="rc-login__field rc-login__captcha-field">
+              <label className="rc-login__label" htmlFor="captchaAnswer">
+                Enter CAPTCHA
+              </label>
+              <div className="rc-login__captcha-challenge">
+                <div className="rc-login__captcha-img-box" aria-label="CAPTCHA Challenge">
+                  {captchaLoading ? (
+                    <div className="rc-login__captcha-loading">
+                      <i className="pi pi-spin pi-spinner" style={{ fontSize: "1.1rem" }} />
+                      <span>Loading code...</span>
+                    </div>
+                  ) : captchaImg ? (
+                    <img
+                      src={captchaImg}
+                      alt="CAPTCHA code challenge"
+                      className="rc-login__captcha-img"
+                    />
+                  ) : (
+                    <span className="rc-login__captcha-fallback">
+                      {captchaError || "CAPTCHA unavailable"}
+                    </span>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  icon="pi pi-refresh"
+                  className="rc-login__captcha-refresh"
+                  onClick={loadCaptcha}
+                  disabled={loading || captchaLoading}
+                  tooltip="Refresh CAPTCHA"
+                  tooltipOptions={{ position: "top" }}
+                  aria-label="Refresh CAPTCHA challenge"
+                />
+              </div>
+              <SafeInputText
+                id="captchaAnswer"
+                profile="text"
+                value={captchaAnswer}
+                onChange={(e) => {
+                  setCaptchaAnswer(e.target.value);
+                  if (formError) setFormError("");
+                }}
+                placeholder="Enter CAPTCHA"
+                autoComplete="off"
+                disabled={loading || captchaLoading}
+                className={captchaInvalid ? "p-invalid" : undefined}
+                aria-invalid={captchaInvalid}
+                maxLength={12}
               />
             </div>
 

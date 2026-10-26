@@ -36,15 +36,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Permit localhost + LAN Vite origins (fixes Network Error via 172.x / 192.168.x)
+from app.middleware import IdleSessionMiddleware, SecurityHeadersMiddleware
+from app.middleware.rate_limit import limiter, SlowAPIMiddleware
+
+# Configure CORS using explicit origins from settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition", "Content-Type", "Content-Length"],
 )
+
+# Register security middlewares
+app.add_middleware(IdleSessionMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Register rate limiting middleware and error handler
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+
 
 app.include_router(auth_router)
 

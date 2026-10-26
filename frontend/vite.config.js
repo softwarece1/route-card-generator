@@ -15,7 +15,7 @@ export default defineConfig({
     // Same-origin proxy — avoids CORS / Network Error on LAN IPs
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8008',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         // Analyze + local VLM can exceed default ~2 min proxy idle timeout
         timeout: 1_200_000,

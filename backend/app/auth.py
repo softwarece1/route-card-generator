@@ -1,12 +1,11 @@
 """JWT auth with DB users — signup (empId, name, password) + login."""
 
-from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pony.orm import db_session, select
@@ -18,6 +17,13 @@ from app.config.settings import settings
 from app.input_safe import require_safe
 from app.route_card.models import RcDepartment, RcUser
 from app.security import hash_password, verify_password
+from app.middleware.rate_limit import limiter
+import secrets
+from typing import Set
+import base64
+
+# In‑memory revocation store (shared across workers only if using a single process)
+_revoked_tokens: Set[str] = set()
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 security = HTTPBearer(auto_error=False)
@@ -39,6 +45,8 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     cipher: str = Field(..., min_length=1)
     alg: str = Field(default=CREDS_ALG, max_length=64)
+    captchaId: Optional[str] = None
+    captchaAnswer: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
@@ -87,11 +95,13 @@ def create_access_token(*, emp_id: str, role: str, user_id: int) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
+    jti = secrets.token_urlsafe(16)
     payload = {
         "sub": emp_id,
         "role": role,
         "uid": user_id,
         "exp": expire,
+        "jti": jti,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
@@ -137,6 +147,11 @@ def get_current_user(
         )
 
     data = decode_token(creds.credentials)
+    # Check token revocation
+    jti = data.get("jti")
+    if jti in _revoked_tokens:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+    # Existing user lookup logic follows
     emp_id = data.get("sub")
     user_id = data.get("uid")
     with db_session:
@@ -151,6 +166,18 @@ def get_current_user(
                 detail="User not found or inactive",
             )
         return _user_public(user)
+
+@router.post("/logout")
+@db_session
+def logout(creds: HTTPAuthorizationCredentials = Depends(security)):
+    if not creds or not creds.credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    payload = decode_token(creds.credentials)
+    jti = payload.get("jti")
+    if jti:
+        _revoked_tokens.add(jti)
+    return {"detail": "Logged out successfully"}
+
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -221,8 +248,8 @@ def signup(body: SignupRequest):
         allow_admin_id=False,
     )
     password = require_safe(str(creds.get("password") or ""), "password", field="password")
-    if len(password) < 4:
-        raise HTTPException(400, "password must be at least 4 characters")
+    from app.password_policy import validate_password_complexity
+    validate_password_complexity(password)
     name = require_safe((body.name or "").strip(), "personName", field="name")
     dept = require_safe((body.dept or "").strip(), "label", field="dept")
     if not name:
@@ -256,12 +283,40 @@ def signup(body: SignupRequest):
     }
 
 
+@router.get("/captcha")
+@limiter.limit(getattr(settings, "RATE_LIMIT_CAPTCHA", "30/min"))
+def get_captcha(request: Request):
+    """Generate a fresh offline CAPTCHA challenge for login."""
+    from app.captcha import generate_captcha
+    try:
+        challenge_id, png_bytes = generate_captcha()
+        b64_img = base64.b64encode(png_bytes).decode("ascii")
+        return {
+            "captchaId": challenge_id,
+            "imageData": f"data:image/png;base64,{b64_img}",
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate CAPTCHA: {exc}",
+        )
+
+
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit(getattr(settings, "RATE_LIMIT_LOGIN", "5/min"))
 @db_session
-def login(body: LoginRequest):
+def login(request: Request, body: LoginRequest = Body(...)):
     creds = decrypt_creds_cipher(body.cipher, body.alg)
     emp_id = require_safe(_normalize_emp_id(str(creds.get("empId") or "")), "empId", field="empId")
     password = require_safe(str(creds.get("password") or ""), "password", field="password")
+    # CAPTCHA verification – accept from decrypted credentials or top-level request body
+    captcha_id = creds.get("captchaId") or body.captchaId
+    captcha_answer = creds.get("captchaAnswer") or body.captchaAnswer
+    if not captcha_id or not captcha_answer:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="CAPTCHA required")
+    from app.captcha import verify_captcha
+    if not verify_captcha(captcha_id, captcha_answer):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired CAPTCHA")
     if emp_id.lower() == _ADMIN_EMP_ID:
         emp_id = _ADMIN_EMP_ID
     user = RcUser.get(emp_id=emp_id)

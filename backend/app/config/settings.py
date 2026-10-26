@@ -1,3 +1,4 @@
+# Existing settings file
 """Auth settings + login credentials for standalone app."""
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -82,6 +83,27 @@ class Settings(BaseSettings):
     # Backup output directory (empty = <LOCAL_UPLOAD_ROOT>/../backups or cwd/backups)
     BACKUP_ROOT: str = ""
 
+    # --- Security enhancements ---
+    # CAPTCHA configuration
+    CAPTCHA_TTL_SECONDS: int = 120  # challenge lives for 2 minutes by default
+    CAPTCHA_ATTEMPT_LIMIT: int = 5  # max attempts per challenge
+    # Rate limiting (requests per minute)
+    RATE_LIMIT_LOGIN: str = "5/min"  # five login attempts per minute per IP
+    RATE_LIMIT_CAPTCHA: str = "30/min"  # thirty captcha requests per minute per IP
+    # Idle session timeout (minutes of inactivity)
+    IDLE_TIMEOUT_MINUTES: int = 15
+    # Maximum upload size (megabytes)
+    MAX_UPLOAD_SIZE_MB: int = 10
+    # Common password list path (bundled file)
+    COMMON_PASSWORDS_PATH: str = "backend/data/common_passwords.txt"
+
+    # CORS allowed origins (frontend Vite dev server or production URL)
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ]
+    # ... existing settings unchanged ...
 
 settings = Settings()
-

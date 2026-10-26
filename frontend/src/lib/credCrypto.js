@@ -49,10 +49,17 @@ export async function encryptCredentials(keyInfo, creds) {
     throw new Error('Web Crypto is not available in this browser (use HTTPS or localhost)');
   }
   const key = await importPublicKey(pem);
-  const payload = JSON.stringify({
+  const payloadData = {
     empId: String(creds?.empId || '').trim(),
     password: String(creds?.password || ''),
-  });
+  };
+  if (creds?.captchaId) {
+    payloadData.captchaId = String(creds.captchaId);
+  }
+  if (creds?.captchaAnswer) {
+    payloadData.captchaAnswer = String(creds.captchaAnswer);
+  }
+  const payload = JSON.stringify(payloadData);
   const encoded = new TextEncoder().encode(payload);
   const cipherBuf = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, encoded);
   const bytes = new Uint8Array(cipherBuf);

@@ -1,8 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
-# .env
+.env
 uploads/
 data/auth_rsa_private.pem
 *.egg-info/
 .pytest_cache/
+venv/

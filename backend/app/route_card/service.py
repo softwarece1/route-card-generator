@@ -207,7 +207,19 @@ def file_type_from_name(name: str) -> str:
 
 
 async def read_upload(file: UploadFile, role: str | None = None) -> tuple[bytes, str, str]:
-    filename = os.path.basename(file.filename or "document")
+    raw_name = file.filename or "document"
+    filename = os.path.basename(raw_name)
+    # Prevent path traversal characters in filename
+    filename = re.sub(r"[\\/]", "", filename).strip()
+
+    # Reject double extensions (e.g. .exe.pdf, .pdf.exe, .sh.tif)
+    parts = filename.split(".")
+    if len(parts) > 2:
+        dangerous_exts = {"exe", "bat", "cmd", "sh", "php", "py", "js", "vbs", "ps1", "com", "scr", "pif", "dll", "bin"}
+        all_exts = [p.lower() for p in parts[1:]]
+        if any(p in dangerous_exts for p in all_exts):
+            raise HTTPException(400, "Unsafe multiple or dangerous file extensions detected")
+
     ext = Path(filename).suffix.lower()
     allowed = ROLE_ALLOWED.get(role) if role else ALLOWED_EXT
     if allowed is None:
@@ -223,11 +235,37 @@ async def read_upload(file: UploadFile, role: str | None = None) -> tuple[bytes,
             f"{role_label}: unsupported file type “{ext or '(none)'}”. "
             f"Allowed: {', '.join(sorted(allowed))}.",
         )
+
+    # Validate reported Content-Type against expected types
+    expected_type = CONTENT_TYPES.get(ext)
+    if file.content_type and expected_type:
+        # Some browsers send generic binary stream or specific excel types
+        client_type = file.content_type.lower()
+        allowed_types = {expected_type, "application/octet-stream", "binary/octet-stream"}
+        if ext in {".xls", ".xlsx"}:
+            allowed_types.update({"application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/zip"})
+        if client_type not in allowed_types:
+            raise HTTPException(400, f"MIME type mismatch: {client_type} is not valid for {ext}")
+
     data = await file.read()
     if not data:
         raise HTTPException(400, "Empty file")
-    if len(data) > MAX_BYTES:
-        raise HTTPException(400, "File exceeds 10 MB limit")
+
+    max_mb = getattr(settings, "MAX_UPLOAD_SIZE_MB", 10)
+    max_bytes = max_mb * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(400, f"File exceeds maximum allowed size ({max_mb} MB)")
+
+    # Magic byte verification
+    if ext == ".pdf" and not data.startswith(b"%PDF-"):
+        raise HTTPException(400, "Invalid PDF file header")
+    elif ext in {".tif", ".tiff"} and not (data.startswith(b"II*\x00") or data.startswith(b"MM\x00*")):
+        raise HTTPException(400, "Invalid TIFF file header")
+    elif ext == ".xlsx" and not data.startswith(b"PK\x03\x04"):
+        raise HTTPException(400, "Invalid XLSX archive header")
+    elif ext == ".xls" and not (data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") or data.startswith(b"\x09\x08")):
+        raise HTTPException(400, "Invalid XLS file header")
+
     return data, filename, ext
 
 
