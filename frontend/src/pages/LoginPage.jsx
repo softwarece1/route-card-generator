@@ -154,12 +154,11 @@ export default function LoginPage() {
               <label className="rc-login__label" htmlFor="captchaAnswer">
                 Enter CAPTCHA
               </label>
-              <div className="rc-login__captcha-challenge">
+              <div className="rc-login__captcha-row">
                 <div className="rc-login__captcha-img-box" aria-label="CAPTCHA Challenge">
                   {captchaLoading ? (
                     <div className="rc-login__captcha-loading">
-                      <i className="pi pi-spin pi-spinner" style={{ fontSize: "1.1rem" }} />
-                      <span>Loading code...</span>
+                      <i className="pi pi-spin pi-spinner" style={{ fontSize: "1rem" }} />
                     </div>
                   ) : captchaImg ? (
                     <img
@@ -169,7 +168,7 @@ export default function LoginPage() {
                     />
                   ) : (
                     <span className="rc-login__captcha-fallback">
-                      {captchaError || "CAPTCHA unavailable"}
+                      {captchaError || "Retry"}
                     </span>
                   )}
                 </div>
@@ -183,22 +182,27 @@ export default function LoginPage() {
                   tooltipOptions={{ position: "top" }}
                   aria-label="Refresh CAPTCHA challenge"
                 />
+                <SafeInputText
+                  id="captchaAnswer"
+                  profile="text"
+                  value={captchaAnswer}
+                  onChange={(e) => {
+                    setCaptchaAnswer(e.target.value);
+                    if (formError) setFormError("");
+                  }}
+                  placeholder="Enter CAPTCHA"
+                  autoComplete="off"
+                  disabled={loading || captchaLoading}
+                  className={`rc-login__captcha-input${captchaInvalid ? " p-invalid" : ""}`}
+                  aria-invalid={captchaInvalid}
+                  maxLength={12}
+                />
               </div>
-              <SafeInputText
-                id="captchaAnswer"
-                profile="text"
-                value={captchaAnswer}
-                onChange={(e) => {
-                  setCaptchaAnswer(e.target.value);
-                  if (formError) setFormError("");
-                }}
-                placeholder="Enter CAPTCHA"
-                autoComplete="off"
-                disabled={loading || captchaLoading}
-                className={captchaInvalid ? "p-invalid" : undefined}
-                aria-invalid={captchaInvalid}
-                maxLength={12}
-              />
+              {captchaInvalid ? (
+                <small className="rc-login__hint" style={{ color: "var(--pmf-danger, #b91c1c)", display: "block", marginTop: "0.25rem", textAlign: "left" }}>
+                  Please enter the CAPTCHA code
+                </small>
+              ) : null}
             </div>
 
             <Button

@@ -304,7 +304,15 @@ export default function SignupPage() {
               <Password
                 id="password"
                 value={password}
-                onChange={(e) => setPassword(sanitizeInput(e.target.value, "password").value)}
+                onChange={(e) => {
+                  setPassword(sanitizeInput(e.target.value, "password").value);
+                  setPasswordTouched(true);
+                  setPasswordServerError("");
+                  if (formError) setFormError("");
+                }}
+                onBlur={() => {
+                  if (password) setPasswordTouched(true);
+                }}
                 placeholder="Enter password"
                 feedback={false}
                 toggleMask
@@ -312,7 +320,29 @@ export default function SignupPage() {
                 disabled={loading}
                 className={passwordInvalid ? "p-invalid w-full" : "w-full"}
                 inputClassName="w-full"
+                aria-invalid={passwordInvalid}
               />
+              {passwordInvalid && (
+                <div
+                  className="rc-login__field-error"
+                  style={{
+                    color: "var(--pmf-danger, #b91c1c)",
+                    fontSize: "0.78rem",
+                    marginTop: "0.35rem",
+                    lineHeight: 1.35,
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>Password must:</span>
+                  <ul style={{ margin: "0.2rem 0 0", paddingLeft: "1.2rem", listStyleType: "disc" }}>
+                    {passwordErrors.map((err) => (
+                      <li key={err}>{err}</li>
+                    ))}
+                  </ul>
+                  {passwordServerError ? (
+                    <div style={{ marginTop: "0.25rem", fontWeight: 600 }}>{passwordServerError}</div>
+                  ) : null}
+                </div>
+              )}
             </div>
 
             <div className="rc-login__field">
@@ -322,9 +352,10 @@ export default function SignupPage() {
               <Password
                 id="confirmPassword"
                 value={confirmPassword}
-                onChange={(e) =>
-                  setConfirmPassword(sanitizeInput(e.target.value, "password").value)
-                }
+                onChange={(e) => {
+                  setConfirmPassword(sanitizeInput(e.target.value, "password").value);
+                  if (formError) setFormError("");
+                }}
                 placeholder="Confirm password"
                 feedback={false}
                 toggleMask
@@ -332,7 +363,33 @@ export default function SignupPage() {
                 disabled={loading}
                 className={confirmInvalid ? "p-invalid w-full" : "w-full"}
                 inputClassName="w-full"
+                aria-invalid={confirmInvalid}
               />
+              {confirmMismatch ? (
+                <small
+                  className="rc-login__hint"
+                  style={{
+                    color: "var(--pmf-danger, #b91c1c)",
+                    display: "block",
+                    marginTop: "0.25rem",
+                    textAlign: "left",
+                  }}
+                >
+                  Passwords do not match.
+                </small>
+              ) : submitted && !confirmPassword ? (
+                <small
+                  className="rc-login__hint"
+                  style={{
+                    color: "var(--pmf-danger, #b91c1c)",
+                    display: "block",
+                    marginTop: "0.25rem",
+                    textAlign: "left",
+                  }}
+                >
+                  Please confirm your password.
+                </small>
+              ) : null}
             </div>
 
             <Button

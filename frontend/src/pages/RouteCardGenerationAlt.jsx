@@ -290,6 +290,28 @@ export default function RouteCardGenerationAlt() {
 
   const [sessionId, setSessionId] = useState(null);
   const [docs, setDocs] = useState({ drawing: null, drawings: [], wirelist: null, partslist: null });
+  const [slotErrors, setSlotErrors] = useState({});
+  const [slotGlow, setSlotGlow] = useState({});
+  const glowTimers = useRef({});
+
+  const triggerSlotError = (role, message) => {
+    setSlotErrors((prev) => ({ ...prev, [role]: message }));
+    setSlotGlow((prev) => ({ ...prev, [role]: true }));
+    if (glowTimers.current[role]) {
+      clearTimeout(glowTimers.current[role]);
+    }
+    glowTimers.current[role] = setTimeout(() => {
+      setSlotGlow((prev) => ({ ...prev, [role]: false }));
+    }, 2500);
+  };
+
+  const clearSlotError = (role) => {
+    setSlotErrors((prev) => ({ ...prev, [role]: null }));
+    setSlotGlow((prev) => ({ ...prev, [role]: false }));
+    if (glowTimers.current[role]) {
+      clearTimeout(glowTimers.current[role]);
+    }
+  };
   const [resultTab, setResultTab] = useState(0);
   const [dragRole, setDragRole] = useState(null);
   const [drawingId, setDrawingId] = useState(null);
@@ -577,9 +599,11 @@ export default function RouteCardGenerationAlt() {
 
   const applySlotFile = async (role, file) => {
     if (!file) return;
+    clearSlotError(role);
     const slot = UPLOAD_SLOTS.find((s) => s.role === role);
     const slotTitle = slot?.title || role;
     if (role === "drawing" && isDuplicateDrawingName(file.name)) {
+      triggerSlotError(role, `Duplicate file: “${file.name}” is already uploaded. Please choose a different file.`);
       toast.warn(`${slotTitle}: “${file.name}” is already uploaded. Choose a different file.`);
       return;
     }
@@ -589,6 +613,9 @@ export default function RouteCardGenerationAlt() {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
     if (allowed.length && !allowed.includes(ext)) {
+      const allowedText = role === "drawing" ? "a PDF or TIFF file (.pdf, .tif, .tiff)" : "a PDF or Excel file (.pdf, .xls, .xlsx)";
+      const errorMsg = `Invalid file format (${ext || "unknown"}). Please upload ${allowedText}.`;
+      triggerSlotError(role, errorMsg);
       toast.error(
         `${slotTitle}: “${file.name}” is not an allowed type (${ext || "unknown"}). ` +
           `Please upload: ${allowed.join(", ")}.`
@@ -596,6 +623,8 @@ export default function RouteCardGenerationAlt() {
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
+      const errorMsg = "File exceeds the 10 MB maximum upload limit.";
+      triggerSlotError(role, errorMsg);
       toast.error(`${slotTitle}: file exceeds 10 MB limit`);
       return;
     }
@@ -604,6 +633,7 @@ export default function RouteCardGenerationAlt() {
     try {
       const sid = await ensureSession();
       const meta = await uploadSessionDocument(sid, role, file);
+      clearSlotError(role);
       syncDocsFromSession(meta.documents || [], meta.drawingIds || (meta.drawingId ? [meta.drawingId] : []));
       if (meta.drawingId) {
         setDrawingId(meta.drawingId);
@@ -628,7 +658,10 @@ export default function RouteCardGenerationAlt() {
         toast.warn(w);
       }
     } catch (error) {
-      toast.error(error.message || "Upload failed");
+      const detail = error?.response?.data?.detail;
+      const errMsg = typeof detail === "string" ? detail : error.message || "Upload failed";
+      triggerSlotError(role, errMsg);
+      toast.error(errMsg);
     } finally {
       setUploadingRole(null);
     }
@@ -663,6 +696,7 @@ export default function RouteCardGenerationAlt() {
   };
 
   const removeSlot = async (role, documentId = null) => {
+    clearSlotError(role);
     try {
       if (sessionId) {
         const meta = await deleteSessionDocument(sessionId, role, documentId);
@@ -1160,7 +1194,7 @@ export default function RouteCardGenerationAlt() {
                 return (
                   <div
                     key={slot.role}
-                    className={`rca-slot${active ? " rca-slot--active" : ""}${filled ? " rca-slot--filled" : ""}${uploading ? " rca-slot--uploading" : ""}`}
+                    className={`rca-slot${active ? " rca-slot--active" : ""}${filled ? " rca-slot--filled" : ""}${uploading ? " rca-slot--uploading" : ""}${slotErrors[slot.role] ? " rca-slot--error" : ""}${slotGlow[slot.role] ? " rca-slot--glow" : ""}`}
                     onDragOver={(e) => {
                       e.preventDefault();
                       if (!uploading) setDragRole(slot.role);
@@ -1331,6 +1365,12 @@ export default function RouteCardGenerationAlt() {
                         </div>
                       ) : null}
                     </div>
+                    {slotErrors[slot.role] ? (
+                      <div className="rca-slot__error-msg" role="alert">
+                        <i className="pi pi-exclamation-circle" aria-hidden="true" />
+                        <span>{slotErrors[slot.role]}</span>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
