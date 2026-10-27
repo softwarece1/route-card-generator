@@ -104,6 +104,9 @@ class Settings(BaseSettings):
         "http://localhost:5174",
         "http://127.0.0.1:5174",
     ]
+    # Encryption key for server‑side file‑at‑rest encryption (base64‑encoded 32‑byte key).
+    # Set via environment variable FILE_ENCRYPTION_KEY. Empty means encryption disabled.
+    FILE_ENCRYPTION_KEY: str = ""
     # ... existing settings unchanged ...
 
 settings = Settings()

@@ -3,7 +3,43 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timedelta
-from io import BytesIO
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import base64
+
+# Encryption marker and helpers
+_ENC_MARKER = b"ENC01"
+
+def _get_encryption_key() -> bytes:
+    """Retrieve and validate the 32‑byte AES‑GCM key from settings.
+    The key must be base64‑encoded in the FILE_ENCRYPTION_KEY env var.
+    """
+    raw_key = getattr(settings, "FILE_ENCRYPTION_KEY", "")
+    if not raw_key:
+        raise RuntimeError("FILE_ENCRYPTION_KEY is not configured; encryption is required for new uploads.")
+    try:
+        key = base64.b64decode(raw_key)
+    except Exception as exc:
+        raise RuntimeError("FILE_ENCRYPTION_KEY is not valid base64") from exc
+    if len(key) != 32:
+        raise RuntimeError("FILE_ENCRYPTION_KEY must decode to 32 bytes (AES‑256)")
+    return key
+
+def _encrypt_data(plain: bytes) -> bytes:
+    key = _get_encryption_key()
+    nonce = os.urandom(12)
+    aesgcm = AESGCM(key)
+    ct = aesgcm.encrypt(nonce, plain, None)
+    return _ENC_MARKER + nonce + ct
+
+def _decrypt_data(cipher: bytes) -> bytes:
+    if not cipher.startswith(_ENC_MARKER):
+        return cipher
+    key = _get_encryption_key()
+    nonce = cipher[len(_ENC_MARKER):len(_ENC_MARKER)+12]
+    ct = cipher[len(_ENC_MARKER)+12:]
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ct, None)
+
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
@@ -275,6 +311,7 @@ def _store_path(prefix: str, filename: str, data: bytes, content_type: str) -> t
     import time
 
     object_name = f"route-card/{prefix}/{filename}"
+    data = _encrypt_data(data)
     mode = _storage_mode()
 
     if mode == "local":
@@ -464,7 +501,8 @@ def load_path_bytes(object_path: str, storage_backend: str) -> bytes:
     ):
         if not path.is_file():
             raise FileNotFoundError(f"File not found on disk: {object_path}")
-        return path.read_bytes()
+        raw = path.read_bytes()
+    return _decrypt_data(raw)
     stream = minio().get_file(object_path)
     try:
         return stream.read()
