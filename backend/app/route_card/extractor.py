@@ -49,7 +49,7 @@ WEIGHT = re.compile(
 )
 FINISH_UM = re.compile(r"(\d+(?:\.\d+)?)\s*[μµu]m", re.I)
 THRU_HOLE = re.compile(
-    r"(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(?:THRU|THROUGH|THR\.?)",
+    r"(\d+)\s*[x×]\s*(?:D|DIA|Ø|\b)?\s*(\d+(?:\.\d+)?)\s*(?:THRU|THROUGH|THR\.?)",
     re.I,
 )
 ECO_ROW = re.compile(
@@ -726,6 +726,12 @@ def extract_revisions(text: str) -> list[dict]:
     return out
 
 
+DIM_CALLOUT = re.compile(
+    r"\b(PITCH|SPAN|LENGTH|WIDTH|HEIGHT|DEPTH|THICKNESS|THK|DIAMETER|DIA)\b\s*[:=]?\s*(\d+(?:\.\d+)?(?:\s*[-–—]\s*\d+(?:\.\d+)?)?\s*(?:mm)?)\b",
+    re.I,
+)
+
+
 def extract_dimensions(text: str) -> list[dict]:
     dims = []
     m = THRU_HOLE.search(text)
@@ -737,16 +743,12 @@ def extract_dimensions(text: str) -> list[dict]:
                 "level": "Important",
             }
         )
-    for num in ["98.00", "440.00", "503.53", "482.60", "131.50"]:
-        if num in text:
-            label_map = {
-                "98.00": "Mounting pitch",
-                "440.00": "Envelope length",
-                "503.53": "Overall length",
-                "482.60": "Mounting span",
-                "131.50": "Height (3U)",
-            }
-            dims.append({"label": label_map[num], "value": f"{num} mm", "level": "Standard"})
+    for dm in DIM_CALLOUT.finditer(text):
+        lbl = dm.group(1).title()
+        val = dm.group(2).strip()
+        if not val.lower().endswith("mm"):
+            val = f"{val} mm"
+        dims.append({"label": lbl, "value": val, "level": "Standard"})
     if re.search(r"COOLANT\s+INLET|COOLANT\s+PORT", text, re.I):
         dims.append({"label": "Coolant ports", "value": "Inlet / Outlet", "level": "Important"})
     # de-dupe labels
@@ -787,8 +789,6 @@ def extract_title_block(text: str, filename: str, page_count: int) -> dict:
         scale = re.sub(r"\s+", "", m.group(1))
     version = ""
     vm = VERSION_LABEL.search(text)
-    if re.search(r"\n03\n", text) or re.search(r"\b03\b", text[text.find("PDG") :] if "PDG" in text else ""):
-        version = "03"
     if vm:
         version = vm.group(1)
     ecos = ECO_ROW.findall(text)
@@ -826,27 +826,24 @@ def extract_title_block(text: str, filename: str, page_count: int) -> dict:
             material = val
 
     drawn = checked = approved = ""
-    if "SACHIN" in text:
-        drawn = "SACHIN"
-    if "VARUN" in text:
-        checked = "VARUN"
-    if "SASO" in text:
-        approved = "SASO"
-    if not drawn:
-        if m := re.search(r"\b(ROSHAN|SURENDAR|SACHIN)\b", text):
-            drawn = m.group(1)
-    if not checked:
-        if m := re.search(r"\b(VIJAY\s*K\s*K|VARUN)\b", text):
-            checked = _norm_spaces(m.group(1))
-    if not approved:
-        if m := re.search(r"\b(GURUMURTHY(?:\s*M\.?\s*G\.?)?|SASO)\b", text):
-            approved = _norm_spaces(m.group(1))
+    if m := re.search(r"\bDRAWN(?:\s+BY)?\s*[:\s]\s*([A-Za-z0-9 ._-]{2,30})", text, re.I):
+        val = _norm_spaces(m.group(1))
+        if not TITLE_STOP.match(val):
+            drawn = val
+    if m := re.search(r"\bCHECKED(?:\s+BY)?\s*[:\s]\s*([A-Za-z0-9 ._-]{2,30})", text, re.I):
+        val = _norm_spaces(m.group(1))
+        if not TITLE_STOP.match(val):
+            checked = val
+    if m := re.search(r"\bAPPR(?:OVE)?D(?:\s+BY)?\s*[:\s]\s*([A-Za-z0-9 ._-]{2,30})", text, re.I):
+        val = _norm_spaces(m.group(1))
+        if not TITLE_STOP.match(val):
+            approved = val
 
     overall = ""
-    if "503.53" in text and "131.50" in text:
-        overall = "503.53 x 131.50 mm (3U)"
-    elif "503.53" in text:
-        overall = "503.53 mm overall length"
+    if m := re.search(r"(?:OVERALL\s+DIMENSIONS?|ENVELOPE\s+DIMENSIONS?|ENVELOPE)\s*:?\s*([^\n]{3,60})", text, re.I):
+        overall = _norm_spaces(m.group(1))
+    elif m := re.search(r"\b(\d+(?:\.\d+)?\s*[xX×]\s*\d+(?:\.\d+)?(?:\s*[xX×]\s*\d+(?:\.\d+)?)?\s*mm)\b", text, re.I):
+        overall = _norm_spaces(m.group(1))
 
     return {
         "drawingNumber": drawing_no,
@@ -922,7 +919,7 @@ def parse_drawing_text(
     known = {b["itemNo"] for b in bom}
     for n in notes:
         for item in n.get("items") or []:
-            if item not in known and 1 <= item <= 80:
+            if item not in known and item > 0:
                 bom.append({"itemNo": item, "qty": 1, "description": None})
                 known.add(item)
     bom.sort(key=lambda b: b["itemNo"])

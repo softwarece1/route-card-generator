@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
     DB_NAME: str = "route_card"
-    DB_USER: str = "route_card"
-    DB_PASSWORD: str = "route_card"
+    DB_USER: str = "postgres"
+    DB_PASSWORD: str = "postgres"
 
     # MinIO (optional — service.py falls back to local uploads/)
     MINIO_ENDPOINT: str = "localhost:9000"

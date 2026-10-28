@@ -110,19 +110,9 @@ def _operations_from_payload(payload: dict) -> list[dict]:
             or op.get("work_center_code")
         )
         long_text = _instruction_for_op(op, notes)
-        # Append torque / items hints into LongText when present
-        extras: list[str] = []
         items = _s(op.get("items"))
-        if items:
-            extras.append(f"Items: {items}")
         torque = _s(op.get("torqueSpec"))
-        if torque:
-            extras.append(f"Torque: {torque}")
         ref = _s(op.get("reference"))
-        if ref:
-            extras.append(f"Ref: {ref}")
-        if extras:
-            long_text = (long_text + "\n" if long_text else "") + "\n".join(extras)
 
         setup = _num(op.get("setup"), 0) or 0
         per_pc = _num(op.get("time"), 0) or 0
@@ -145,6 +135,9 @@ def _operations_from_payload(payload: dict) -> list[dict]:
                 "generates_output_serial": False,
                 "requires_input_material": False,
                 "manual_operation": True,
+                "_itemsLabel": items,
+                "_torqueSpec": torque,
+                "_reference": ref,
             }
         )
     return out

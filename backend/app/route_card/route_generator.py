@@ -7,12 +7,12 @@ import re
 from app.route_card.extractor import break_instruction_points
 
 
-def _work_centre(text: str) -> str:
+def _work_centre(text: str, torque: list[str] | None = None) -> str:
     t = text.upper()
+    if torque or "TORQUE" in t:
+        return "Torque"
     if any(k in t for k in ("CLEAN", "PEEL OFF", "PASTE", "STICK", "GLUE", "BOND", "ADHERE", "APPLY", "MASK")):
         return "Bonding"
-    if any(k in t for k in ("TORQUE", "TIGHTEN", "JAMNUT", "FASTEN", "SECURE")):
-        return "Torque"
     if any(k in t for k in ("DRILL", "SOLDER", "TRANSFORMER", "SHORT", "ROHS", "LEAD-FREE", "BARE BOARD")):
         return "PCB Assembly"
     if any(k in t for k in ("INSPECT", "WEIGHT", "MASS", "VERIFY", "WARPAGE")):
@@ -24,10 +24,10 @@ def _work_centre(text: str) -> str:
 
 def _tool(text: str, torque: list[str]) -> str:
     t = text.upper()
-    if torque or "TORQUE" in t or "TIGHTEN" in t:
+    if torque or "TORQUE" in t:
         return "Torque wrench"
     if "DRILL" in t:
-        return "Drill / 4-40 UNC inserts"
+        return "Drill"
     if "SOLDER" in t:
         return "Soldering station"
     if "MASK" in t:
@@ -50,7 +50,7 @@ def _op_name(text: str, step_no: int) -> str:
     if "MASK" in t or "CONFORMAL" in t:
         return "Masking before conformal coating"
     if "DRILL" in t:
-        return "PCB drilling for inserts"
+        return "PCB drilling"
     if "WARPAGE" in t and "TRANSFORMER" not in t:
         return "Board warpage check"
     if "SOLDER FILL" in t or "UN-USED HOLES" in t or "UNUSED HOLES" in t:
@@ -64,9 +64,9 @@ def _op_name(text: str, step_no: int) -> str:
     if "SHORT" in t and ("PIN" in t or re.search(r"\bX\d+", t)):
         return "Short connector pins"
     if "TRANSFORMER" in t and ("MOUNT" in t or "MECHANICAL" in t):
-        return "Beta transformer mechanical mounting"
+        return "Transformer mechanical mounting"
     if "TRANSFORMER" in t and "SOLDER" in t:
-        return "Beta transformer soldering"
+        return "Transformer soldering"
     if "LEAD-FREE" in t or "ROHS" in t:
         return "RoHS / lead-free component callout"
     if "FACIA" in t:
@@ -125,14 +125,11 @@ def generate_route(extraction: dict) -> dict:
         text = note.get("text") or ""
         elaborated = (note.get("elaboratedText") or "").strip()
         instruction_src = elaborated or text
-        if re.match(r"^INSTALLATION TORQUE FOR ALL", text, re.I) and len(text) < 120:
-            # fold generic PS902 reminder into following ops rather than a lone op
-            continue
         torque = note.get("torque") or []
         items = note.get("items") or []
         refs = list(note.get("standards") or []) + list(note.get("references") or [])
         name = _op_name(text, note.get("stepNo") or 1)
-        wc = _work_centre(text)
+        wc = _work_centre(text, torque)
         items_used = _items_payload(items, bom_lookup)
         items_label = ", ".join(f"#{i['itemNo']}" + (f"×{i['qty']}" if i.get("qty") else "") for i in items_used)
         src_ref = note.get("sourceFilename") or ""
@@ -177,8 +174,33 @@ def generate_route(extraction: dict) -> dict:
         )
         op_no += 10
 
-    # Always close with inspection
-    inspection_ops_text = "Verify torque points, connector engagement, weight and mounting-surface finish."
+    # Build final inspection dynamically from actual extraction findings
+    torques = extraction.get("torque_specs") or []
+    checks = []
+    tools = []
+    if torques:
+        checks.append("torque points")
+        tools.append("Torque verifier")
+    has_connectors = any(n.get("connectors") for n in notes if isinstance(n, dict))
+    if has_connectors:
+        checks.append("connector engagement")
+    if title.get("weight"):
+        checks.append("weight")
+        tools.append("scale")
+    if title.get("surfaceFinish"):
+        checks.append("mounting-surface finish")
+    if extraction.get("dimensions"):
+        checks.append("critical dimensions")
+        tools.append("caliper / gauge")
+
+    tools.append("visual")
+    tool_label = " / ".join(dict.fromkeys(tools))
+
+    if checks:
+        inspection_ops_text = f"Verify {', '.join(checks)}."
+    else:
+        inspection_ops_text = "Final visual and assembly inspection."
+
     operations.append(
         {
             "id": f"op-{op_no}",
@@ -186,10 +208,10 @@ def generate_route(extraction: dict) -> dict:
             "operation": "Final inspection",
             "workCentre": "Quality",
             "machine": "Inspection bench",
-            "tool": "Torque verifier / scale / visual",
+            "tool": tool_label,
             "items": "",
             "itemsUsed": [],
-            "torqueSpec": ", ".join(extraction.get("torque_specs") or []),
+            "torqueSpec": ", ".join(torques) if torques else "",
             "reference": ", ".join(extraction.get("references") or []),
             "setup": "—",
             "time": "",
@@ -204,7 +226,7 @@ def generate_route(extraction: dict) -> dict:
 
     inspection = []
     idx = 1
-    for tq in extraction.get("torque_specs") or []:
+    for tq in torques:
         inspection.append(
             {
                 "id": f"ic-{idx}",
@@ -242,19 +264,45 @@ def generate_route(extraction: dict) -> dict:
                     "nominal": std,
                     "tolerance": "—",
                     "method": "Process audit",
-                    "frequency": "100% fasteners",
+                    "frequency": "100% fasteners" if ("902" in std or torques) else "Process audit",
                     "criticality": "Important",
                 }
             )
             idx += 1
 
+    # Dynamic fastener count
+    fastener_kws = ("SCREW", "BOLT", "NUT", "WASHER", "FASTENER", "STUD", "RIVET", "STANDOFF", "PIN", "CSK", "HEX")
+    fastener_count = 0
+    for b in bom:
+        desc = (b.get("description") or "").upper()
+        pno = (b.get("partNumber") or "").upper()
+        if any(k in desc or k in pno for k in fastener_kws):
+            fastener_count += 1
+    if fastener_count == 0:
+        fastener_count = sum(
+            1 for n in notes
+            if any(k in (n.get("text") or "").upper() for k in ("SCREW", "FASTENER", "BOLT", "NUT", "WASHER"))
+        )
+
+    # Dynamic hole count from dimensions
+    hole_count = 0
+    for d in extraction.get("dimensions") or []:
+        val = d.get("value") or ""
+        lbl = (d.get("label") or "").lower()
+        if "hole" in lbl or "thru" in val.lower():
+            m = re.search(r"(\d+)\s*[xX×]", val)
+            if m:
+                hole_count += int(m.group(1))
+            else:
+                hole_count += 1
+
     counts = [
         {"key": "items", "label": "BOM items", "count": len(bom)},
         {"key": "ops", "label": "Assembly steps", "count": max(len(operations) - 1, 0)},
-        {"key": "fasteners", "label": "Fastener callouts", "count": sum(1 for b in bom if b["itemNo"] in {3, 5, 8, 23, 26, 27, 29, 30, 31, 32, 33, 36, 37, 38, 44, 50, 53, 54, 55, 56})},
+        {"key": "fasteners", "label": "Fastener callouts", "count": fastener_count},
         {"key": "connectors", "label": "Connector refs", "count": len({c for n in notes for c in n.get("connectors") or []})},
-        {"key": "torques", "label": "Torque specs", "count": len(extraction.get("torque_specs") or [])},
-        {"key": "holes", "label": "Mounting holes", "count": 8 if any("Mounting holes" in (d.get("label") or "") for d in extraction.get("dimensions") or []) else 0},
+        {"key": "torques", "label": "Torque specs", "count": len(torques)},
+        {"key": "holes", "label": "Mounting holes", "count": hole_count},
         {"key": "docs", "label": "Referenced docs", "count": len(extraction.get("references") or [])},
         {"key": "critical", "label": "Critical checks", "count": sum(1 for i in inspection if i.get("criticality") == "Critical")},
     ]
@@ -275,7 +323,7 @@ def generate_route(extraction: dict) -> dict:
     requirements = []
     for ref in extraction.get("references") or []:
         requirements.append({"label": "Referenced document", "value": ref, "level": "Important"})
-    for tq in extraction.get("torque_specs") or []:
+    for tq in torques:
         requirements.append({"label": "Torque requirement", "value": tq, "level": "Critical"})
     if title.get("weight"):
         requirements.append({"label": "Mass", "value": title["weight"], "level": "Critical"})
