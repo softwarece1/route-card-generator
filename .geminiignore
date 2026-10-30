@@ -1,0 +1,32 @@
+# Dependency directories
+.venv/
+backend/.venv/
+node_modules/
+frontend/node_modules/
+
+# Package caches and binaries
+offline_packages/
+backend/offline_packages/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build and temporary artifacts
+dist/
+build/
+.cache/
+.pytest_cache/
+graphify-out/cache/
+
+# User uploads, large dumps, and multimedia
+uploads/
+dumps/
+backups/
+video/
+*.tar.gz
+*.zip
+*.pptx
+
+# Git internal
+.git/

@@ -1,0 +1,2119 @@
+POST: http://172.16.69.164:5176/api/v1/route-card/sessions/22/analyze
+Payload: {
+    "async": false
+}
+
+Response:
+{
+    "id": 20,
+    "status": "draft",
+    "drawing": {
+        "id": 29,
+        "filename": "112360195216AA - GA.pdf",
+        "file_type": "PDF",
+        "size_bytes": 230676,
+        "size_label": "225.3 KB",
+        "pages": 1,
+        "status": "analyzed",
+        "drawing_type": "assembly",
+        "warnings": []
+    },
+    "drawingInfo": {
+        "drawingNumber": "1123 601 952 16",
+        "revision": "VER 02",
+        "partName": "AK630 DRVR U1",
+        "partNumber": "112360195216",
+        "material": "AS PER PS 362",
+        "quantity": "1",
+        "overallDimensions": "",
+        "tolerance": "",
+        "surfaceFinish": "",
+        "drawingType": "assembly",
+        "docType": "GA",
+        "version": "02",
+        "scale": "1:1",
+        "sheetSize": "A2",
+        "sheets": "1 of 1",
+        "weight": "",
+        "drawnBy": "DT",
+        "checkedBy": "DT",
+        "approvedBy": "",
+        "unit": "mm"
+    },
+    "bomItems": [
+        {
+            "itemNo": 8,
+            "qty": 4,
+            "description": "SCR CH HD SST-M2.5x12 \",,, \"",
+            "sourceDrawingId": 29,
+            "partNumber": "3002 004 238 10"
+        },
+        {
+            "itemNo": 39,
+            "qty": 1,
+            "description": null,
+            "sourceDrawingId": 29
+        },
+        {
+            "itemNo": 50,
+            "qty": 50,
+            "description": "TER INSUL MINI JPR 3A Au PLD CLSD-BK \",,, \"",
+            "sourceDrawingId": 29,
+            "partNumber": "4757 601 001 97"
+        }
+    ],
+    "featureCounts": [
+        {
+            "key": "items",
+            "label": "BOM items",
+            "count": 3
+        },
+        {
+            "key": "ops",
+            "label": "Assembly steps",
+            "count": 13
+        },
+        {
+            "key": "fasteners",
+            "label": "Fastener callouts",
+            "count": 0
+        },
+        {
+            "key": "connectors",
+            "label": "Connector refs",
+            "count": 0
+        },
+        {
+            "key": "torques",
+            "label": "Torque specs",
+            "count": 0
+        },
+        {
+            "key": "holes",
+            "label": "Mounting holes",
+            "count": 0
+        },
+        {
+            "key": "docs",
+            "label": "Referenced docs",
+            "count": 1
+        },
+        {
+            "key": "critical",
+            "label": "Critical checks",
+            "count": 0
+        }
+    ],
+    "manufacturingFeatures": [
+        {
+            "id": "ITM-8",
+            "type": "Item 8",
+            "dimension": "Qty 4",
+            "tolerance": "—",
+            "operation": "Assembly",
+            "category": "Assembly"
+        },
+        {
+            "id": "ITM-39",
+            "type": "Item 39",
+            "dimension": "Qty 1",
+            "tolerance": "—",
+            "operation": "Assembly",
+            "category": "Assembly"
+        },
+        {
+            "id": "ITM-50",
+            "type": "Item 50",
+            "dimension": "Qty 50",
+            "tolerance": "—",
+            "operation": "Assembly",
+            "category": "Assembly"
+        }
+    ],
+    "intelligenceDimensions": [],
+    "intelligenceRequirements": [
+        {
+            "label": "Referenced document",
+            "value": "PS362",
+            "level": "Important"
+        }
+    ],
+    "suggestedOperations": [
+        {
+            "id": "op-10",
+            "opNo": 10,
+            "operation": "RoHS / lead-free component callout",
+            "workCentre": "PCB Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "THE FOLLOWING ARE LEAD-FREE (RoHS COMPLIANT) COMPONENTS USED IN THIS BOARD: U1-U12,FL1,FL2",
+            "status": "Planned",
+            "type": "PCB Assembly",
+            "reason": "THE FOLLOWING ARE LEAD-FREE (RoHS COMPLIANT) COMPONENTS USED IN THIS BOARD: U1-U12,FL1,FL2",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-20",
+            "opNo": 20,
+            "operation": "PCB drilling",
+            "workCentre": "PCB Assembly",
+            "machine": "Assembly station",
+            "tool": "Drill",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERTS OF THE TRANSFORMERS B1 TO B8.",
+            "status": "Planned",
+            "type": "PCB Assembly",
+            "reason": "DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERTS OF THE TRANSFORMERS B1 TO B8.",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-30",
+            "opNo": 30,
+            "operation": "Transformer mechanical mounting",
+            "workCentre": "PCB Assembly",
+            "machine": "Assembly station",
+            "tool": "Soldering station",
+            "items": "#8×4, #39×1",
+            "itemsUsed": [
+                {
+                    "itemNo": 8,
+                    "qty": 4,
+                    "description": null
+                },
+                {
+                    "itemNo": 39,
+                    "qty": 1,
+                    "description": null
+                }
+            ],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "DO THE MECHANICAL MOUNTING OF THE BETA TRANSFORMERS USING ITEM NO 8 AND 39 CHECK FOR THE WARPAGE OF THE BOARD. IF FOUND OK THEN DO THE SOLDERING OF THE BETA TRANSFORMERS.",
+            "status": "Planned",
+            "type": "PCB Assembly",
+            "reason": "DO THE MECHANICAL MOUNTING OF THE BETA TRANSFORMERS USING ITEM NO 8 AND 39 CHECK FOR THE WARPAGE OF THE BOARD. IF FOUND OK THEN DO THE SOLDERING OF THE BETA TRANSFORMERS.",
+            "features": [
+                "ITM-8",
+                "ITM-39"
+            ],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-40",
+            "opNo": 40,
+            "operation": "Solder-fill unused holes",
+            "workCentre": "PCB Assembly",
+            "machine": "Assembly station",
+            "tool": "Soldering station",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "ALL UN-USED HOLES TO BE SOLDER FILLED",
+            "status": "Planned",
+            "type": "PCB Assembly",
+            "reason": "ALL UN-USED HOLES TO BE SOLDER FILLED",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-50",
+            "opNo": 50,
+            "operation": "Short connector pins",
+            "workCentre": "PCB Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "#50×50",
+            "itemsUsed": [
+                {
+                    "itemNo": 50,
+                    "qty": 50,
+                    "description": null
+                }
+            ],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "SHORT THE PIN NO 1 AND 2 OF X1 TO X30, X32, X34, X36, X38, X40, X42 X44, X47, X51, X52, X55 USING ITEM NO-50.",
+            "status": "Planned",
+            "type": "PCB Assembly",
+            "reason": "SHORT THE PIN NO 1 AND 2 OF X1 TO X30, X32, X34, X36, X38, X40, X42 X44, X47, X51, X52, X55 USING ITEM NO-50.",
+            "features": [
+                "ITM-50"
+            ],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-60",
+            "opNo": 60,
+            "operation": "Do not short specified connector pins",
+            "workCentre": "PCB Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "DO NOT SHORT PIN 1 & 2 OF X31, X33, X35. X37, X39 & X41.",
+            "status": "Planned",
+            "type": "PCB Assembly",
+            "reason": "DO NOT SHORT PIN 1 & 2 OF X31, X33, X35. X37, X39 & X41.",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-70",
+            "opNo": 70,
+            "operation": "Do not mount specified items",
+            "workCentre": "Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R66, TP1, TP2, TP3 & TP4.",
+            "status": "Planned",
+            "type": "Assembly",
+            "reason": "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R66, TP1, TP2, TP3 & TP4.",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-80",
+            "opNo": 80,
+            "operation": "Masking before conformal coating",
+            "workCentre": "Bonding",
+            "machine": "Assembly station",
+            "tool": "Masking tape",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "PS362, 112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "FOR BARE BOARD VER 02, SHORT X53.2 TO P2.C19 & X54.2 TO P2.C16 USING COPPER ENAMELED WIRE P/N-485100709086 NOTE II; THE FOLLOWING COMPONENTS HAVE TO BE MASKED WITH MASKING TAPE (545501000341) BEFORE DOING THE CONFORMAL COATING AS PER STANDARD PS 362",
+            "status": "Planned",
+            "type": "Bonding",
+            "reason": "FOR BARE BOARD VER 02, SHORT X53.2 TO P2.C19 & X54.2 TO P2.C16 USING COPPER ENAMELED WIRE P/N-485100709086 NOTE II; THE FOLLOWING COMPONENTS HAVE TO BE MASKED WITH MASKING TAPE (545501000341) BEFORE DOING THE CONFORMAL COATING AS PER STANDA",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-90",
+            "opNo": 90,
+            "operation": "Mask connectors",
+            "workCentre": "Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "Pl, P2 & P3 CONNECTORS",
+            "status": "Planned",
+            "type": "Assembly",
+            "reason": "Pl, P2 & P3 CONNECTORS",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-100",
+            "opNo": 100,
+            "operation": "Mask / protect test points",
+            "workCentre": "Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "TP1, TP2, TP3 & TP4 TEST POINTS",
+            "status": "Planned",
+            "type": "Assembly",
+            "reason": "TP1, TP2, TP3 & TP4 TEST POINTS",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-110",
+            "opNo": 110,
+            "operation": "Mask connectors",
+            "workCentre": "Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "X1 TO X55 CONNECTORS",
+            "status": "Planned",
+            "type": "Assembly",
+            "reason": "X1 TO X55 CONNECTORS",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-120",
+            "opNo": 120,
+            "operation": "Facia panel assembly",
+            "workCentre": "Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "FACIA PANEL ASSEMBLY",
+            "status": "Planned",
+            "type": "Assembly",
+            "reason": "FACIA PANEL ASSEMBLY",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-130",
+            "opNo": 130,
+            "operation": "Mask PCB tin-plated edge",
+            "workCentre": "Assembly",
+            "machine": "Assembly station",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "TIN PLATED SIDE EDGE OF THE PCB",
+            "status": "Planned",
+            "type": "Assembly",
+            "reason": "TIN PLATED SIDE EDGE OF THE PCB",
+            "features": [],
+            "elaborated": false,
+            "sourceDrawingId": 29,
+            "placement": [],
+            "viewRefs": []
+        },
+        {
+            "id": "op-140",
+            "opNo": 140,
+            "operation": "Final inspection",
+            "workCentre": "Quality",
+            "machine": "Inspection bench",
+            "tool": "visual",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "PS362",
+            "setup": "—",
+            "time": "",
+            "inspection": "100% derived checklist",
+            "instructionText": "Final visual and assembly inspection.",
+            "status": "Planned",
+            "type": "Quality",
+            "reason": "Final visual and assembly inspection.",
+            "features": []
+        }
+    ],
+    "routeOperations": [
+        {
+            "id": "280",
+            "opNo": 10,
+            "operation": "RoHS / lead-free component callout",
+            "workCentre": "PCB",
+            "machine": "",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "THE FOLLOWING ARE LEAD-FREE (RoHS COMPLIANT) COMPONENTS USED IN THIS BOARD: U1-U12,FL1,FL2",
+            "status": "Planned",
+            "type": "PCB",
+            "reason": "THE FOLLOWING ARE LEAD-FREE (RoHS COMPLIANT) COMPONENTS USED IN THIS BOARD: U1-U12,FL1,FL2",
+            "features": [],
+            "workCentreId": 5,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        },
+        {
+            "id": "281",
+            "opNo": 20,
+            "operation": "PCB drilling",
+            "workCentre": "PCB",
+            "machine": "",
+            "tool": "Drill",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERTS OF THE TRANSFORMERS B1 TO B8.",
+            "status": "Planned",
+            "type": "PCB",
+            "reason": "DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERTS OF THE TRANSFORMERS B1 TO B8.",
+            "features": [],
+            "workCentreId": 5,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        },
+        {
+            "id": "282",
+            "opNo": 30,
+            "operation": "Transformer mechanical mounting",
+            "workCentre": "PCB",
+            "machine": "",
+            "tool": "Soldering station",
+            "items": "#8×4, #39×1",
+            "itemsUsed": [
+                {
+                    "itemNo": 8,
+                    "qty": 4,
+                    "description": "SCR CH HD SST-M2.5x12 \",,, \"",
+                    "partNumber": "3002 004 238 10"
+                },
+                {
+                    "itemNo": 39,
+                    "qty": 1,
+                    "description": null
+                }
+            ],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "DO THE MECHANICAL MOUNTING OF THE BETA TRANSFORMERS USING ITEM NO 8 AND 39 CHECK FOR THE WARPAGE OF THE BOARD. IF FOUND OK THEN DO THE SOLDERING OF THE BETA TRANSFORMERS.",
+            "status": "Planned",
+            "type": "PCB",
+            "reason": "DO THE MECHANICAL MOUNTING OF THE BETA TRANSFORMERS USING ITEM NO 8 AND 39 CHECK FOR THE WARPAGE OF THE BOARD. IF FOUND OK THEN DO THE SOLDERING OF THE BETA TRANSFORMERS.",
+            "features": [],
+            "workCentreId": 5,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        },
+        {
+            "id": "283",
+            "opNo": 40,
+            "operation": "Solder-fill unused holes",
+            "workCentre": "PCB",
+            "machine": "",
+            "tool": "Soldering station",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "ALL UN-USED HOLES TO BE SOLDER FILLED",
+            "status": "Planned",
+            "type": "PCB",
+            "reason": "ALL UN-USED HOLES TO BE SOLDER FILLED",
+            "features": [],
+            "workCentreId": 5,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        },
+        {
+            "id": "284",
+            "opNo": 50,
+            "operation": "Short connector pins",
+            "workCentre": "PCB",
+            "machine": "",
+            "tool": "Assembly tools",
+            "items": "#50×50",
+            "itemsUsed": [
+                {
+                    "itemNo": 50,
+                    "qty": 50,
+                    "description": "TER INSUL MINI JPR 3A Au PLD CLSD-BK \",,, \"",
+                    "partNumber": "4757 601 001 97"
+                }
+            ],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "SHORT THE PIN NO 1 AND 2 OF X1 TO X30, X32, X34, X36, X38, X40, X42 X44, X47, X51, X52, X55 USING ITEM NO-50.",
+            "status": "Planned",
+            "type": "PCB",
+            "reason": "SHORT THE PIN NO 1 AND 2 OF X1 TO X30, X32, X34, X36, X38, X40, X42 X44, X47, X51, X52, X55 USING ITEM NO-50.",
+            "features": [],
+            "workCentreId": 5,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        },
+        {
+            "id": "285",
+            "opNo": 60,
+            "operation": "Do not short specified connector pins",
+            "workCentre": "PCB",
+            "machine": "",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "DO NOT SHORT PIN 1 & 2 OF X31, X33, X35. X37, X39 & X41.",
+            "status": "Planned",
+            "type": "PCB",
+            "reason": "DO NOT SHORT PIN 1 & 2 OF X31, X33, X35. X37, X39 & X41.",
+            "features": [],
+            "workCentreId": 5,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        },
+        {
+            "id": "286",
+            "opNo": 70,
+            "operation": "Do not mount specified items",
+            "workCentre": "ASM",
+            "machine": "Assembly machine",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R66, TP1, TP2, TP3 & TP4.",
+            "status": "Planned",
+            "type": "ASM",
+            "reason": "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R66, TP1, TP2, TP3 & TP4.",
+            "features": [],
+            "workCentreId": 2,
+            "machineId": 2,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        },
+        {
+            "id": "287",
+            "opNo": 80,
+            "operation": "Masking before conformal coating",
+            "workCentre": "BOND",
+            "machine": "",
+            "tool": "Masking tape",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "PS362, 112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "FOR BARE BOARD VER 02, SHORT X53.2 TO P2.C19 & X54.2 TO P2.C16 USING COPPER ENAMELED WIRE P/N-485100709086 NOTE II; THE FOLLOWING COMPONENTS HAVE TO BE MASKED WITH MASKING TAPE (545501000341) BEFORE DOING THE CONFORMAL COATING AS PER STANDARD PS 362",
+            "status": "Planned",
+            "type": "BOND",
+            "reason": "FOR BARE BOARD VER 02, SHORT X53.2 TO P2.C19 & X54.2 TO P2.C16 USING COPPER ENAMELED WIRE P/N-485100709086 NOTE II; THE FOLLOWING COMPONENTS HAVE TO BE MASKED WITH MASKING TAPE (545501000341) BEFORE DOING THE CONFORMAL COATING AS PER STANDA",
+            "features": [],
+            "workCentreId": 3,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        },
+        {
+            "id": "288",
+            "opNo": 90,
+            "operation": "Mask connectors",
+            "workCentre": "BOND",
+            "machine": "",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "Pl, P2 & P3 CONNECTORS",
+            "status": "Planned",
+            "type": "BOND",
+            "reason": "Pl, P2 & P3 CONNECTORS",
+            "features": [],
+            "workCentreId": 3,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.847
+        },
+        {
+            "id": "289",
+            "opNo": 100,
+            "operation": "Mask / protect test points",
+            "workCentre": "BOND",
+            "machine": "",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "TP1, TP2, TP3 & TP4 TEST POINTS",
+            "status": "Planned",
+            "type": "BOND",
+            "reason": "TP1, TP2, TP3 & TP4 TEST POINTS",
+            "features": [],
+            "workCentreId": 3,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.847
+        },
+        {
+            "id": "290",
+            "opNo": 110,
+            "operation": "Mask connectors",
+            "workCentre": "BOND",
+            "machine": "",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "X1 TO X55 CONNECTORS",
+            "status": "Planned",
+            "type": "BOND",
+            "reason": "X1 TO X55 CONNECTORS",
+            "features": [],
+            "workCentreId": 3,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.847
+        },
+        {
+            "id": "291",
+            "opNo": 120,
+            "operation": "Facia panel assembly",
+            "workCentre": "ASM",
+            "machine": "Assembly machine",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "FACIA PANEL ASSEMBLY",
+            "status": "Planned",
+            "type": "ASM",
+            "reason": "FACIA PANEL ASSEMBLY",
+            "features": [],
+            "workCentreId": 2,
+            "machineId": 2,
+            "linkStatus": "linked",
+            "linkConfidence": 0.898
+        },
+        {
+            "id": "292",
+            "opNo": 130,
+            "operation": "Mask PCB tin-plated edge",
+            "workCentre": "BOND",
+            "machine": "",
+            "tool": "Assembly tools",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "112360195216AA - GA.pdf",
+            "setup": "1",
+            "time": "",
+            "inspection": "Visual",
+            "instructionText": "TIN PLATED SIDE EDGE OF THE PCB",
+            "status": "Planned",
+            "type": "BOND",
+            "reason": "TIN PLATED SIDE EDGE OF THE PCB",
+            "features": [],
+            "workCentreId": 3,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.847
+        },
+        {
+            "id": "293",
+            "opNo": 140,
+            "operation": "Final inspection",
+            "workCentre": "QUALITY",
+            "machine": "",
+            "tool": "visual",
+            "items": "",
+            "itemsUsed": [],
+            "torqueSpec": "",
+            "reference": "PS362",
+            "setup": "—",
+            "time": "",
+            "inspection": "100% derived checklist",
+            "instructionText": "Final visual and assembly inspection.",
+            "status": "Planned",
+            "type": "QUALITY",
+            "reason": "Final visual and assembly inspection.",
+            "features": [],
+            "workCentreId": 1,
+            "machineId": null,
+            "linkStatus": "linked",
+            "linkConfidence": 0.99
+        }
+    ],
+    "inspectionChars": [
+        {
+            "id": "74",
+            "dimension": "Compliance PS362",
+            "nominal": "PS362",
+            "tolerance": "—",
+            "method": "Process audit",
+            "frequency": "Process audit",
+            "criticality": "Important"
+        }
+    ],
+    "referencedDocuments": [
+        "PS362"
+    ],
+    "revisions": [],
+    "notes": [
+        {
+            "sheet": 1,
+            "stepNo": 1,
+            "text": "THE FOLLOWING ARE LEAD-FREE (RoHS COMPLIANT) COMPONENTS USED IN THIS BOARD: U1-U12,FL1,FL2",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 2,
+            "text": "DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERTS OF THE TRANSFORMERS B1 TO B8.",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 3,
+            "text": "DO THE MECHANICAL MOUNTING OF THE BETA TRANSFORMERS USING ITEM NO 8 AND 39 CHECK FOR THE WARPAGE OF THE BOARD. IF FOUND OK THEN DO THE SOLDERING OF THE BETA TRANSFORMERS.",
+            "items": [
+                8,
+                39
+            ],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 4,
+            "text": "ALL UN-USED HOLES TO BE SOLDER FILLED",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 5,
+            "text": "SHORT THE PIN NO 1 AND 2 OF X1 TO X30, X32, X34, X36, X38, X40, X42 X44, X47, X51, X52, X55 USING ITEM NO-50.",
+            "items": [
+                50
+            ],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 6,
+            "text": "DO NOT SHORT PIN 1 & 2 OF X31, X33, X35. X37, X39 & X41.",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 7,
+            "text": "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R66, TP1, TP2, TP3 & TP4.",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 8,
+            "text": "FOR BARE BOARD VER 02, SHORT X53.2 TO P2.C19 & X54.2 TO P2.C16 USING COPPER ENAMELED WIRE P/N-485100709086 NOTE II; THE FOLLOWING COMPONENTS HAVE TO BE MASKED WITH MASKING TAPE (545501000341) BEFORE DOING THE CONFORMAL COATING AS PER STANDARD PS 362",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [
+                "PS362"
+            ],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 9,
+            "text": "Pl, P2 & P3 CONNECTORS",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 10,
+            "text": "TP1, TP2, TP3 & TP4 TEST POINTS",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 11,
+            "text": "X1 TO X55 CONNECTORS",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 12,
+            "text": "FACIA PANEL ASSEMBLY",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        },
+        {
+            "sheet": 1,
+            "stepNo": 13,
+            "text": "TIN PLATED SIDE EDGE OF THE PCB",
+            "items": [],
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": [],
+            "noteSection": "NOTE 1",
+            "sourceDrawingId": 29,
+            "sourceFilename": "112360195216AA - GA.pdf"
+        }
+    ],
+    "warnings": [],
+    "analysisTasks": [
+        {
+            "key": "ocr",
+            "label": "Text extraction",
+            "value": 100
+        },
+        {
+            "key": "notes",
+            "label": "Assembly notes",
+            "value": 100
+        },
+        {
+            "key": "bom",
+            "label": "BOM callouts",
+            "value": 100
+        },
+        {
+            "key": "torque",
+            "label": "Torque / standards",
+            "value": 0
+        },
+        {
+            "key": "dims",
+            "label": "Interface dimensions",
+            "value": 0
+        },
+        {
+            "key": "mind",
+            "label": "Drawing mind",
+            "value": 100
+        },
+        {
+            "key": "wl",
+            "label": "Wire list",
+            "value": 0
+        },
+        {
+            "key": "pl",
+            "label": "Parts list",
+            "value": 100
+        },
+        {
+            "key": "route",
+            "label": "Route generation",
+            "value": 100
+        }
+    ],
+    "documents": [
+        {
+            "id": 53,
+            "role": "drawing",
+            "filename": "112360195216AA - GA.pdf",
+            "file_type": "PDF",
+            "size_bytes": 230676,
+            "size_label": "225.3 KB",
+            "status": "analyzed",
+            "warnings": [],
+            "drawingId": 29,
+            "uploadedBy": "admin",
+            "createdAt": "2026-10-30T07:46:14.577599",
+            "objectPath": "D:/PMF/route-card-app/uploads/users_admin_1_sessions_22/drawing__112360195216AA - GA__1793326574.pdf",
+            "contentType": "application/pdf"
+        },
+        {
+            "id": 54,
+            "role": "partslist",
+            "filename": "112360195216AA - PL.xls",
+            "file_type": "XLS",
+            "size_bytes": 140662,
+            "size_label": "137.4 KB",
+            "status": "analyzed",
+            "warnings": [
+                "Parts List .xls was plain text/TSV; parsed as table text."
+            ],
+            "drawingId": null,
+            "uploadedBy": "admin",
+            "createdAt": "2026-10-30T07:46:19.727004",
+            "objectPath": "D:/PMF/route-card-app/uploads/users_admin_1_sessions_22/partslist__112360195216AA - PL.xls",
+            "contentType": "application/vnd.ms-excel"
+        }
+    ],
+    "wireList": null,
+    "partsList": {
+        "partNumber": "1123 601 952 16",
+        "itemCount": 40,
+        "items": [
+            {
+                "itemNo": 2,
+                "partNumber": "2524 913 809 19",
+                "description": "LABEL \",,, \"",
+                "qty": 1,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 3,
+                "partNumber": "2127 941 342 17",
+                "description": "LABEL \",,, \"",
+                "qty": 1,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 4,
+                "partNumber": "2126 303 601 93",
+                "description": "STIFFENER \",,, \"",
+                "qty": 1,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 5,
+                "partNumber": "2127 950 003 30",
+                "description": "SCREW 4-40 UNC \",,, \"",
+                "qty": 20,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 6,
+                "partNumber": "2199 202 822 85",
+                "description": "PCB AK630 DRVR U2 \",,, \"",
+                "qty": 1,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 7,
+                "partNumber": "3002 004 237 13",
+                "description": "SCR CH HD SST-M2.5x10 \",,, \"",
+                "qty": 4,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 8,
+                "partNumber": "3002 004 238 10",
+                "description": "SCR CH HD SST-M2.5x12 \",,, \"",
+                "qty": 4,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 9,
+                "partNumber": "3006 001 199 73",
+                "description": "SCR X REC PAN AISI 304 - M2 x 16 \",,, \"",
+                "qty": 2,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 10,
+                "partNumber": "3017 005 264 82",
+                "description": "NUT HEX SST-M2. \",,, \"",
+                "qty": 2,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 11,
+                "partNumber": "3030 009 264 27",
+                "description": "WASHER PLAIN SST-M2 \",,, \"",
+                "qty": 4,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 12,
+                "partNumber": "3030 011 269 26",
+                "description": "WASHER PLAIN SST-M2.5 \",,, \"",
+                "qty": 8,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 13,
+                "partNumber": "5605 003 005 58",
+                "description": "LOCKING COMPOUND-C \",,, \"",
+                "qty": 1,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 14,
+                "partNumber": "3031 002 264 91",
+                "description": "WASHER SPRING SST - M2 \",,, \"",
+                "qty": 2,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 15,
+                "partNumber": "3036 001 004 71",
+                "description": "WASHER POLYAMIDE-M3 \",,, \"",
+                "qty": 20,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 16,
+                "partNumber": "4953 203 301 32",
+                "description": "TRANSFORMER AUDIO 6.8V 400Hz \"B1, B2, B3,,, \"",
+                "qty": 3,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 17,
+                "partNumber": "4950 201 201 76",
+                "description": "TRANSFORMER 33920 \"B4, B5, B8,,, \"",
+                "qty": 3,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 18,
+                "partNumber": "4950 201 501 49",
+                "description": "REFERENCE TRANSFORMER \"B6, B7,,, \"",
+                "qty": 2,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 19,
+                "partNumber": "4043 051 017 04",
+                "description": "CAP FXD CERG CH 0.01uF10% 100V. \"C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12,,, \"",
+                "qty": 12,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 20,
+                "partNumber": "4061 014 090 08",
+                "description": "CAPACITOR TMEL CH 22F 10% 35V. \"C13, C14, C15, C16, C17, C18,,, \"",
+                "qty": 6,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 21,
+                "partNumber": "4061 052 096 62",
+                "description": "CAPACITOR TMEL CH 10F 10% 35V RoHS \"C22, C24, C26, C28, C30, C31, C34, C36, C38, C40, C42, C44, C46, C48, C50, C52, C54, C56, C58, C60, C62, C64, C66, C68,,, \"",
+                "qty": 24,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 22,
+                "partNumber": "4043 051 017 04",
+                "description": "CAP FXD CERG CH 0.01uF10% 100V. \"C23, C25, C27, C29, C32, C33, C35, C37, C39, C41, C43, C45, C55, C57, C59, C61, C63, C65, C67, C69, C85, C87, C90, C92,,, \"",
+                "qty": 24,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 23,
+                "partNumber": "4061 116 206 83",
+                "description": "CAP FXD TMEL 47uF 5% 35V \"C70, C72,,, \"",
+                "qty": 2,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 24,
+                "partNumber": "4043 051 027 71",
+                "description": "CAP FXD CH CERG 100KpF +-10% 50V. \"C71, C73,,, \"",
+                "qty": 2,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 25,
+                "partNumber": "4232 051 001 69",
+                "description": "DIODE RECT 1A 40V DO-213AB 5819 RoHS \"D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16, D17, D18, D19, D20, D21, D22, D23, D24,,, \"",
+                "qty": 24,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 26,
+                "partNumber": "4232 033 001 40",
+                "description": "DIODE RECT 1A 200V JAN1N5614 \"D25, D26, D27, D28, D29, D30, D31, D32,,, \"",
+                "qty": 8,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 27,
+                "partNumber": "4240 057 012 12",
+                "description": "DIODE TVS 15V SMD JANTXV1N6464US \"D33, D34,,, \"",
+                "qty": 28,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 29,
+                "partNumber": "4655 163 203 31",
+                "description": "MALE CONNECTOR \"P1, P2,,, \"",
+                "qty": 30,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 32,
+                "partNumber": "4005 066 404 86",
+                "description": "RESISTOR THKF CH 499# 1% 0.25W RoHS \"R2, R15, R28, R41, R54, R67,,, \"",
+                "qty": 6,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 33,
+                "partNumber": "4005 066 290 40",
+                "description": "RESISTOR THKF CH 49.9# 1% 0.25W RoHS \"R3, R4, R9, R10, R16, R17, R22, R23, R29, R30, R35, R36, R42, R43, R48, R49, R55, R56, R61, R62, R68, R69, R74, R75,,, \"",
+                "qty": 24,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 34,
+                "partNumber": "4005 066 660 94",
+                "description": "RESISTOR THKF CH 86.6K 1% 0.25W RoHS \"R5, R11, R18, R24, R31, R37, R44, R50, R57, R63, R70, R76,,, \"",
+                "qty": 12,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 35,
+                "partNumber": "4005 055 001 54",
+                "description": "RESISTOR THKF CH 0 JUMPER.. \"R6, R12, R19, R25, R32, R38, R45, R51, R58, R64, R71, 77,,, \"",
+                "qty": 12,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 36,
+                "partNumber": "4006 002 149 31",
+                "description": "RESISTOR HP THKF CH 3.0# 1% 1W RoHS \"R7, R13, R20, R26, R33, R39, R46, R52, R59, R65, R72, R78,,, \"",
+                "qty": 12,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 37,
+                "partNumber": "4005 066 430 08",
+                "description": "RESISTOR THKF CH 825# 1% 0.25W RoHS \"R8, R21, R34, R47, R60, R73,,, \"",
+                "qty": 6,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 38,
+                "partNumber": "4005 066 646 39",
+                "description": "RESISTOR THKF CH 64.9K 1% 0.25W RoHS \"R79, R80, R81, R82,,, \"",
+                "qty": 40,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 41,
+                "partNumber": "4018 113 404 41",
+                "description": "RES VAR CER 1K OHM TRM 20% 0.125W \"VR1, VR2, VR3, VR4, VR5, VR6,,, \"",
+                "qty": 6,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 42,
+                "partNumber": "4018 013 039 48",
+                "description": "RESISTOR VAR CER 10# TRM 10% 0.5W RoHS \"VR7, VR8, VR9, VR10, VR11, VR12,,, \"",
+                "qty": 6,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 43,
+                "partNumber": "4655 027 088 06",
+                "description": "CONN PCB M HDRST SR03 5.84/2.54 0.75AuJ \"X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15, X16, X17, X18, X19, X20, X21, X22, X23, X24, X25, X26, X27, X28, X29, X30, X44, X45, X46, X47",
+                "qty": 42,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 44,
+                "partNumber": "4636 125 818 41",
+                "description": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "qty": 13,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 50,
+                "partNumber": "4757 601 001 97",
+                "description": "TER INSUL MINI JPR 3A Au PLD CLSD-BK \",,, \"",
+                "qty": 50,
+                "unit": "NO"
+            },
+            {
+                "itemNo": 55,
+                "partNumber": "4851 007 090 86",
+                "description": "WIRE COP ENAMEL POLYESTER-0.280 \",,, \"",
+                "qty": 0.5,
+                "unit": "M"
+            }
+        ]
+    },
+    "sessionId": 22,
+    "formatMatches": {
+        "partslist": {
+            "matched": true,
+            "score": 0.5417,
+            "template": {
+                "id": "bel-pl-default",
+                "name": "BEL Parts List (default)",
+                "docType": "PL",
+                "builtin": true,
+                "aliases": {
+                    "noteHeaders": [],
+                    "plColumns": {
+                        "item": [
+                            "ITEM",
+                            "ITEM NO",
+                            "ITM",
+                            "S.NO",
+                            "SL NO",
+                            "SL.NO"
+                        ],
+                        "description": [
+                            "DESIGNATION",
+                            "DESCRIPTION",
+                            "DESC",
+                            "PART NAME"
+                        ],
+                        "partNo": [
+                            "PART NO",
+                            "PART NUMBER",
+                            "P/N",
+                            "PN"
+                        ],
+                        "qty": [
+                            "QTY",
+                            "QUANTITY",
+                            "QTY.",
+                            "NOS"
+                        ]
+                    },
+                    "wlHints": []
+                }
+            },
+            "candidates": [
+                {
+                    "id": "bel-pl-default",
+                    "name": "BEL Parts List (default)",
+                    "score": 0.5417,
+                    "docType": "PL"
+                },
+                {
+                    "id": "learned-pl-14a3a701cd",
+                    "name": "Parts List — 112185749834",
+                    "score": 0.5,
+                    "docType": "PL"
+                },
+                {
+                    "id": "learned-pl-f536721b78",
+                    "name": "Parts List — 112360195216",
+                    "score": 0.5,
+                    "docType": "PL"
+                },
+                {
+                    "id": "learned-pl-957ec52541",
+                    "name": "Parts List — 112188041168",
+                    "score": 0.3846,
+                    "docType": "PL"
+                },
+                {
+                    "id": "bel-ga-default",
+                    "name": "BEL GA / Assembly (default)",
+                    "score": 0.3077,
+                    "docType": "GA"
+                }
+            ]
+        },
+        "drawing": {
+            "matched": true,
+            "score": 0.5503,
+            "template": {
+                "id": "learned-ga-b80d291367",
+                "name": "GA drawing — 112185749834",
+                "docType": "GA",
+                "builtin": false,
+                "aliases": {
+                    "noteHeaders": [
+                        "NOTE",
+                        "NOTES",
+                        "REMARKS",
+                        "INSTRUCTIONS",
+                        "INSTRUCTION",
+                        "ASSY NOTES",
+                        "ASSEMBLY NOTES",
+                        "ASSY INSTRUCTIONS",
+                        "ASSEMBLY INSTRUCTIONS",
+                        "CTQ POINTS",
+                        "CTQ POINT",
+                        "CRITICAL TO QUALITY POINTS"
+                    ],
+                    "plColumns": {},
+                    "wlHints": []
+                }
+            },
+            "candidates": [
+                {
+                    "id": "learned-ga-b80d291367",
+                    "name": "GA drawing — 112185749834",
+                    "score": 0.5503,
+                    "docType": "GA"
+                },
+                {
+                    "id": "learned-ga-a8d64859e2",
+                    "name": "GA drawing — 112185749834",
+                    "score": 0.5385,
+                    "docType": "GA"
+                },
+                {
+                    "id": "learned-ga-f5ed4e252b",
+                    "name": "GA drawing — 112360195216",
+                    "score": 0.5128,
+                    "docType": "GA"
+                },
+                {
+                    "id": "bel-wl-default",
+                    "name": "BEL Wire List (default)",
+                    "score": 0.5,
+                    "docType": "WL"
+                },
+                {
+                    "id": "bel-ga-default",
+                    "name": "BEL GA / Assembly (default)",
+                    "score": 0.4359,
+                    "docType": "GA"
+                }
+            ]
+        }
+    },
+    "mind": {
+        "engine": "cpu_spatial",
+        "placements": [],
+        "pcbLinks": [
+            {
+                "connector": "C16",
+                "plItemNo": 20,
+                "plDescription": "CAPACITOR TMEL CH 22F 10% 35V. \"C13, C14, C15, C16, C17, C18,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "P2",
+                "plItemNo": 29,
+                "plDescription": "MALE CONNECTOR \"P1, P2,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X1",
+                "plItemNo": 7,
+                "plDescription": "SCR CH HD SST-M2.5x10 \",,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X30",
+                "plItemNo": 43,
+                "plDescription": "CONN PCB M HDRST SR03 5.84/2.54 0.75AuJ \"X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15, X16, X17, X18, X19, X20, X21, X22, X23, X24, X25, X26, X27, X28, X29, X30, X44, X45, X46, X47",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X31",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X32",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X33",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X34",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X35",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X36",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X37",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X38",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X39",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X40",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X41",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X42",
+                "plItemNo": 44,
+                "plDescription": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X44",
+                "plItemNo": 43,
+                "plDescription": "CONN PCB M HDRST SR03 5.84/2.54 0.75AuJ \"X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15, X16, X17, X18, X19, X20, X21, X22, X23, X24, X25, X26, X27, X28, X29, X30, X44, X45, X46, X47",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            },
+            {
+                "connector": "X47",
+                "plItemNo": 43,
+                "plDescription": "CONN PCB M HDRST SR03 5.84/2.54 0.75AuJ \"X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15, X16, X17, X18, X19, X20, X21, X22, X23, X24, X25, X26, X27, X28, X29, X30, X44, X45, X46, X47",
+                "wlWireCount": 0,
+                "confidence": 0.65,
+                "note": "Linked from GA/PCB callout to PL/WL"
+            }
+        ],
+        "crossRefs": [],
+        "viewRefs": [],
+        "warnings": [],
+        "gaSources": [
+            {
+                "drawingId": 29,
+                "filename": "112360195216AA - GA.pdf",
+                "drawingNumber": "1123 601 952 16",
+                "notesCount": 13,
+                "sheetNo": 1,
+                "figures": [],
+                "tables": [],
+                "details": [],
+                "namedBlocks": []
+            }
+        ]
+    },
+    "drawings": [
+        {
+            "id": 29,
+            "filename": "112360195216AA - GA.pdf",
+            "status": "analyzed",
+            "pages": 1,
+            "drawingType": "assembly"
+        }
+    ],
+    "crossRefs": [],
+    "viewRefs": [],
+    "iedSharedAt": null,
+    "iedSharedById": null,
+    "iedCompletedAt": null,
+    "iedCompletedById": null,
+    "reviewFlags": [
+        {
+            "id": 71,
+            "sessionId": 22,
+            "routeCardId": 20,
+            "kind": "warning",
+            "severity": "low",
+            "message": "Wire List not provided — cable pin map / continuity checklist skipped.",
+            "source": "auto:warning",
+            "resolved": false,
+            "resolvedAt": null,
+            "resolvedBy": "",
+            "createdAt": "2026-10-30T07:46:30.172171Z"
+        },
+        {
+            "id": 72,
+            "sessionId": 22,
+            "routeCardId": 20,
+            "kind": "warning",
+            "severity": "low",
+            "message": "Used offline OCR (Tesseract) to recover graphics-only drawing text / NOTES.",
+            "source": "auto:warning",
+            "resolved": false,
+            "resolvedAt": null,
+            "resolvedBy": "",
+            "createdAt": "2026-10-30T07:46:30.172171Z"
+        },
+        {
+            "id": 73,
+            "sessionId": 22,
+            "routeCardId": 20,
+            "kind": "pl_ga_mismatch",
+            "severity": "high",
+            "message": "PL↔GA item mismatch: 33 PL-only, 1 drawing-only refs.",
+            "source": "auto:item_link",
+            "resolved": false,
+            "resolvedAt": null,
+            "resolvedBy": "",
+            "createdAt": "2026-10-30T07:46:30.172171Z"
+        }
+    ],
+    "itemLinkReport": {
+        "matched": [
+            "7",
+            "8",
+            "20",
+            "29",
+            "43",
+            "44",
+            "50"
+        ],
+        "plOnly": [
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16",
+            "17",
+            "18",
+            "19",
+            "21",
+            "22",
+            "23",
+            "24",
+            "25",
+            "26",
+            "27",
+            "32",
+            "33",
+            "34",
+            "35",
+            "36",
+            "37",
+            "38",
+            "41",
+            "42",
+            "55"
+        ],
+        "gaOnly": [
+            "39"
+        ],
+        "rows": [
+            {
+                "itemNo": "2",
+                "description": "LABEL \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "3",
+                "description": "LABEL \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "4",
+                "description": "STIFFENER \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "5",
+                "description": "SCREW 4-40 UNC \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "6",
+                "description": "PCB AK630 DRVR U2 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "7",
+                "description": "SCR CH HD SST-M2.5x10 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": true,
+                "status": "matched"
+            },
+            {
+                "itemNo": "8",
+                "description": "SCR CH HD SST-M2.5x12 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": true,
+                "status": "matched"
+            },
+            {
+                "itemNo": "9",
+                "description": "SCR X REC PAN AISI 304 - M2 x 16 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "10",
+                "description": "NUT HEX SST-M2. \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "11",
+                "description": "WASHER PLAIN SST-M2 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "12",
+                "description": "WASHER PLAIN SST-M2.5 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "13",
+                "description": "LOCKING COMPOUND-C \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "14",
+                "description": "WASHER SPRING SST - M2 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "15",
+                "description": "WASHER POLYAMIDE-M3 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "16",
+                "description": "TRANSFORMER AUDIO 6.8V 400Hz \"B1, B2, B3,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "17",
+                "description": "TRANSFORMER 33920 \"B4, B5, B8,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "18",
+                "description": "REFERENCE TRANSFORMER \"B6, B7,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "19",
+                "description": "CAP FXD CERG CH 0.01uF10% 100V. \"C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "20",
+                "description": "CAPACITOR TMEL CH 22F 10% 35V. \"C13, C14, C15, C16, C17, C18,,, \"",
+                "onPartsList": true,
+                "onDrawing": true,
+                "status": "matched"
+            },
+            {
+                "itemNo": "21",
+                "description": "CAPACITOR TMEL CH 10F 10% 35V RoHS \"C22, C24, C26, C28, C30, C31, C34, C36, C38, C40, C42, C44, C46, C48, C50, C52, C54, C56, C58, C60, C62, C64, C66, C68,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "22",
+                "description": "CAP FXD CERG CH 0.01uF10% 100V. \"C23, C25, C27, C29, C32, C33, C35, C37, C39, C41, C43, C45, C55, C57, C59, C61, C63, C65, C67, C69, C85, C87, C90, C92,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "23",
+                "description": "CAP FXD TMEL 47uF 5% 35V \"C70, C72,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "24",
+                "description": "CAP FXD CH CERG 100KpF +-10% 50V. \"C71, C73,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "25",
+                "description": "DIODE RECT 1A 40V DO-213AB 5819 RoHS \"D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16, D17, D18, D19, D20, D21, D22, D23, D24,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "26",
+                "description": "DIODE RECT 1A 200V JAN1N5614 \"D25, D26, D27, D28, D29, D30, D31, D32,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "27",
+                "description": "DIODE TVS 15V SMD JANTXV1N6464US \"D33, D34,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "29",
+                "description": "MALE CONNECTOR \"P1, P2,,, \"",
+                "onPartsList": true,
+                "onDrawing": true,
+                "status": "matched"
+            },
+            {
+                "itemNo": "32",
+                "description": "RESISTOR THKF CH 499# 1% 0.25W RoHS \"R2, R15, R28, R41, R54, R67,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "33",
+                "description": "RESISTOR THKF CH 49.9# 1% 0.25W RoHS \"R3, R4, R9, R10, R16, R17, R22, R23, R29, R30, R35, R36, R42, R43, R48, R49, R55, R56, R61, R62, R68, R69, R74, R75,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "34",
+                "description": "RESISTOR THKF CH 86.6K 1% 0.25W RoHS \"R5, R11, R18, R24, R31, R37, R44, R50, R57, R63, R70, R76,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "35",
+                "description": "RESISTOR THKF CH 0 JUMPER.. \"R6, R12, R19, R25, R32, R38, R45, R51, R58, R64, R71, 77,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "36",
+                "description": "RESISTOR HP THKF CH 3.0# 1% 1W RoHS \"R7, R13, R20, R26, R33, R39, R46, R52, R59, R65, R72, R78,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "37",
+                "description": "RESISTOR THKF CH 825# 1% 0.25W RoHS \"R8, R21, R34, R47, R60, R73,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "38",
+                "description": "RESISTOR THKF CH 64.9K 1% 0.25W RoHS \"R79, R80, R81, R82,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "39",
+                "description": "",
+                "onPartsList": false,
+                "onDrawing": true,
+                "status": "ga_only"
+            },
+            {
+                "itemNo": "41",
+                "description": "RES VAR CER 1K OHM TRM 20% 0.125W \"VR1, VR2, VR3, VR4, VR5, VR6,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "42",
+                "description": "RESISTOR VAR CER 10# TRM 10% 0.5W RoHS \"VR7, VR8, VR9, VR10, VR11, VR12,,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            },
+            {
+                "itemNo": "43",
+                "description": "CONN PCB M HDRST SR03 5.84/2.54 0.75AuJ \"X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15, X16, X17, X18, X19, X20, X21, X22, X23, X24, X25, X26, X27, X28, X29, X30, X44, X45, X46, X47",
+                "onPartsList": true,
+                "onDrawing": true,
+                "status": "matched"
+            },
+            {
+                "itemNo": "44",
+                "description": "STRAIGHT HEADERS PIN 2. \"X31, X32, X33, X34, X35, X36, X37, X38, X39, X40, X41, X42, X43,,, \"",
+                "onPartsList": true,
+                "onDrawing": true,
+                "status": "matched"
+            },
+            {
+                "itemNo": "50",
+                "description": "TER INSUL MINI JPR 3A Au PLD CLSD-BK \",,, \"",
+                "onPartsList": true,
+                "onDrawing": true,
+                "status": "matched"
+            },
+            {
+                "itemNo": "55",
+                "description": "WIRE COP ENAMEL POLYESTER-0.280 \",,, \"",
+                "onPartsList": true,
+                "onDrawing": false,
+                "status": "pl_only"
+            }
+        ],
+        "summary": {
+            "plCount": 40,
+            "gaRefCount": 8,
+            "matchedCount": 7,
+            "mismatchCount": 34
+        }
+    }
+}

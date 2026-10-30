@@ -178,6 +178,48 @@ export function mapPayloadToOrderPrefill(payload, { requiredQty = 1 } = {}) {
   return { header, operations, rawMaterials };
 }
 
+/** Map editable OARC op rows back to route-card `routeOperations` for PUT. */
+export function oarcOpsToRouteOperations(oarcOps, previousRouteOps = []) {
+  const prevByNo = new Map();
+  for (const op of asList(previousRouteOps)) {
+    const n = Number(op.opNo);
+    if (!Number.isNaN(n)) prevByNo.set(n, op);
+  }
+  return asList(oarcOps)
+    .map((op, i) => {
+      const n = opNo(op["Oprn No"], i);
+      const prev = prevByNo.get(n) || {};
+      const wc = str(op["Wc/Plant"] || op["Work Center"]);
+      return {
+        ...prev,
+        id: prev.id,
+        opNo: n,
+        operation: str(op.Operation) || prev.operation || "",
+        workCentre: wc || prev.workCentre || "",
+        workCentreId: prev.workCentreId ?? null,
+        machine: prev.machine || "",
+        machineId: prev.machineId ?? null,
+        setup:
+          op["Setup Time"] != null && op["Setup Time"] !== ""
+            ? String(op["Setup Time"])
+            : prev.setup || "",
+        time:
+          op["Per Pc Time"] != null && op["Per Pc Time"] !== ""
+            ? String(op["Per Pc Time"])
+            : prev.time || "",
+        instructionText: stripMetaFromLongText(op.LongText || prev.instructionText || ""),
+        reference: prev.reference || str(op._reference),
+        torqueSpec: prev.torqueSpec || str(op._torqueSpec),
+        tool: prev.tool || "",
+        inspection: prev.inspection || "",
+        itemsUsed: prev.itemsUsed || op._itemsUsed || [],
+        status: prev.status || "Planned",
+        linkStatus: "manual_override",
+      };
+    })
+    .filter((op) => op.operation);
+}
+
 /** Build downloadable OARC JSON from editable prefill state (CreateOrderModal shape). */
 export function buildOarcJson(header, operations, rawMaterials) {
   const ops = asList(operations).map(({ _rowId, ...rest }) => ({

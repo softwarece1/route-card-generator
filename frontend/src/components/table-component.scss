@@ -6,6 +6,24 @@
   box-shadow: var(--pmf-shadow-card);
 }
 
+.rc-table.rc-table--nested {
+  border-radius: 0.55rem;
+  box-shadow: none;
+  border-color: var(--pmf-border-strong, var(--pmf-table-border));
+
+  .rc-table__dt.p-datatable {
+    .p-datatable-thead > tr > th {
+      padding: 0.7rem 0.85rem;
+      font-size: 0.88rem !important;
+    }
+
+    .p-datatable-tbody > tr > td {
+      padding: 0.65rem 0.85rem;
+      font-size: 0.85rem !important;
+    }
+  }
+}
+
 .rc-table .rc-table__dt.p-datatable {
   font-family: "Rubik", system-ui, -apple-system, "Segoe UI", sans-serif;
 
@@ -56,6 +74,18 @@
     padding: 1.5rem 1rem;
     color: var(--pmf-text-faint);
     text-align: center;
+  }
+
+  .p-row-toggler {
+    width: 2rem;
+    height: 2rem;
+    color: var(--pmf-text-muted);
+  }
+
+  .p-datatable-row-expansion > td {
+    background: var(--pmf-page-bg);
+    padding: 0.65rem 0.85rem 0.85rem;
+    border-bottom: 1px solid var(--pmf-surface-hover);
   }
 
   .p-paginator {

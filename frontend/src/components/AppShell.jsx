@@ -6,6 +6,7 @@ import { Sidebar } from "primereact/sidebar";
 import { getUser } from "@/lib/auth";
 import { logout } from "@/services/authApi";
 import ThemeToggle from "@/components/ThemeToggle";
+import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import {
   fetchNotifications,
   markAllNotificationsRead,
@@ -16,15 +17,49 @@ import "./app-shell.scss";
 function roleLabel(role) {
   if (role === "admin") return "Admin";
   if (role === "dept_head") return "Dept head";
+  if (role === "ied") return "IED";
   return "Engineer";
 }
 
 function navItemsForRole(role) {
+  // IED: review queue only — no drawing extraction / generator
+  if (role === "ied") {
+    return [
+      {
+        to: "/history",
+        end: false,
+        icon: "pi pi-clipboard",
+        label: "IED review",
+        id: "history",
+      },
+      {
+        to: "/operation-templates",
+        end: false,
+        icon: "pi pi-list",
+        label: "Templates",
+        id: "templates",
+      },
+      {
+        to: "/about",
+        end: false,
+        icon: "pi pi-info-circle",
+        label: "About",
+        id: "about",
+      },
+    ];
+  }
   const base = [
     { to: "/generator", end: true, icon: "pi pi-home", label: "Generator", id: "generator" },
     { to: "/history", end: false, icon: "pi pi-history", label: "Extractions", id: "history" },
   ];
   if (role === "admin") {
+    base.push({
+      to: "/org",
+      end: false,
+      icon: "pi pi-sitemap",
+      label: "Org",
+      id: "org",
+    });
     base.push({
       to: "/uploads",
       end: false,
@@ -47,6 +82,13 @@ function navItemsForRole(role) {
       icon: "pi pi-users",
       label: "Users",
       id: "users",
+    });
+    base.push({
+      to: "/work-centers",
+      end: false,
+      icon: "pi pi-building",
+      label: "Work centres",
+      id: "workcenters",
     });
   }
   base.push({
@@ -72,11 +114,15 @@ function navItemsForRole(role) {
 export default function AppShell({ active = "generator", children }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const user = getUser();
+  const [currentUser, setCurrentUser] = useState(() => getUser());
+  const user = currentUser;
   const items = navItemsForRole(user?.role);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unread, setUnread] = useState(0);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+
+  const mustChangePassword = Boolean(currentUser?.mustChangePassword);
 
   const loadNotifs = useCallback(async () => {
     try {
@@ -178,6 +224,17 @@ export default function AppShell({ active = "generator", children }) {
                 user?.username ||
                 "User"}
             </span>
+            <Button
+              type="button"
+              icon="pi pi-key"
+              rounded
+              text
+              className="rca-topbar__key"
+              aria-label="Change Password"
+              tooltip="Change Password"
+              tooltipOptions={{ position: "bottom" }}
+              onClick={() => setChangePasswordOpen(true)}
+            />
             <ThemeToggle className="rca-topbar__theme" />
             <Button
               type="button"
@@ -254,6 +311,16 @@ export default function AppShell({ active = "generator", children }) {
           ))}
         </ul>
       </Sidebar>
+
+      <ChangePasswordDialog
+        visible={mustChangePassword || changePasswordOpen}
+        forceMode={mustChangePassword}
+        onHide={() => setChangePasswordOpen(false)}
+        onSuccess={(updatedUser) => {
+          setCurrentUser(updatedUser);
+          setChangePasswordOpen(false);
+        }}
+      />
     </div>
   );
 }

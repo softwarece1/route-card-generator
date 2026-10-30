@@ -36,15 +36,41 @@ async function encryptedCredsBody(empId, password, captchaId, captchaAnswer) {
   });
 }
 
-export async function login(empId, password, captchaId, captchaAnswer) {
+export async function login(empId, password, captchaId, captchaAnswer, options = {}) {
   const body = await encryptedCredsBody(empId, password, captchaId, captchaAnswer);
   const { data } = await http.post('/auth/login', {
     ...body,
     captchaId: captchaId || '',
     captchaAnswer: (captchaAnswer || '').trim(),
+    terminateExistingSession: Boolean(options.terminateExistingSession),
+    resumeToken: options.resumeToken || undefined,
   });
   setAuth(data.access_token, data.user);
   return data;
+}
+
+/** After concurrent-session 409: end the other session and use this browser. */
+export async function takeoverSession(resumeToken) {
+  const { data } = await http.post('/auth/login/takeover', {
+    resumeToken: (resumeToken || '').trim(),
+  });
+  setAuth(data.access_token, data.user);
+  return data;
+}
+
+/** Parse FastAPI 409 concurrent-session payload from a login error. */
+export function concurrentSessionFromError(err) {
+  const detail = err?.response?.data?.detail;
+  if (err?.response?.status !== 409) return null;
+  if (detail && typeof detail === 'object' && detail.code === 'CONCURRENT_SESSION') {
+    return {
+      message:
+        detail.message ||
+        'This account is already signed in elsewhere. Terminate that session to continue here?',
+      resumeToken: detail.resumeToken || '',
+    };
+  }
+  return null;
 }
 
 export async function signup({ empId, name, dept, password }) {
@@ -88,6 +114,18 @@ export async function fetchEmpStatus(empId) {
     };
   }
   const { data } = await http.get(`/auth/emp-status/${id}`);
+  return data;
+}
+
+export async function changePassword({ currentPassword, newPassword }) {
+  const { data } = await http.post('/auth/change-password', {
+    currentPassword,
+    newPassword,
+  });
+  if (data?.user) {
+    const token = localStorage.getItem('rc_token') || '';
+    setAuth(token, data.user);
+  }
   return data;
 }
 

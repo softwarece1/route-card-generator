@@ -296,6 +296,19 @@ def test_wiring_ga_view_refs_sheet2_figure_table():
     assert table_note
     assert table_note.get("elaboratedText")
 
+    detail_note = next(
+        (n for n in merged["notes"] if "DETAIL B" in (n.get("text") or "").upper()),
+        None,
+    )
+    assert detail_note, "expected a note citing DETAIL B"
+    detail_refs = detail_note.get("viewRefs") or []
+    detail_b = next((v for v in detail_refs if v.get("label") == "DETAIL B"), None)
+    assert detail_b, "DETAIL B should be in viewRefs"
+    snip = detail_b.get("snippet") or ""
+    assert "(a)=105" in snip and "(d)=80" in snip, f"expected Detail B table row, got {snip!r}"
+    elab_b = (detail_note.get("elaboratedText") or "").upper()
+    assert "105" in elab_b and "READHEAD" in elab_b
+
     route = generate_route(merged)
     op7 = next((o for o in route["operations"] if "SHEET 2" in (o.get("instructionText") or "").upper() or "INTERCONNECTION" in (o.get("instructionText") or "").upper()), None)
     assert op7
@@ -309,6 +322,68 @@ def test_item_pair_110_and_120():
     assert _items_in("ITEM 110 & 120 TO BE CUT") == [110, 120]
 
 
+# OCR sample from NS2 wiring GA-001 DETAIL/ITEM NO table
+_DETAIL_ITEM_OCR = """
+FIGURE 1— CABLE ASSY DIAGRAM
+
+DETAIL/ITEM NO (a) (b) | (c) | (d)_| (e) >
+A [READHEAD CABLE] 100| 90 | 90 | 70 SEIRRORED)”
+B | READHEAD CABLE| 105| 100] 100 | 80
+
+ASSEMBLY INSTRUCTIONS:
+4. HEAT SHRINK ITEM 100 ON BOTH THE BRANCHES FROM JUNCTION POINT TILL READ HEAD END
+AS INDICATED IN FIGURE 1. TERMINATE THE HEAT SHRINK SLEEVE AT READ HEAD END AS SHOWN IN DETAIL B.
+"""
+
+
+def test_parse_detail_item_table_rows():
+    from app.route_card.drawing_mind.view_refs import (
+        extract_detail_row_snippet,
+        parse_detail_item_table,
+    )
+
+    table = parse_detail_item_table(_DETAIL_ITEM_OCR)
+    assert set(table) == {"A", "B"}
+    assert table["A"]["values"] == [100, 90, 90, 70]
+    assert table["B"]["values"] == [105, 100, 100, 80]
+    assert "READHEAD" in table["B"]["name"]
+    snip = extract_detail_row_snippet(_DETAIL_ITEM_OCR, "B")
+    assert "(a)=105" in snip
+    assert "(b)=100" in snip
+    assert "(c)=100" in snip
+    assert "(d)=80" in snip
+
+
+def test_detail_b_row_in_elaborated_text():
+    from app.route_card.drawing_mind.view_refs import resolve_view_refs_for_notes
+
+    ga = {
+        "drawingId": 44,
+        "filename": "112188041168 - GA - 001.pdf",
+        "raw_text": _DETAIL_ITEM_OCR,
+        "title_block": {},
+    }
+    note = {
+        "stepNo": 4,
+        "text": (
+            "HEAT SHRINK ITEM 100 ON BOTH THE BRANCHES FROM JUNCTION POINT "
+            "TILL READ HEAD END AS INDICATED IN FIGURE 1. TERMINATE THE HEAT "
+            "SHRINK SLEEVE AT READ HEAD END AS SHOWN IN DETAIL B."
+        ),
+        "sourceDrawingId": 44,
+    }
+    notes, facts, _warns = resolve_view_refs_for_notes([note], [ga])
+    detail = next((f for f in facts if f.kind == "detail" and f.id == "B"), None)
+    assert detail is not None
+    assert detail.status in {"resolved", "same_sheet"}
+    assert "(a)=105" in (detail.snippet or "")
+    assert "(d)=80" in (detail.snippet or "")
+    elab = notes[0].get("elaboratedText") or ""
+    assert "DETAIL B" in elab.upper()
+    assert "(a)=105" in elab
+    assert "READHEAD CABLE" in elab.upper()
+
+
 if __name__ == "__main__":
     test_spatial_graph_surfaces()
     test_item_order_from_note()
@@ -317,6 +392,8 @@ if __name__ == "__main__":
     test_multi_ga_cross_ref_missing()
     test_pcb_pl_wl_link()
     test_item_pair_110_and_120()
+    test_parse_detail_item_table_rows()
+    test_detail_b_row_in_elaborated_text()
     test_wiring_ga_view_refs_sheet2_figure_table()
     print("OK — CPU drawing-mind feasibility checks passed.")
     print(

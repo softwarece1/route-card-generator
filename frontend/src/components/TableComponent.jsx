@@ -71,7 +71,7 @@ export default function TableComponent({
   pageLinkSize,
   emptyMessage = "No records found.",
   className = "",
-  size = "normal",
+  size = "small",
   sortMode = "single",
   ...rest
 }) {
@@ -143,18 +143,33 @@ export default function TableComponent({
         currentPageReportTemplate="Showing {first}-{last} of {totalRecords} entries"
         {...rest}
       >
-        {columns.map((col, i) => (
-          <Column
-            key={col.key || col.field || col.header || i}
-            field={col.field}
-            header={col.header}
-            sortable={Boolean(col.sortable)}
-            style={col.style}
-            className={col.className}
-            body={bodyFor(col)}
-            headerClassName={col.headerClassName}
-          />
-        ))}
+        {columns.map((col, i) => {
+          const key = col.key || col.field || col.header || i;
+          if (col.type === "expander") {
+            return (
+              <Column
+                key={key}
+                expander
+                style={col.style || { width: "3rem" }}
+                className={col.className}
+                headerClassName={col.headerClassName}
+              />
+            );
+          }
+          return (
+            <Column
+              key={key}
+              field={col.field}
+              header={col.header}
+              sortable={Boolean(col.sortable)}
+              style={col.style}
+              className={col.className}
+              body={bodyFor(col)}
+              headerClassName={col.headerClassName}
+              sortField={col.sortField}
+            />
+          );
+        })}
       </DataTable>
     </div>
   );

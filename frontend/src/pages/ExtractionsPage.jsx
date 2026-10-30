@@ -7,6 +7,7 @@ import { Message } from "primereact/message";
 import AppShell from "@/components/AppShell";
 import PageHeader from "@/components/PageHeader";
 import OarcPreviewDialog from "@/components/OarcPreviewDialog";
+import RouteRemarksPanel from "@/components/RouteRemarksPanel";
 import TableComponent, {
   TableActions,
   TableFileChip,
@@ -16,6 +17,12 @@ import TableComponent, {
 import { getToken, getUser } from "@/lib/auth";
 import { mapPayloadToOrderPrefill } from "@/lib/pmfOrderPrefill";
 import { printOarcPdf } from "@/lib/oarcPrint";
+import {
+  ROUTE_STATUS_FILTER_OPTIONS,
+  displayStatusLabel,
+  displayStatusTone,
+  routeStatusLabel,
+} from "@/lib/routeStatus";
 import { fetchDepartments } from "@/services/authApi";
 import { useNavigate } from "react-router-dom";
 import {
@@ -34,19 +41,11 @@ import { toast } from "@/lib/toast";
 import "./route-card-generation-alt.scss";
 import "./extractions.scss";
 
-function statusTone(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "analyzed" || s === "approved") return "success";
-  if (s === "failed") return "danger";
-  if (s === "analyzing" || s === "draft") return "warn";
-  if (s === "open") return "info";
-  return "neutral";
-}
-
 function docsFromDetail(detail) {
   const byRole = {};
   for (const d of detail?.documents || []) {
     byRole[d.role] = {
+      id: d.id,
       name: d.filename,
       type: d.fileType,
       sizeLabel: d.sizeLabel,
@@ -70,14 +69,7 @@ function toYmd(d) {
   return `${y}-${m}-${day}`;
 }
 
-const STATUS_OPTIONS = [
-  { label: "All statuses", value: null },
-  { label: "Analyzed", value: "analyzed" },
-  { label: "Draft", value: "draft" },
-  { label: "Open", value: "open" },
-  { label: "Failed", value: "failed" },
-  { label: "Approved", value: "approved" },
-];
+const STATUS_OPTIONS = ROUTE_STATUS_FILTER_OPTIONS;
 
 const EMPTY_FILTERS = {
   empId: null,
@@ -90,17 +82,22 @@ const EMPTY_FILTERS = {
 export default function ExtractionsPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
+  const isIed = user?.role === "ied";
+  const isDeptHead = user?.role === "dept_head";
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [applied, setApplied] = useState(EMPTY_FILTERS);
+  const [iedTab, setIedTab] = useState(0); // 0 Pending, 1 Approved
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [oarcOpen, setOarcOpen] = useState(false);
+  const [oarcMode, setOarcMode] = useState("preview");
+  const [oarcSessionId, setOarcSessionId] = useState(null);
   const [oarcPayload, setOarcPayload] = useState(null);
   const [oarcDocs, setOarcDocs] = useState({});
   const [selected, setSelected] = useState([]);
@@ -187,6 +184,24 @@ export default function ExtractionsPage() {
     setApplied(EMPTY_FILTERS);
   };
 
+  const openIedReview = async (row) => {
+    try {
+      const data = await loadDetail(row.sessionId);
+      if (!data?.payload) {
+        setError("No route data for IED review yet.");
+        return;
+      }
+      setOarcPayload(data.payload);
+      setOarcDocs(docsFromDetail(data));
+      setOarcSessionId(row.sessionId);
+      setOarcMode("ied");
+      setOarcOpen(true);
+      setDetail(data);
+    } catch (err) {
+      setError(err.message || "Could not open IED review");
+    }
+  };
+
   const loadDetail = async (sessionId) => {
     setDetailLoading(true);
     try {
@@ -221,6 +236,8 @@ export default function ExtractionsPage() {
       }
       setOarcPayload(data.payload);
       setOarcDocs(docsFromDetail(data));
+      setOarcSessionId(data.sessionId || rowOrDetail.sessionId || null);
+      setOarcMode("preview");
       setOarcOpen(true);
       setDetail(data);
     } catch (err) {
@@ -290,15 +307,46 @@ export default function ExtractionsPage() {
   const patchFilter = (key, value) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
 
+  const displayedItems = useMemo(() => {
+    if (isIed) {
+      return items.filter((row) => {
+        const st = String(row.routeStatus || "").toLowerCase();
+        if (iedTab === 0) return st === "ied_review";
+        return st === "ied_complete" || st === "approved";
+      });
+    }
+    if (isAdmin || !applied.status) return items;
+    const st = String(applied.status).toLowerCase();
+    const routeStatuses = new Set(["draft", "ied_review", "ied_complete", "approved"]);
+    if (routeStatuses.has(st)) {
+      return items.filter(
+        (row) => String(row.routeStatus || "").toLowerCase() === st,
+      );
+    }
+    return items.filter((row) => String(row.status || "").toLowerCase() === st);
+  }, [items, applied.status, isAdmin, isIed, iedTab]);
+
   return (
     <AppShell active="history">
         <div className="rc-hist">
           <PageHeader
-            title={isAdmin ? "All extractions" : "My extractions"}
+            title={
+              isAdmin
+                ? "All extractions"
+                : isIed
+                  ? "IED review queue"
+                  : isDeptHead
+                    ? "Extractions & approvals"
+                    : "My extractions"
+            }
             subtitle={
               isAdmin
                 ? "Browse every user’s analyzed sessions, open OARC preview, or print PDF."
-                : "Your past analyses — open OARC preview or print PDF."
+                : isIed
+                  ? "Shared route cards for your SBU — review standards (setup / per-piece / WC), then complete IED review."
+                  : isDeptHead
+                    ? "Your extractions plus cards awaiting approval after IED."
+                    : "Your past analyses — share to IED, then approve after IED completes."
             }
             icon="pi pi-history"
             actions={
@@ -314,27 +362,8 @@ export default function ExtractionsPage() {
           />
           {error ? <Message severity="error" text={error} className="w-full mb-3" /> : null}
 
+          {!isIed ? (
           <div className="flex gap-2 flex-wrap mb-3">
-            {/* Analyze selected / jobs — hidden for now (queue from Jobs page instead)
-            <Button
-              type="button"
-              label="Analyze selected"
-              icon="pi pi-play"
-              outlined
-              size="small"
-              disabled={(selected || []).length === 0}
-              onClick={async () => {
-                const ids = (selected || []).map((r) => r.sessionId).filter(Boolean);
-                try {
-                  await batchEnqueueAnalyze(ids);
-                  toast.success(`Queued ${ids.length} session(s)`);
-                  navigate("/jobs");
-                } catch (e) {
-                  toast.error(e.message || "Batch enqueue failed");
-                }
-              }}
-            />
-            */}
             <Button
               type="button"
               label="Compare selected (2)"
@@ -365,6 +394,7 @@ export default function ExtractionsPage() {
               }}
             />
           </div>
+          ) : null}
           {compareResult && (
             <Dialog
               header="Route compare"
@@ -476,6 +506,59 @@ export default function ExtractionsPage() {
             </Dialog>
           )}
 
+          {isIed ? (
+            <div className="flex gap-2 mb-3">
+              <Button
+                type="button"
+                label="Pending"
+                size="small"
+                outlined={iedTab !== 0}
+                onClick={() => setIedTab(0)}
+              />
+              <Button
+                type="button"
+                label="Approved"
+                size="small"
+                outlined={iedTab !== 1}
+                onClick={() => setIedTab(1)}
+              />
+            </div>
+          ) : null}
+
+          {!isAdmin && !isIed ? (
+            <div className="rc-hist__filters">
+              <div className="rc-hist__filter">
+                <label htmlFor="myStatusFilter">Status</label>
+                <Dropdown
+                  inputId="myStatusFilter"
+                  value={filters.status}
+                  options={STATUS_OPTIONS}
+                  onChange={(e) => patchFilter("status", e.value)}
+                  className="w-full"
+                  placeholder="All statuses"
+                  showClear
+                />
+              </div>
+              <div className="rc-hist__filter-actions">
+                <Button
+                  type="button"
+                  label="Apply"
+                  icon="pi pi-filter"
+                  size="small"
+                  onClick={applyFilters}
+                />
+                <Button
+                  type="button"
+                  label="Clear"
+                  icon="pi pi-times"
+                  size="small"
+                  outlined
+                  onClick={clearFilters}
+                />
+              </div>
+            </div>
+          ) : null}
+
           {isAdmin ? (
             <div className="rc-hist__filters">
               <div className="rc-hist__filter">
@@ -566,15 +649,21 @@ export default function ExtractionsPage() {
           ) : null}
 
           <TableComponent
-            value={items}
+            value={displayedItems}
             loading={loading || detailLoading}
             paginator
             rows={10}
-            emptyMessage="No extractions yet."
+            emptyMessage={
+              isIed
+                ? iedTab === 0
+                  ? "No cards awaiting IED review in your SBU."
+                  : "No completed / approved IED reviews yet."
+                : "No extractions yet."
+            }
             dataKey="sessionId"
-            selectionMode="multiple"
-            selection={selected}
-            onSelectionChange={(e) => setSelected(e.value || [])}
+            selectionMode={isIed ? undefined : "multiple"}
+            selection={isIed ? undefined : selected}
+            onSelectionChange={isIed ? undefined : (e) => setSelected(e.value || [])}
             columns={[
               { type: "index", header: "#", style: { width: "3.25rem" } },
               {
@@ -604,9 +693,12 @@ export default function ExtractionsPage() {
               {
                 header: "Status",
                 sortable: true,
-                field: "status",
+                field: "routeStatus",
                 body: (row) => (
-                  <TableStatusBadge value={row.status || "—"} tone={statusTone(row.status)} />
+                  <TableStatusBadge
+                    value={displayStatusLabel(row)}
+                    tone={displayStatusTone(row)}
+                  />
                 ),
               },
               {
@@ -615,14 +707,33 @@ export default function ExtractionsPage() {
                 sortable: true,
                 style: { width: "5rem" },
               },
-              {
-                header: "Files",
-                body: (row) => (
-                  <TableFileChip
-                    label={(row.documents || []).map((d) => d.role).join(", ") || ""}
-                  />
-                ),
-              },
+              ...(isIed
+                ? [
+                    {
+                      header: "Shared by",
+                      body: (row) =>
+                        row.user ? (
+                          <TablePrimarySub
+                            primary={row.user.empId}
+                            secondary={[row.user.name, row.user.dept]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          />
+                        ) : (
+                          "—"
+                        ),
+                    },
+                  ]
+                : [
+                    {
+                      header: "Files",
+                      body: (row) => (
+                        <TableFileChip
+                          label={(row.documents || []).map((d) => d.role).join(", ") || ""}
+                        />
+                      ),
+                    },
+                  ]),
               {
                 header: "Updated",
                 sortable: true,
@@ -632,41 +743,61 @@ export default function ExtractionsPage() {
               },
               {
                 header: "Actions",
-                style: { width: "9rem" },
+                style: { width: isIed ? "7rem" : "9rem" },
                 body: (row) => (
                   <TableActions>
-                    <Button
-                      type="button"
-                      icon="pi pi-eye"
-                      rounded
-                      text
-                      size="small"
-                      tooltip="View OARC"
-                      tooltipOptions={{ position: "top" }}
-                      disabled={!hasPayload(row)}
-                      onClick={() => openOarc(row)}
-                    />
-                    <Button
-                      type="button"
-                      icon="pi pi-print"
-                      rounded
-                      text
-                      size="small"
-                      tooltip="Print OARC PDF"
-                      tooltipOptions={{ position: "top" }}
-                      disabled={!hasPayload(row)}
-                      onClick={() => printOarc(row)}
-                    />
-                    <Button
-                      type="button"
-                      icon="pi pi-ellipsis-v"
-                      rounded
-                      text
-                      size="small"
-                      tooltip="Session & files"
-                      tooltipOptions={{ position: "top" }}
-                      onClick={() => openDetail(row)}
-                    />
+                    {isIed ? (
+                      <Button
+                        type="button"
+                        icon="pi pi-pencil"
+                        rounded
+                        text
+                        size="small"
+                        tooltip={
+                          row.routeStatus === "ied_review"
+                            ? "Review & set standards"
+                            : "View IED review"
+                        }
+                        tooltipOptions={{ position: "top" }}
+                        disabled={!row.routeCardId}
+                        onClick={() => openIedReview(row)}
+                      />
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          icon="pi pi-eye"
+                          rounded
+                          text
+                          size="small"
+                          tooltip="View OARC"
+                          tooltipOptions={{ position: "top" }}
+                          disabled={!hasPayload(row)}
+                          onClick={() => openOarc(row)}
+                        />
+                        <Button
+                          type="button"
+                          icon="pi pi-print"
+                          rounded
+                          text
+                          size="small"
+                          tooltip="Print OARC PDF"
+                          tooltipOptions={{ position: "top" }}
+                          disabled={!hasPayload(row)}
+                          onClick={() => printOarc(row)}
+                        />
+                        <Button
+                          type="button"
+                          icon="pi pi-ellipsis-v"
+                          rounded
+                          text
+                          size="small"
+                          tooltip="Session & files"
+                          tooltipOptions={{ position: "top" }}
+                          onClick={() => openDetail(row)}
+                        />
+                      </>
+                    )}
                   </TableActions>
                 ),
               },
@@ -735,7 +866,7 @@ export default function ExtractionsPage() {
               </div>
               <div>
                 <dt>Status</dt>
-                <dd>{detail.status}</dd>
+                <dd>{displayStatusLabel(detail)}</dd>
               </div>
               {detail.user ? (
                 <div>
@@ -754,6 +885,14 @@ export default function ExtractionsPage() {
                     : "—"}
                 </dd>
               </div>
+              {detail.routeCardId ? (
+                <div>
+                  <dt>Remarks</dt>
+                  <dd>
+                    <RouteRemarksPanel routeCardId={detail.routeCardId} compact />
+                  </dd>
+                </div>
+              ) : null}
               {detail.payload?.drawingInfo ? (
                 <div>
                   <dt>Drawing info</dt>
@@ -806,6 +945,16 @@ export default function ExtractionsPage() {
         onHide={() => setOarcOpen(false)}
         payload={oarcPayload}
         docs={oarcDocs}
+        mode={oarcMode}
+        sessionId={oarcSessionId}
+        onSaved={(next) => {
+          if (next) setOarcPayload(next);
+          load();
+        }}
+        onCompleted={() => {
+          setOarcOpen(false);
+          load();
+        }}
       />
     </AppShell>
   );

@@ -118,7 +118,8 @@ def build_sap_payload(data: dict[str, Any]) -> dict[str, Any]:
 
     for operation in operations:
         work_center = (
-            operation.get("work_center_code")
+            operation.get("sapCode")
+            or operation.get("work_center_code")
             or operation.get("Work Center")
             or operation.get("Wc/Plant")
             or ""
@@ -129,7 +130,9 @@ def build_sap_payload(data: dict[str, Any]) -> dict[str, Any]:
                 "Vornr": _sap_number(operation.get("Oprn No")),
                 "Ltxa1": operation.get("Operation") or "",
                 "Arbpl": work_center,
-                "WcWerks": operation.get("Plant Number") or "",
+                "WcWerks": operation.get("Plant Number")
+                or operation.get("plant")
+                or "",
                 "Setuptime": _num(operation.get("Setup Time"), 0),
                 "Setupuom": None,
                 "Perpiecetime": _num(operation.get("Per Pc Time"), 0),

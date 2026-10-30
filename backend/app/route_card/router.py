@@ -7,7 +7,12 @@ from fastapi import APIRouter, HTTPException
 
 from .schemas import OarcToSapRequest
 from .sap_mapper import build_sap_payload
-from app.auth import get_current_user, require_admin, require_dept_head_or_admin
+from app.auth import (
+    get_current_user,
+    require_admin,
+    require_dept_head_or_admin,
+    require_template_manager,
+)
 from app.route_card import op_templates, service
 from app.route_card.analyze_jobs import AnalysisCancelled, cancel_job, end_job, start_job
 from app.route_card.schemas import (
@@ -350,6 +355,39 @@ def approve_route(
     )
 
 
+@router.post("/route-cards/{route_id}/share-ied")
+def share_route_to_ied(route_id: int, current_user: dict = Depends(get_current_user)):
+    return service.share_route_to_ied(route_id, user=current_user)
+
+
+@router.post("/route-cards/{route_id}/complete-ied")
+def complete_ied_review(route_id: int, current_user: dict = Depends(get_current_user)):
+    return service.complete_ied_review(route_id, user=current_user)
+
+
+@router.post("/route-cards/{route_id}/recall-ied")
+def recall_ied_review(route_id: int, current_user: dict = Depends(get_current_user)):
+    return service.recall_ied_review(route_id, user=current_user)
+
+
+@router.get("/route-cards/{route_id}/remarks")
+def list_route_remarks(route_id: int, current_user: dict = Depends(get_current_user)):
+    return service.list_route_remarks(route_id, user=current_user)
+
+
+@router.post("/route-cards/{route_id}/remarks")
+def create_route_remark(
+    route_id: int,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    return service.create_route_remark(
+        route_id,
+        (body or {}).get("body") or "",
+        user=current_user,
+    )
+
+
 @router.get("/route-cards/{route_id}/pmf-oarc")
 def export_pmf_oarc(
     route_id: int,
@@ -393,7 +431,7 @@ def get_operation_template(
 @router.post("/operation-templates")
 def create_operation_template(
     body: OpTemplateCreate,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_template_manager),
 ):
     return op_templates.create_template(body.model_dump(), current_user)
 
@@ -402,7 +440,7 @@ def create_operation_template(
 def update_operation_template(
     template_id: int,
     body: OpTemplateUpdate,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_template_manager),
 ):
     return op_templates.update_template(
         template_id, body.model_dump(exclude_unset=True), current_user
@@ -412,7 +450,7 @@ def update_operation_template(
 @router.delete("/operation-templates/{template_id}")
 def delete_operation_template(
     template_id: int,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_template_manager),
 ):
     return op_templates.delete_template(template_id, current_user)
 
@@ -421,7 +459,7 @@ def delete_operation_template(
 def duplicate_operation_template(
     template_id: int,
     body: OpTemplateDuplicate = OpTemplateDuplicate(),
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_template_manager),
 ):
     return op_templates.duplicate_template(
         template_id, body.model_dump(exclude_unset=True), current_user
@@ -637,34 +675,251 @@ def delete_few_shot(example_id: int, current_user: dict = Depends(require_dept_h
     return dept_config.delete_few_shot(example_id, current_user)
 
 
+@router.get("/work-centers")
+def list_work_centers(
+    dept: str | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    from app.route_card import work_centers as wc_mod
+
+    return {"items": wc_mod.list_work_centers(current_user, dept=dept)}
+
+
+@router.get("/work-centers/catalog")
+def work_centers_catalog(
+    dept: str | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    from app.route_card import work_centers as wc_mod
+
+    return wc_mod.catalog_for_dropdowns(current_user, dept=dept)
+
+
+@router.get("/work-centers/{wc_id}")
+def get_work_center(wc_id: int, current_user: dict = Depends(get_current_user)):
+    from app.route_card import work_centers as wc_mod
+
+    return wc_mod.get_work_center(wc_id, current_user)
+
+
+@router.post("/work-centers")
+async def create_work_center(
+    request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+):
+    from app.route_card import work_centers as wc_mod
+
+    body = await request.json()
+    return wc_mod.upsert_work_center(current_user, body or {})
+
+
+@router.put("/work-centers/{wc_id}")
+async def update_work_center(
+    wc_id: int, request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+):
+    from app.route_card import work_centers as wc_mod
+
+    body = await request.json()
+    return wc_mod.upsert_work_center(current_user, body or {}, wc_id=wc_id)
+
+
+@router.delete("/work-centers/{wc_id}")
+def delete_work_center(wc_id: int, current_user: dict = Depends(require_dept_head_or_admin)):
+    from app.route_card import work_centers as wc_mod
+
+    return wc_mod.delete_work_center(wc_id, current_user)
+
+
+@router.post("/work-centers/migrate-machines")
+def migrate_legacy_machines(_admin: dict = Depends(require_admin)):
+    from app.route_card import work_centers as wc_mod
+
+    return wc_mod.migrate_legacy_machines()
+
+
+@router.get("/plants")
+def list_plants(
+    active_only: bool = Query(True),
+    current_user: dict = Depends(get_current_user),
+):
+    from app.route_card import plants as plants_mod
+
+    # Admin org page may request inactive rows
+    if (current_user.get("role") or "") != "admin":
+        active_only = True
+    return {"items": plants_mod.list_plants(active_only=active_only)}
+
+
+@router.post("/plants")
+async def create_plant(request: Request, _admin: dict = Depends(require_admin)):
+    from app.route_card import plants as plants_mod
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return plants_mod.upsert_plant(body or {})
+
+
+@router.put("/plants/{plant_id}")
+async def update_plant(
+    plant_id: int, request: Request, _admin: dict = Depends(require_admin)
+):
+    from app.route_card import plants as plants_mod
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return plants_mod.upsert_plant(body or {}, plant_id=plant_id)
+
+
+@router.get("/departments")
+def list_departments_admin(
+    active_only: bool = Query(False),
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    from app.route_card import departments as dept_mod
+
+    if (current_user.get("role") or "") != "admin":
+        active_only = True
+    return {"items": dept_mod.list_departments(active_only=active_only)}
+
+
+@router.post("/departments")
+async def create_department(request: Request, _admin: dict = Depends(require_admin)):
+    from app.route_card import departments as dept_mod
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return dept_mod.upsert_department(body or {})
+
+
+@router.put("/departments/{dept_id}")
+async def update_department(
+    dept_id: int, request: Request, _admin: dict = Depends(require_admin)
+):
+    from app.route_card import departments as dept_mod
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return dept_mod.upsert_department(body or {}, dept_id=dept_id)
+
+
+@router.get("/dept-heads")
+def list_dept_heads_for_dept(
+    dept: str = Query(...),
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    """Reporting-officer dropdown: active dept_heads in a department."""
+    from app.route_card import departments as dept_mod
+
+    role = (current_user.get("role") or "").strip()
+    if role == "dept_head":
+        own = (current_user.get("dept") or "").strip()
+        if (dept or "").strip() != own:
+            raise HTTPException(403, "Can only list heads in your department")
+    return {"items": dept_mod.dept_heads_for_dept(dept)}
+
+
+@router.post("/work-centers/sync-from-sap")
+async def sync_work_centers_from_sap(
+    request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+):
+    """Stream unique SAP work centres (NDJSON) and upsert into the master as found.
+
+    Body: { plant_code?, from_date?, to_date?, part_number?, is_shared?, dept? }
+    Non-admins: plant is always taken from their department plant_id.
+    Dates default to the last 1 year when omitted.
+    Event types: status | progress | work_center | warning | done | error
+    """
+    from datetime import date, timedelta
+
+    from app.route_card import plants as plants_mod
+    from app.route_card import work_centers as wc_mod
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body or {}
+    requested_plant = str(body.get("plant_code") or body.get("plantCode") or "").strip()
+    plant_code = plants_mod.resolve_sync_plant_code(current_user, requested_plant)
+
+    today = date.today()
+    default_from = (today - timedelta(days=365)).isoformat()
+    default_to = today.isoformat()
+    from_date = str(body.get("from_date") or body.get("fromDate") or default_from).strip()
+    to_date = str(body.get("to_date") or body.get("toDate") or default_to).strip()
+    part_number = body.get("part_number") or body.get("partNumber")
+
+    role = (current_user.get("role") or "").strip()
+    if role == "admin":
+        if "is_shared" in body:
+            is_shared = body.get("is_shared")
+        elif "isShared" in body:
+            is_shared = body.get("isShared")
+        else:
+            is_shared = True
+        dept = str(body.get("dept") or "").strip()
+    else:
+        # Dept heads sync into their own department (not shared)
+        is_shared = False
+        dept = (current_user.get("dept") or "").strip()
+
+    return StreamingResponse(
+        wc_mod.sync_work_centers_from_sap_events(
+            current_user,
+            plant_code=plant_code,
+            from_date=from_date,
+            to_date=to_date,
+            part_number=str(part_number).strip() if part_number else None,
+            is_shared=bool(is_shared),
+            dept=dept,
+        ),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/machines")
 def list_machines(current_user: dict = Depends(get_current_user)):
-    from app.route_card import admin_ops
+    from app.route_card import work_centers as wc_mod
 
-    return {"items": admin_ops.list_machines()}
+    return {"items": wc_mod.list_machines(current_user)}
 
 
 @router.post("/machines")
-async def create_machine(request: Request, _admin: dict = Depends(require_admin)):
-    from app.route_card import admin_ops
+async def create_machine(
+    request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+):
+    from app.route_card import work_centers as wc_mod
 
     body = await request.json()
-    return admin_ops.upsert_machine(body or {})
+    return wc_mod.upsert_machine(current_user, body or {})
 
 
 @router.put("/machines/{machine_id}")
-async def update_machine(machine_id: int, request: Request, _admin: dict = Depends(require_admin)):
-    from app.route_card import admin_ops
+async def update_machine(
+    machine_id: int, request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+):
+    from app.route_card import work_centers as wc_mod
 
     body = await request.json()
-    return admin_ops.upsert_machine(body or {}, machine_id=machine_id)
+    return wc_mod.upsert_machine(current_user, body or {}, machine_id=machine_id)
 
 
 @router.delete("/machines/{machine_id}")
-def delete_machine(machine_id: int, _admin: dict = Depends(require_admin)):
-    from app.route_card import admin_ops
+def delete_machine(machine_id: int, current_user: dict = Depends(require_dept_head_or_admin)):
+    from app.route_card import work_centers as wc_mod
 
-    return admin_ops.delete_machine(machine_id)
+    return wc_mod.delete_machine(machine_id, current_user)
 
 
 @router.get("/admin/storage-stats")

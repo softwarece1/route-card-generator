@@ -37,3 +37,23 @@ def connect_to_db():
     from app.route_card import models as route_card_models  # noqa: F401
 
     db.generate_mapping(create_tables=True)
+
+    # Idempotent demo catalog + dept_head/IED users (needs mapping)
+    try:
+        from app.route_card.work_centers import (
+            seed_default_catalog,
+            seed_dept_head_and_ied_users,
+        )
+
+        wc_res = seed_default_catalog()
+        print(
+            f"seeded work centres/machines: created={wc_res.get('created')} "
+            f"machines={wc_res.get('machinesCreated')} depts={wc_res.get('deptCount')}"
+        )
+        user_res = seed_dept_head_and_ied_users()
+        print(
+            f"seeded dept_head/IED users: created={user_res.get('created')} "
+            f"skipped={user_res.get('skipped')}"
+        )
+    except Exception as exc:
+        print(f"warning: catalog/user seed skipped: {exc}")

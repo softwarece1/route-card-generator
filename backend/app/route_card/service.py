@@ -64,6 +64,7 @@ from app.route_card.models import (
     RcInspectionChar,
     RcOperation,
     RcRouteCard,
+    RcRouteRemark,
     RcSession,
     RcUser,
 )
@@ -292,15 +293,38 @@ async def read_upload(file: UploadFile, role: str | None = None) -> tuple[bytes,
     if len(data) > max_bytes:
         raise HTTPException(400, f"File exceeds maximum allowed size ({max_mb} MB)")
 
+
     # Magic byte verification
     if ext == ".pdf" and not data.startswith(b"%PDF-"):
         raise HTTPException(400, "Invalid PDF file header")
-    elif ext in {".tif", ".tiff"} and not (data.startswith(b"II*\x00") or data.startswith(b"MM\x00*")):
+
+    elif ext in {".tif", ".tiff"} and not (
+        data.startswith(b"II*\x00") or data.startswith(b"MM\x00*")
+    ):
         raise HTTPException(400, "Invalid TIFF file header")
-    elif ext == ".xlsx" and not data.startswith(b"PK\x03\x04"):
-        raise HTTPException(400, "Invalid XLSX archive header")
-    elif ext == ".xls" and not (data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") or data.startswith(b"\x09\x08")):
-        raise HTTPException(400, "Invalid XLS file header")
+
+    elif ext == ".xlsx":
+        if not data.startswith(b"PK\x03\x04"):
+            raise HTTPException(400, "Invalid XLSX archive header")
+
+        # TODO: Also validate ZIP integrity and workbook structure.
+
+    elif ext == ".xls":
+        is_binary_xls = (
+            data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+            or data.startswith(b"\x09\x08")
+        )
+
+        # Some legacy systems export tab-separated text using .xls.
+        is_partslist_text = (
+            role == "partslist"
+            and b"\x00" not in data[:4096]
+            and b"\t" in data[:4096]
+        )
+
+        if not is_binary_xls and not is_partslist_text:
+            raise HTTPException(400, "Invalid XLS file header")
+
 
     return data, filename, ext
 
@@ -474,6 +498,38 @@ def _is_admin(user: dict | None) -> bool:
     return bool(user and user.get("role") == "admin")
 
 
+def _user_role(user: dict | None) -> str:
+    return ((user or {}).get("role") or "").strip().lower()
+
+
+def _user_dept(user: dict | None) -> str:
+    return ((user or {}).get("dept") or "").strip()
+
+
+def _session_route_card(session: RcSession) -> RcRouteCard | None:
+    drawing = session.drawings.select().order_by(desc(RcDrawing.created_at)).first()
+    if not drawing:
+        return None
+    return drawing.route_cards.select().order_by(desc(RcRouteCard.created_at)).first()
+
+
+def _session_owner_dept(session: RcSession) -> str:
+    owner = session.user
+    return (owner.dept or "").strip() if owner else ""
+
+
+def _same_sbu(user: dict | None, session: RcSession) -> bool:
+    dept = _user_dept(user)
+    return bool(dept) and dept == _session_owner_dept(session)
+
+
+def _is_direct_report(owner: RcUser | None, manager_id: int | None) -> bool:
+    if not owner or not manager_id:
+        return False
+    boss = getattr(owner, "reports_to", None)
+    return bool(boss and boss.id == int(manager_id))
+
+
 def _assert_session_access(session: RcSession, user: dict | None, *, write: bool = False) -> None:
     if _is_admin(user):
         return
@@ -484,8 +540,73 @@ def _assert_session_access(session: RcSession, user: dict | None, *, write: bool
             raise HTTPException(403, "This session is not owned by your account")
         return
     uid = user.get("id") if user else None
-    if not uid or owner.id != int(uid):
-        raise HTTPException(403, "Not allowed to access this session")
+    if uid and owner.id == int(uid):
+        return
+    role = _user_role(user)
+    card = _session_route_card(session)
+    card_status = (card.status if card else "") or ""
+    if role == "ied" and _same_sbu(user, session) and card_status in {
+        "ied_review",
+        "ied_complete",
+    }:
+        if write:
+            raise HTTPException(403, "IED cannot modify session documents")
+        return
+    if (
+        role == "dept_head"
+        and _same_sbu(user, session)
+        and _is_direct_report(owner, uid)
+        and card_status in {"ied_review", "ied_complete", "approved"}
+    ):
+        if write:
+            raise HTTPException(403, "Not allowed to modify this session")
+        return
+    raise HTTPException(403, "Not allowed to access this session")
+
+
+def _assert_can_share_ied(card: RcRouteCard, user: dict | None) -> None:
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    role = _user_role(user)
+    if role == "admin":
+        return
+    session = card.drawing.session if card.drawing else None
+    if not session:
+        raise HTTPException(400, "Route card has no session")
+    owner = session.user
+    uid = user.get("id")
+    if owner and uid and owner.id == int(uid):
+        return
+    if role == "dept_head" and _same_sbu(user, session) and _is_direct_report(owner, uid):
+        return
+    raise HTTPException(
+        403, "Only the owner, their reporting officer, or admin can share to IED"
+    )
+
+
+def _assert_ied_same_sbu(card: RcRouteCard, user: dict | None) -> None:
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    if _is_admin(user):
+        return
+    if _user_role(user) != "ied":
+        raise HTTPException(403, "IED role required")
+    session = card.drawing.session if card.drawing else None
+    if not session or not _same_sbu(user, session):
+        raise HTTPException(403, "Route card is not in your SBU")
+
+
+IED_EDITABLE_OP_KEYS = {
+    "operation",
+    "workCentre",
+    "machine",
+    "setup",
+    "time",
+    "workCentreId",
+    "machineId",
+    "linkStatus",
+    "linkConfidence",
+}
 
 
 def _store(drawing_id: int, filename: str, data: bytes, content_type: str) -> tuple[str, str]:
@@ -710,6 +831,18 @@ def build_payload(
         ),
         "crossRefs": cross_refs if cross_refs is not None else (mind_info.get("crossRefs") or []),
         "viewRefs": view_refs if view_refs is not None else (mind_info.get("viewRefs") or []),
+        "iedSharedAt": (
+            route.ied_shared_at.isoformat() + "Z"
+            if route and getattr(route, "ied_shared_at", None)
+            else None
+        ),
+        "iedSharedById": getattr(route, "ied_shared_by_id", None) if route else None,
+        "iedCompletedAt": (
+            route.ied_completed_at.isoformat() + "Z"
+            if route and getattr(route, "ied_completed_at", None)
+            else None
+        ),
+        "iedCompletedById": getattr(route, "ied_completed_by_id", None) if route else None,
     }
 
 
@@ -741,6 +874,10 @@ def op_to_out(o: RcOperation) -> dict:
         "type": o.work_centre or "Assembly",
         "reason": (o.instruction_text or "")[:240],
         "features": [],
+        "workCentreId": o.work_centre_id,
+        "machineId": o.machine_id,
+        "linkStatus": o.link_status or "",
+        "linkConfidence": o.link_confidence,
     }
 
 
@@ -769,6 +906,21 @@ def persist_route(drawing: RcDrawing, generated: dict, existing: RcRouteCard | N
     for old in list(card.inspection_chars):
         old.delete()
     for op in generated.get("operations") or []:
+        wc_id = op.get("workCentreId") if op.get("workCentreId") is not None else op.get("work_centre_id")
+        m_id = op.get("machineId") if op.get("machineId") is not None else op.get("machine_id")
+        try:
+            wc_id = int(wc_id) if wc_id is not None and str(wc_id).strip() != "" else None
+        except (TypeError, ValueError):
+            wc_id = None
+        try:
+            m_id = int(m_id) if m_id is not None and str(m_id).strip() != "" else None
+        except (TypeError, ValueError):
+            m_id = None
+        conf = op.get("linkConfidence") if op.get("linkConfidence") is not None else op.get("link_confidence")
+        try:
+            conf = float(conf) if conf is not None and str(conf).strip() != "" else None
+        except (TypeError, ValueError):
+            conf = None
         RcOperation(
             route_card=card,
             op_no=int(op.get("opNo") or 0),
@@ -784,6 +936,10 @@ def persist_route(drawing: RcDrawing, generated: dict, existing: RcRouteCard | N
             inspection=op.get("inspection") or "",
             instruction_text=op.get("instructionText") or "",
             status=op.get("status") or "Planned",
+            work_centre_id=wc_id,
+            machine_id=m_id,
+            link_status=op.get("linkStatus") or op.get("link_status") or "",
+            link_confidence=conf,
         )
     for ic in generated.get("inspection") or []:
         RcInspectionChar(
@@ -930,7 +1086,92 @@ def update_route(route_id: int, body: dict, user: dict | None = None) -> dict:
     card = RcRouteCard.get(id=route_id)
     if not card:
         raise HTTPException(404, "Route card not found")
+    status = (card.status or "draft").strip().lower()
+    role = _user_role(user)
+    if status == "approved" and not _is_admin(user):
+        raise HTTPException(400, "Approved route cards cannot be edited")
+    if status == "ied_review":
+        if not (_is_admin(user) or role == "ied"):
+            raise HTTPException(403, "Only IED can edit the route during IED review")
+        if role == "ied":
+            _assert_ied_same_sbu(card, user)
+    elif role == "ied":
+        raise HTTPException(403, "IED can only edit routes in IED review")
+    elif status == "ied_complete" and role not in {"admin", "dept_head", "engineer"}:
+        raise HTTPException(403, "Not allowed to edit this route")
+
     ops = body.get("operations") or []
+    if status == "ied_review" and role == "ied":
+        # Preserve non-IED fields; allow setup / time / WC / op rename only
+        existing_by_no = {o.op_no: o for o in card.operations}
+        merged_ops = []
+        for o in ops:
+            op_no = o.get("opNo")
+            prev = existing_by_no.get(int(op_no)) if op_no is not None else None
+            if prev:
+                base = op_to_out(prev)
+                for key in IED_EDITABLE_OP_KEYS:
+                    if key in o:
+                        base[key if key != "workCentre" else "workCentre"] = o.get(key)
+                # normalize keys used by persist_route
+                merged_ops.append(
+                    {
+                        "opNo": base.get("opNo"),
+                        "operation": o.get("operation", base.get("operation")),
+                        "workCentre": o.get("workCentre", base.get("workCentre")),
+                        "machine": o.get("machine", base.get("machine")),
+                        "tool": base.get("tool"),
+                        "itemsUsed": base.get("itemsUsed") or [],
+                        "torqueSpec": base.get("torqueSpec"),
+                        "reference": base.get("reference"),
+                        "setup": o.get("setup", base.get("setup")),
+                        "time": o.get("time", base.get("time")),
+                        "inspection": base.get("inspection"),
+                        "instructionText": base.get("instructionText") or "",
+                        "status": base.get("status") or "Planned",
+                        "workCentreId": o.get("workCentreId", base.get("workCentreId")),
+                        "machineId": o.get("machineId", base.get("machineId")),
+                        "linkStatus": o.get("linkStatus")
+                        or base.get("linkStatus")
+                        or (
+                            "manual_override"
+                            if o.get("workCentreId") or o.get("workCentre")
+                            else ""
+                        ),
+                        "linkConfidence": o.get(
+                            "linkConfidence", base.get("linkConfidence")
+                        ),
+                    }
+                )
+            else:
+                merged_ops.append(
+                    {
+                        "opNo": o.get("opNo"),
+                        "operation": o.get("operation"),
+                        "workCentre": o.get("workCentre"),
+                        "machine": o.get("machine"),
+                        "tool": o.get("tool"),
+                        "itemsUsed": o.get("itemsUsed") or [],
+                        "torqueSpec": o.get("torqueSpec"),
+                        "reference": o.get("reference"),
+                        "setup": o.get("setup"),
+                        "time": o.get("time"),
+                        "inspection": o.get("inspection"),
+                        "instructionText": o.get("instructionText") or "",
+                        "status": o.get("status") or "Planned",
+                        "workCentreId": o.get("workCentreId"),
+                        "machineId": o.get("machineId"),
+                        "linkStatus": o.get("linkStatus")
+                        or (
+                            "manual_override"
+                            if o.get("workCentreId") or o.get("workCentre")
+                            else ""
+                        ),
+                        "linkConfidence": o.get("linkConfidence"),
+                    }
+                )
+        ops = merged_ops
+
     generated = {
         "operations": [
             {
@@ -947,6 +1188,11 @@ def update_route(route_id: int, body: dict, user: dict | None = None) -> dict:
                 "inspection": o.get("inspection"),
                 "instructionText": o.get("instructionText") or "",
                 "status": o.get("status") or "Planned",
+                "workCentreId": o.get("workCentreId"),
+                "machineId": o.get("machineId"),
+                "linkStatus": o.get("linkStatus")
+                or ("manual_override" if o.get("workCentreId") or o.get("workCentre") else ""),
+                "linkConfidence": o.get("linkConfidence"),
             }
             for o in ops
         ],
@@ -963,6 +1209,9 @@ def update_route(route_id: int, body: dict, user: dict | None = None) -> dict:
         ]
         or None,
     }
+    if status == "ied_review" and role == "ied":
+        # Keep inspection chars unchanged for IED edits
+        generated["inspection"] = None
     extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
     if not generated["inspection"]:
         generated["inspection"] = [
@@ -1012,9 +1261,15 @@ def set_route_status(
     card = RcRouteCard.get(id=route_id)
     if not card:
         raise HTTPException(404, "Route card not found")
+    current = (card.status or "draft").strip().lower()
+    is_admin = _is_admin(user)
     if status == "approved":
+        if current not in {"ied_complete", "approved"} and not (admin_override and is_admin):
+            raise HTTPException(
+                400,
+                "Complete IED review before approve (or use admin override).",
+            )
         blocking = review_mod.unresolved_blocking(route_id)
-        is_admin = (user or {}).get("role") == "admin"
         if blocking and not (admin_override and is_admin):
             raise HTTPException(
                 400,
@@ -1023,6 +1278,12 @@ def set_route_status(
                     "blockingFlags": blocking,
                 },
             )
+        role = _user_role(user)
+        if role == "ied" and not (admin_override and is_admin):
+            raise HTTPException(403, "IED cannot approve; mark IED review complete instead")
+    if status == "draft" and current == "ied_review" and not is_admin:
+        # Use recall-ied for this transition
+        raise HTTPException(400, "Use recall-ied to return a card from IED review to draft")
     card.status = status
     card.updated_at = datetime.utcnow()
     if status == "approved":
@@ -1046,6 +1307,221 @@ def set_route_status(
         )
     extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
     return build_payload(card.drawing, extraction, card)
+
+
+def _notify_ied_users(dept: str, title: str, body: str, link: str = "/history") -> int:
+    from app.route_card import notifications
+
+    dept_n = (dept or "").strip()
+    if not dept_n:
+        return 0
+    count = 0
+    for u in select(
+        u for u in RcUser if u.is_active and u.role == "ied" and (u.dept or "") == dept_n
+    ):
+        notifications.create_notification(u.id, title, body, link=link)
+        count += 1
+    return count
+
+
+@db_session
+def share_route_to_ied(route_id: int, user: dict | None = None) -> dict:
+    from app.route_card import audit
+
+    card = RcRouteCard.get(id=route_id)
+    if not card:
+        raise HTTPException(404, "Route card not found")
+    _assert_can_share_ied(card, user)
+    current = (card.status or "draft").strip().lower()
+    # Already awaiting IED — idempotent success (avoids 400 on double-click / stale UI)
+    if current == "ied_review":
+        extraction = (
+            card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
+        )
+        return build_payload(card.drawing, extraction, card)
+    if current not in {"draft", "ied_complete"}:
+        raise HTTPException(
+            400,
+            f"Share to IED requires draft or ied_complete status (current: {current})",
+        )
+    if not card.operations:
+        raise HTTPException(400, "Generate route operations before sharing to IED")
+    now = datetime.utcnow()
+    actor = _resolve_user(user)
+    card.status = "ied_review"
+    card.ied_shared_at = now
+    card.ied_shared_by_id = actor.id if actor else None
+    card.ied_completed_at = None
+    card.ied_completed_by_id = None
+    card.updated_at = now
+    commit()
+    session = card.drawing.session if card.drawing else None
+    dept = _session_owner_dept(session) if session else ""
+    notified = _notify_ied_users(
+        dept,
+        "Route card shared for IED review",
+        f"Route card #{route_id} needs setup / per-piece time and WC review.",
+        link="/history",
+    )
+    audit.record_audit(
+        action="share_ied",
+        user=user,
+        route_card_id=route_id,
+        session_id=session.id if session else None,
+        detail={"notifiedIed": notified, "dept": dept},
+    )
+    extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
+    return build_payload(card.drawing, extraction, card)
+
+
+@db_session
+def complete_ied_review(route_id: int, user: dict | None = None) -> dict:
+    from app.route_card import audit
+    from app.route_card import notifications
+
+    card = RcRouteCard.get(id=route_id)
+    if not card:
+        raise HTTPException(404, "Route card not found")
+    _assert_ied_same_sbu(card, user)
+    current = (card.status or "draft").strip().lower()
+    if current != "ied_review":
+        raise HTTPException(400, "Route card is not in IED review")
+    now = datetime.utcnow()
+    actor = _resolve_user(user)
+    card.status = "ied_complete"
+    card.ied_completed_at = now
+    card.ied_completed_by_id = actor.id if actor else None
+    card.updated_at = now
+    commit()
+    session = card.drawing.session if card.drawing else None
+    if session and session.user:
+        notifications.create_notification(
+            session.user.id,
+            "IED review complete — awaiting approval",
+            f"Route card #{route_id} is awaiting engineer / dept-head approval.",
+            link="/history",
+        )
+    audit.record_audit(
+        action="complete_ied",
+        user=user,
+        route_card_id=route_id,
+        session_id=session.id if session else None,
+        detail={},
+    )
+    extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
+    return build_payload(card.drawing, extraction, card)
+
+
+@db_session
+def recall_ied_review(route_id: int, user: dict | None = None) -> dict:
+    from app.route_card import audit
+
+    card = RcRouteCard.get(id=route_id)
+    if not card:
+        raise HTTPException(404, "Route card not found")
+    _assert_can_share_ied(card, user)
+    current = (card.status or "draft").strip().lower()
+    if current != "ied_review":
+        raise HTTPException(400, "Only cards in IED review can be recalled")
+    card.status = "draft"
+    card.updated_at = datetime.utcnow()
+    commit()
+    session = card.drawing.session if card.drawing else None
+    audit.record_audit(
+        action="recall_ied",
+        user=user,
+        route_card_id=route_id,
+        session_id=session.id if session else None,
+        detail={},
+    )
+    extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
+    return build_payload(card.drawing, extraction, card)
+
+
+def _assert_route_card_access(card: RcRouteCard, user: dict | None) -> None:
+    session = card.drawing.session if card.drawing else None
+    if not session:
+        if not _is_admin(user):
+            raise HTTPException(403, "Not allowed")
+        return
+    _assert_session_access(session, user, write=False)
+
+
+def _remark_dict(r: RcRouteRemark) -> dict:
+    u = r.user
+    return {
+        "id": r.id,
+        "body": r.body or "",
+        "createdAt": r.created_at.isoformat() + "Z" if r.created_at else None,
+        "user": (
+            {
+                "id": u.id,
+                "empId": u.emp_id,
+                "name": u.name,
+                "dept": u.dept or "",
+                "role": u.role,
+            }
+            if u
+            else None
+        ),
+    }
+
+
+@db_session
+def list_route_remarks(route_id: int, user: dict | None = None) -> dict:
+    card = RcRouteCard.get(id=route_id)
+    if not card:
+        raise HTTPException(404, "Route card not found")
+    _assert_route_card_access(card, user)
+    rows = sorted(card.remarks, key=lambda x: x.created_at or datetime.utcnow())
+    return {"items": [_remark_dict(r) for r in rows], "total": len(rows)}
+
+
+@db_session
+def create_route_remark(route_id: int, body: str, user: dict | None = None) -> dict:
+    from app.input_safe import require_safe
+    from app.route_card import notifications
+
+    card = RcRouteCard.get(id=route_id)
+    if not card:
+        raise HTTPException(404, "Route card not found")
+    _assert_route_card_access(card, user)
+    text = require_safe((body or "").strip(), "remark", field="body")
+    if not text:
+        raise HTTPException(400, "Remark body is required")
+    if len(text) > 4000:
+        raise HTTPException(400, "Remark is too long (max 4000 characters)")
+    actor = _resolve_user(user)
+    remark = RcRouteRemark(route_card=card, user=actor, body=text)
+    commit()
+
+    session = card.drawing.session if card.drawing else None
+    owner = session.user if session else None
+    dept = _session_owner_dept(session) if session else ""
+    actor_id = actor.id if actor else None
+    notify_ids: set[int] = set()
+    if owner and owner.id != actor_id:
+        notify_ids.add(owner.id)
+    if dept:
+        # Avoid generator `(u.dept or "") == dept` — Pony translates it to invalid SQL
+        for u in RcUser.select(
+            lambda u: u.is_active and u.role in ("ied", "dept_head")
+        )[:]:
+            if (u.dept or "").strip() != dept:
+                continue
+            if actor_id is not None and u.id == actor_id:
+                continue
+            notify_ids.add(u.id)
+    snippet = text if len(text) <= 120 else text[:117] + "…"
+    # Notifications title/body also pass through free text — keep ASCII-safe snippet
+    for uid in notify_ids:
+        notifications.create_notification(
+            uid,
+            "New remark on route card",
+            f"#{route_id}: {snippet}",
+            link="/history",
+        )
+    return _remark_dict(remark)
 
 
 @db_session
@@ -1648,6 +2124,23 @@ def _analyze_session_body(
         except Exception:
             pass
 
+        # Always run WC resolver (templates path may have already resolved)
+        try:
+            from app.route_card.workflow import resolve_route_operations
+
+            dept_r = ""
+            if user:
+                dept_r = (user.get("dept") or "").strip()
+            elif session.user:
+                dept_r = (session.user.dept or "").strip()
+            generated["operations"] = resolve_route_operations(
+                generated.get("operations") or [],
+                dept=dept_r,
+                notes=parsed.get("notes") or [],
+            )
+        except Exception:
+            pass
+
         if wire_list:
             ga_pn = re.sub(
                 r"\s+", "", (parsed.get("title_block") or {}).get("partNumber") or ""
@@ -1671,6 +2164,21 @@ def _analyze_session_body(
             generated["inspection"] = (generated.get("inspection") or []) + additions.get(
                 "inspection", []
             )
+            try:
+                from app.route_card.workflow import resolve_route_operations
+
+                dept_w = ""
+                if user:
+                    dept_w = (user.get("dept") or "").strip()
+                elif session.user:
+                    dept_w = (session.user.dept or "").strip()
+                generated["operations"] = resolve_route_operations(
+                    generated.get("operations") or [],
+                    dept=dept_w,
+                    notes=parsed.get("notes") or [],
+                )
+            except Exception:
+                pass
 
         if parts_list:
             generated["operations"] = enrich_ops_items(generated["operations"], parts_list)
@@ -2077,8 +2585,54 @@ def list_my_extractions(user: dict | None) -> dict:
     owner = _resolve_user(user)
     if not owner and not _is_admin(user):
         raise HTTPException(401, "Not authenticated")
-    if owner:
-        sessions = RcSession.select(lambda s: s.user == owner).order_by(desc(RcSession.updated_at))[:]
+    role = _user_role(user)
+    dept = _user_dept(user)
+    if role == "ied" and dept:
+        # IED queue: same-SBU cards awaiting IED (and recently completed)
+        sessions = []
+        seen = set()
+        for card in select(
+            c
+            for c in RcRouteCard
+            if c.status in ("ied_review", "ied_complete")
+        ).order_by(desc(RcRouteCard.updated_at)):
+            session = card.drawing.session if card.drawing else None
+            if not session or session.id in seen:
+                continue
+            if _session_owner_dept(session) != dept:
+                continue
+            seen.add(session.id)
+            sessions.append(session)
+    elif role == "dept_head" and dept:
+        # Own sessions + direct reports' cards awaiting eng/dept-head approval
+        sessions = []
+        seen = set()
+        for s in RcSession.select(lambda s: s.user == owner).order_by(
+            desc(RcSession.updated_at)
+        )[:]:
+            seen.add(s.id)
+            sessions.append(s)
+        report_ids = {
+            u.id
+            for u in select(
+                u for u in RcUser if u.reports_to == owner and u.is_active
+            )[:]
+        }
+        for card in select(
+            c for c in RcRouteCard if c.status == "ied_complete"
+        ).order_by(desc(RcRouteCard.updated_at)):
+            session = card.drawing.session if card.drawing else None
+            if not session or session.id in seen:
+                continue
+            sess_owner = session.user
+            if not sess_owner or sess_owner.id not in report_ids:
+                continue
+            seen.add(session.id)
+            sessions.append(session)
+    elif owner:
+        sessions = RcSession.select(lambda s: s.user == owner).order_by(
+            desc(RcSession.updated_at)
+        )[:]
     else:
         sessions = []
     items = [_session_summary(s) for s in sessions if s.status != "open" or s.documents]
@@ -2137,12 +2691,31 @@ def list_admin_users(user: dict | None) -> dict:
     return {"users": rows, "total": len(rows)}
 
 
-def _user_rows(dept: str | None = None) -> list[dict]:
+def _reports_to_fields(u: RcUser) -> dict:
+    boss = getattr(u, "reports_to", None)
+    if not boss:
+        return {"reportsToId": None, "reportsToEmpId": "", "reportsToName": ""}
+    return {
+        "reportsToId": boss.id,
+        "reportsToEmpId": boss.emp_id,
+        "reportsToName": boss.name,
+    }
+
+
+def _user_rows(
+    dept: str | None = None,
+    *,
+    reports_to_id: int | None = None,
+) -> list[dict]:
     dept_n = (dept or "").strip()
     rows = []
     for u in RcUser.select().order_by(RcUser.emp_id)[:]:
         if dept_n and (u.dept or "") != dept_n:
             continue
+        if reports_to_id is not None:
+            boss = getattr(u, "reports_to", None)
+            if not boss or boss.id != int(reports_to_id):
+                continue
         session_count = 0
         analyzed = 0
         for s in u.sessions:
@@ -2160,6 +2733,7 @@ def _user_rows(dept: str | None = None) -> list[dict]:
                 "createdAt": u.created_at.isoformat() if u.created_at else None,
                 "sessionCount": session_count,
                 "analyzedCount": analyzed,
+                **_reports_to_fields(u),
             }
         )
     return rows
@@ -2167,7 +2741,7 @@ def _user_rows(dept: str | None = None) -> list[dict]:
 
 @db_session
 def list_dept_users(user: dict | None) -> dict:
-    """Dept head: users in own department. Admin: all users."""
+    """Dept head: direct reports only. Admin: all users."""
     if not user:
         raise HTTPException(401, "Not authenticated")
     role = user.get("role") or ""
@@ -2177,9 +2751,10 @@ def list_dept_users(user: dict | None) -> dict:
     if role != "dept_head":
         raise HTTPException(403, "Department head or admin access required")
     dept = (user.get("dept") or "").strip()
-    if not dept:
-        return {"users": [], "total": 0, "dept": ""}
-    rows = _user_rows(dept)
+    actor_id = user.get("id")
+    if not dept or not actor_id:
+        return {"users": [], "total": 0, "dept": dept or ""}
+    rows = _user_rows(dept, reports_to_id=int(actor_id))
     return {"users": rows, "total": len(rows), "dept": dept}
 
 
@@ -2196,7 +2771,36 @@ def _public_user_row(u: RcUser) -> dict:
         "dept": u.dept or "",
         "role": u.role,
         "isActive": u.is_active,
+        "mustChangePassword": bool(getattr(u, "must_change_password", False)),
+        **_reports_to_fields(u),
     }
+
+
+def _resolve_reports_to(
+    *,
+    dept_n: str,
+    reports_to_id: int | None,
+    actor: dict | None,
+    required: bool,
+) -> RcUser | None:
+    """Validate reporting officer is an active dept_head in the same department."""
+    if reports_to_id is None:
+        if required:
+            # Default to actor when dept_head creates an engineer
+            actor_role = ((actor or {}).get("role") or "").strip().lower()
+            actor_id = (actor or {}).get("id")
+            if actor_role == "dept_head" and actor_id:
+                reports_to_id = int(actor_id)
+            else:
+                raise HTTPException(400, "reportsToId (reporting officer) is required for engineers")
+        else:
+            return None
+    boss = RcUser.get(id=int(reports_to_id))
+    if not boss or not boss.is_active or boss.role != "dept_head":
+        raise HTTPException(400, "Reporting officer must be an active department head")
+    if (boss.dept or "").strip() != (dept_n or "").strip():
+        raise HTTPException(400, "Reporting officer must be in the same department")
+    return boss
 
 
 def _assert_can_manage_target(actor: dict | None, target: RcUser) -> None:
@@ -2208,14 +2812,22 @@ def _assert_can_manage_target(actor: dict | None, target: RcUser) -> None:
     if actor_role != "dept_head":
         raise HTTPException(403, "Department head or admin access required")
     actor_dept = (actor.get("dept") or "").strip()
-    if not actor_dept:
+    actor_id = actor.get("id")
+    if not actor_dept or not actor_id:
         raise HTTPException(400, "Your account has no department assigned")
     if target.role == "admin":
         raise HTTPException(403, "Cannot manage the admin account")
     if (target.dept or "").strip() != actor_dept:
         raise HTTPException(403, "User is not in your department")
+    # Direct reports only — engineers who report to this head
     if target.role != "engineer":
-        raise HTTPException(403, "Department heads can only manage engineers in their department")
+        raise HTTPException(
+            403,
+            "Department heads can only manage engineers who report to them",
+        )
+    boss = getattr(target, "reports_to", None)
+    if not boss or boss.id != int(actor_id):
+        raise HTTPException(403, "User does not report to you")
 
 
 def _validate_dept_name(dept: str) -> str:
@@ -2247,22 +2859,32 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
         raise HTTPException(400, "name is required")
 
     emp_id = validate_employee_id(emp_id, allow_admin_id=False)
-    if len(str(password)) < 4:
-        raise HTTPException(400, "password must be at least 4 characters")
+    from app.password_policy import validate_password_complexity
+    validate_password_complexity(str(password))
 
     if actor_role == "admin":
-        if role_n not in {"dept_head", "engineer"}:
-            raise HTTPException(400, "role must be dept_head or engineer")
+        if role_n not in {"dept_head", "engineer", "ied"}:
+            raise HTTPException(400, "role must be dept_head, engineer, or ied")
         dept_n = _validate_dept_name(body.get("dept") or "")
     else:
         if role_n != "engineer":
-            raise HTTPException(403, "Department heads can only create engineer accounts")
+            raise HTTPException(
+                403, "Department heads can only create engineer accounts"
+            )
         dept_n = (actor.get("dept") or "").strip()
         if not dept_n:
             raise HTTPException(400, "Your account has no department assigned")
 
     if RcUser.get(emp_id=emp_id):
         raise HTTPException(400, f"Employee ID '{emp_id}' is already registered")
+
+    boss = None
+    if role_n == "engineer":
+        raw_rid = body.get("reportsToId")
+        rid = int(raw_rid) if raw_rid is not None and str(raw_rid).strip() != "" else None
+        boss = _resolve_reports_to(
+            dept_n=dept_n, reports_to_id=rid, actor=actor, required=True
+        )
 
     from app.security import hash_password
 
@@ -2273,6 +2895,8 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
         password_hash=hash_password(str(password)),
         role=role_n,
         is_active=True,
+        must_change_password=True,
+        reports_to=boss,
     )
     commit()
     return {
@@ -2336,9 +2960,35 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
             target.dept = _validate_dept_name(body.get("dept") or "")
         if "role" in body and body.get("role") is not None:
             role_n = str(body.get("role") or "").strip().lower()
-            if role_n not in {"dept_head", "engineer"}:
-                raise HTTPException(400, "role must be dept_head or engineer")
+            if role_n not in {"dept_head", "engineer", "ied"}:
+                raise HTTPException(400, "role must be dept_head, engineer, or ied")
             target.role = role_n
+
+    # Reporting officer (engineers only)
+    effective_role = (target.role or "").strip().lower()
+    if "reportsToId" in body or (
+        actor_role == "admin" and "role" in body and effective_role != "engineer"
+    ):
+        if effective_role != "engineer":
+            target.reports_to = None
+        elif "reportsToId" in body:
+            raw_rid = body.get("reportsToId")
+            if raw_rid is None or str(raw_rid).strip() == "":
+                raise HTTPException(400, "reportsToId is required for engineers")
+            target.reports_to = _resolve_reports_to(
+                dept_n=(target.dept or "").strip(),
+                reports_to_id=int(raw_rid),
+                actor=actor,
+                required=True,
+            )
+
+    # If dept changed for an engineer, re-validate boss still same dept
+    if effective_role == "engineer" and target.reports_to:
+        if (target.reports_to.dept or "").strip() != (target.dept or "").strip():
+            raise HTTPException(
+                400,
+                "Reporting officer must be in the same department — update reportsToId",
+            )
 
     commit()
     return _public_user_row(target)
@@ -2355,8 +3005,8 @@ def reset_managed_user_password(actor: dict | None, user_id: int, password: str)
     from app.security import hash_password, verify_password
 
     raw = require_safe(str(password or ""), "password", field="password")
-    if len(raw) < 4:
-        raise HTTPException(400, "password must be at least 4 characters")
+    from app.password_policy import validate_password_complexity
+    validate_password_complexity(raw)
 
     target = RcUser.get(id=int(user_id))
     if not target:
@@ -2366,11 +3016,19 @@ def reset_managed_user_password(actor: dict | None, user_id: int, password: str)
 
     if actor_role == "dept_head":
         _assert_can_manage_target(actor, target)
-        if target.role != "engineer":
-            raise HTTPException(403, "Department heads can only reset engineer passwords")
+
+    # Record previous password hash in history so it cannot be reused
+    from app.route_card.models import RcPasswordHistory
+    if target.password_hash:
+        RcPasswordHistory(
+            user=target,
+            password_hash=target.password_hash,
+            created_at=datetime.utcnow(),
+        )
 
     new_hash = hash_password(raw)
     target.password_hash = new_hash
+    target.must_change_password = True
     commit()
 
     # Re-read and verify so we never report success if persist failed
@@ -2437,12 +3095,20 @@ def list_admin_extractions(
     else:
         sessions = RcSession.select().order_by(desc(RcSession.updated_at))[:]
 
+    route_status_filters = {"draft", "ied_review", "ied_complete", "approved"}
     items = []
     for s in sessions:
         if s.status == "open" and not s.documents:
             continue
-        if status_filter and (s.status or "").lower() != status_filter:
-            continue
+        summary = _session_summary(s)
+        if status_filter:
+            sess_st = (s.status or "").lower()
+            route_st = (summary.get("routeStatus") or "").lower()
+            if status_filter in route_status_filters:
+                if route_st != status_filter:
+                    continue
+            elif sess_st != status_filter:
+                continue
         if dept_filter and emp:
             owner = s.user
             if not owner or (owner.dept or "") != dept_filter:
@@ -2452,7 +3118,7 @@ def list_admin_extractions(
             continue
         if to_dt and (not updated or updated > to_dt):
             continue
-        items.append(_session_summary(s))
+        items.append(summary)
 
     return {"items": items, "total": len(items)}
 

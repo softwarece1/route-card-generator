@@ -70,23 +70,43 @@ If your Postgres password or port differs, edit `backend/.env` only — do not c
 
 ```bash
 cd D:/PMF/route-card-app/backend
+
+# Always create .venv ON THIS MACHINE (never copy .venv between PCs/paths)
 py -3.11 -m venv .venv
 
 # Windows (online)
-.venv/Scripts/pip install -r requirements.txt
+.venv/Scripts/python -m pip install -r requirements.txt
 
-# Windows (offline PC — use wheels from offline_packages/)
-.venv/Scripts/pip install --no-index --find-links=offline_packages -r requirements.txt
+# Windows (offline PC — wheels live in backend/offline_packages/)
+.venv/Scripts/python -m pip install --no-index --find-links=offline_packages -r requirements.txt
 
 .venv/Scripts/uvicorn app.main:app --reload --host 0.0.0.0 --port 8008
 ```
 
-To refresh the offline wheel cache on a machine with internet:
+**Do not copy `.venv`.** Pip launchers hardcode the absolute path where the venv was created. If you move the project (e.g. `D:\PMF\...` → `D:\route-card-app`), delete `.venv` and recreate it with `py -3.11 -m venv .venv`, then install from `offline_packages`. Prefer `python -m pip` over `Scripts\pip.exe` so a stale launcher path cannot break install.
+
+Keep **only** `backend/.venv` (no root `.venv` / `venv`).
+
+To refresh the offline wheel cache on a machine with internet (Python **3.11** / Windows):
 
 ```bash
 cd D:/PMF/route-card-app/backend
-.venv/Scripts/pip download -r requirements.txt -d offline_packages
+py -3.11 -m pip download -r requirements.txt -d offline_packages
 ```
+
+### Upgrading an older offline DB (keep existing data)
+
+If the offline PC already has a previous `route_card` database:
+
+1. Stop the old backend.
+2. In pgAdmin → database **`route_card`** → Query Tool, run  
+   [`backend/scripts/sql/07_upgrade_to_current_retain_data.sql`](backend/scripts/sql/07_upgrade_to_current_retain_data.sql)  
+   (idempotent — does not drop sessions / documents / extractions / route cards).
+3. Optionally run [`06_verify_offline_install.sql`](backend/scripts/sql/06_verify_offline_install.sql).
+4. Copy the new app tree **without** any `.venv` (keep `backend/uploads/` and `backend/data/format_templates.json` from the old install if present).
+5. On the offline PC: `cd backend` → `py -3.11 -m venv .venv` → install with `--find-links=offline_packages` as above → start the backend.
+
+Starting the backend also re-applies the same DDL via `migrations_route_card.py`.
 
 - Health: http://localhost:8008/health  
 - OpenAPI: http://localhost:8008/docs  

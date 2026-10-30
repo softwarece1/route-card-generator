@@ -62,6 +62,28 @@ TOL_ROW = re.compile(
     re.I,
 )
 
+# DETAIL/ITEM NO table (cable assy family), e.g.:
+#   DETAIL/ITEM NO (a) (b) | (c) | (d)_| (e) >
+#   A [READHEAD CABLE] 100| 90 | 90 | 70 …
+#   B | READHEAD CABLE| 105| 100] 100 | 80
+DETAIL_ITEM_HEADER = re.compile(
+    r"DETAIL\s*/\s*ITEM\s*NO\.?|"
+    r"DETAIL\s*[/|]\s*ITEM|"
+    r"DETAIL\s+ITEM\s*NO\.?",
+    re.I,
+)
+DETAIL_ITEM_ROW = re.compile(
+    r"(?m)^\s*([A-Z])\s*"
+    r"[\[\|/:.\-]*\s*"
+    r"([A-Za-z][A-Za-z0-9 /&\-]{2,48}?)\s*"
+    r"[\]\|/:.\-]*\s*"
+    r"(\d{1,4})\s*[|\]]?\s*"
+    r"(\d{1,4})\s*[|\]]?\s*"
+    r"(\d{1,4})\s*[|\]]?\s*"
+    r"(\d{1,4})"
+    r"(?:\s*[|\]]?\s*(\d{1,4}))?",
+)
+
 
 @dataclass
 class ViewRefFact:
@@ -298,6 +320,93 @@ def extract_table1_snippet(raw: str) -> str:
     return "; ".join(rows)
 
 
+def _detail_item_window(raw: str) -> str:
+    """Prefer OCR text near DETAIL/ITEM NO; fall back to a wider page window."""
+    if not raw:
+        return ""
+    m = DETAIL_ITEM_HEADER.search(raw)
+    if m:
+        return raw[m.start() : m.start() + 700]
+    # Some OCR drops the slash: still look for lettered rows with READHEAD / CABLE
+    u = raw.upper()
+    for key in ("READHEAD CABLE", "READ HEAD CABLE", "DETAIL ITEM"):
+        i = u.find(key)
+        if i >= 0:
+            return raw[max(0, i - 80) : i + 400]
+    return raw[:900]
+
+
+def parse_detail_item_table(raw: str) -> dict[str, dict[str, Any]]:
+    """
+    Parse DETAIL/ITEM NO dimension table into { 'A': {...}, 'B': {...} }.
+
+    Each row: {"id", "name", "values" (list[int]), "cols" (a/b/c… labels)}.
+    """
+    window = _detail_item_window(raw)
+    if not window:
+        return {}
+
+    col_labels = ["a", "b", "c", "d", "e"]
+    # Prefer explicit (a) (b) … from header when present
+    hdr = re.search(
+        r"\(([a-e])\)(?:\s*[|_]?\s*\(([a-e])\)){1,4}",
+        window,
+        re.I,
+    )
+    if hdr:
+        found = re.findall(r"\(([a-e])\)", window[: hdr.end() + 20], re.I)
+        if found:
+            col_labels = [c.lower() for c in found]
+
+    out: dict[str, dict[str, Any]] = {}
+    for m in DETAIL_ITEM_ROW.finditer(window):
+        rid = (m.group(1) or "").upper()
+        if rid not in "ABCDEFGH":
+            continue
+        name = re.sub(r"\s+", " ", (m.group(2) or "").strip(" []|/.-"))
+        # Drop OCR junk that sneaks into the name (e.g. trailing SEIRRORED)
+        name = re.sub(r"\bSEI\w*$", "", name, flags=re.I).strip(" []|/")
+        nums = [int(g) for g in m.groups()[2:] if g]
+        if len(nums) < 3:
+            continue
+        cols = col_labels[: len(nums)]
+        out[rid] = {
+            "id": rid,
+            "name": name.upper() if name else "",
+            "values": nums,
+            "cols": cols,
+        }
+    return out
+
+
+def format_detail_row_snippet(row: dict[str, Any] | None) -> str:
+    """Human-readable DETAIL row for elaboratedText / ViewRefFact.snippet."""
+    if not row:
+        return ""
+    parts = []
+    name = (row.get("name") or "").strip()
+    if name:
+        parts.append(name)
+    cols = row.get("cols") or []
+    vals = row.get("values") or []
+    dim_bits = []
+    for i, v in enumerate(vals):
+        label = cols[i] if i < len(cols) else chr(ord("a") + i)
+        dim_bits.append(f"({label})={v}")
+    if dim_bits:
+        parts.append(" ".join(dim_bits))
+    return ": ".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
+
+
+def extract_detail_row_snippet(raw: str, detail_id: str) -> str:
+    """Pull DETAIL/ITEM NO row for DETAIL A / B (etc.) from OCR text."""
+    rid = (detail_id or "").upper().strip()
+    if not rid:
+        return ""
+    table = parse_detail_item_table(raw)
+    return format_detail_row_snippet(table.get(rid))
+
+
 def figure_caption(raw: str, fig_id: str) -> str:
     text = raw or ""
     # Prefer titled callouts: FIGURE 1 — CABLE ASSY DIAGRAM
@@ -419,6 +528,8 @@ def resolve_view_refs_for_notes(
                     snippet = extract_table1_snippet(match.raw_text)
                 elif kind == "figure":
                     snippet = figure_caption(match.raw_text, rid)
+                elif kind == "detail":
+                    snippet = extract_detail_row_snippet(match.raw_text, rid)
                 elif kind == "named" and rid == "INTERCONNECTION":
                     snippet = "Interconnection listing / pin map"
                 elif kind == "named" and rid == "TOOLING":
@@ -459,7 +570,13 @@ def resolve_view_refs_for_notes(
                     cap = f" — {snippet}" if snippet else ""
                     resolved_bits.append(f"Open {label}{cap} in file '{loc}' ({sheet_lbl})")
                 elif kind == "detail":
-                    resolved_bits.append(f"Open {label} in file '{loc}' ({sheet_lbl})")
+                    if snippet:
+                        resolved_bits.append(
+                            f"Use {label} from DETAIL/ITEM table in file '{loc}' "
+                            f"({sheet_lbl}): {snippet}"
+                        )
+                    else:
+                        resolved_bits.append(f"Open {label} in file '{loc}' ({sheet_lbl})")
                 elif kind == "named":
                     resolved_bits.append(
                         f"Use {label}"

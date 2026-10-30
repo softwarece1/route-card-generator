@@ -36,6 +36,20 @@ CREATE TABLE IF NOT EXISTS route_card.users (
 ALTER TABLE route_card.users
     ADD COLUMN IF NOT EXISTS dept VARCHAR(128) NOT NULL DEFAULT '';
 
+ALTER TABLE route_card.users
+    ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS route_card.password_history (
+    id SERIAL PRIMARY KEY,
+    "user" INTEGER NOT NULL
+        REFERENCES route_card.users(id) ON DELETE CASCADE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_password_history_user_created
+    ON route_card.password_history ("user", created_at DESC);
+
 -- ---------- Department master (signup dropdown) ----------
 CREATE TABLE IF NOT EXISTS route_card.departments (
     id SERIAL PRIMARY KEY,

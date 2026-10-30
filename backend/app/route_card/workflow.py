@@ -262,7 +262,34 @@ def apply_auto_templates(
             wc = op.get("workCentre") or ""
             if wc in aliases:
                 op["workCentre"] = aliases[wc]
+    # Resolve against dept WorkCenter/Machine master
+    try:
+        from app.route_card.work_centers import resolve_operations
+
+        combined = resolve_operations(
+            combined, dept=dept or "", aliases=aliases, notes=notes
+        )
+    except Exception:
+        pass
     return combined
+
+
+def resolve_route_operations(
+    operations: list[dict],
+    *,
+    dept: str | None,
+    notes: list | None = None,
+) -> list[dict]:
+    """Apply WC resolver (also when no auto-templates ran)."""
+    from app.route_card.dept_config import get_dept_rules
+    from app.route_card.work_centers import resolve_operations
+
+    d = (dept or "").strip()
+    aliases = {}
+    if d:
+        rules = (get_dept_rules(d).get("rules") or {})
+        aliases = rules.get("wcAliases") or {}
+    return resolve_operations(operations or [], dept=d, aliases=aliases, notes=notes)
 
 
 def suggest_vlm_pages(raw_text: str, page_count: int | None) -> list[int]:

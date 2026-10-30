@@ -5,7 +5,12 @@ import { Dialog } from "primereact/dialog";
 import { Password } from "primereact/password";
 import { isAuthenticated } from "@/lib/auth";
 import { sanitizeInput } from "@/lib/inputSafe";
-import { fetchCaptcha, login } from "@/services/authApi";
+import {
+  concurrentSessionFromError,
+  fetchCaptcha,
+  login,
+  takeoverSession,
+} from "@/services/authApi";
 import AuthLogo from "@/components/AuthLogo";
 import SafeInputText from "@/components/SafeInputText";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -25,6 +30,12 @@ export default function LoginPage() {
   const [submitted, setSubmitted] = useState(false);
   const [formError, setFormError] = useState("");
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [concurrent, setConcurrent] = useState({
+    open: false,
+    message: "",
+    resumeToken: "",
+    confirming: false,
+  });
 
   const loadCaptcha = useCallback(async () => {
     setCaptchaLoading(true);
@@ -44,6 +55,18 @@ export default function LoginPage() {
   useEffect(() => {
     loadCaptcha();
   }, [loadCaptcha]);
+
+  useEffect(() => {
+    try {
+      const notice = sessionStorage.getItem("rc_auth_notice");
+      if (notice) {
+        sessionStorage.removeItem("rc_auth_notice");
+        setFormError(notice);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   if (isAuthenticated()) {
     return <Navigate to="/generator" replace />;
@@ -68,14 +91,50 @@ export default function LoginPage() {
       await login(empId.trim(), password, captchaId, captchaAnswer.trim());
       navigate("/generator", { replace: true });
     } catch (err) {
+      const concurrentInfo = concurrentSessionFromError(err);
+      if (concurrentInfo?.resumeToken) {
+        setConcurrent({
+          open: true,
+          message: concurrentInfo.message,
+          resumeToken: concurrentInfo.resumeToken,
+          confirming: false,
+        });
+        setFormError("");
+        return;
+      }
       const detail = err?.response?.data?.detail;
       setFormError(
-        typeof detail === "string" ? detail : err?.message || "Sign in failed"
+        typeof detail === "string"
+          ? detail
+          : detail?.message || err?.message || "Sign in failed"
       );
       loadCaptcha();
     } finally {
       setLoading(false);
     }
+  };
+
+  const confirmTakeover = async () => {
+    if (!concurrent.resumeToken || concurrent.confirming) return;
+    setConcurrent((c) => ({ ...c, confirming: true }));
+    try {
+      await takeoverSession(concurrent.resumeToken);
+      setConcurrent({ open: false, message: "", resumeToken: "", confirming: false });
+      navigate("/generator", { replace: true });
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setFormError(
+        typeof detail === "string" ? detail : err?.message || "Could not take over session"
+      );
+      setConcurrent({ open: false, message: "", resumeToken: "", confirming: false });
+      loadCaptcha();
+    }
+  };
+
+  const cancelTakeover = () => {
+    setConcurrent({ open: false, message: "", resumeToken: "", confirming: false });
+    setFormError("Sign-in cancelled — the other session stays active.");
+    loadCaptcha();
   };
 
   return (
@@ -241,6 +300,41 @@ export default function LoginPage() {
           Engineers cannot reset their own password here. Ask your{" "}
           <strong>department head</strong> or an <strong>admin</strong> to reset it from the{" "}
           <strong>Users</strong> page (Reset password action).
+        </p>
+      </Dialog>
+
+      <Dialog
+        header="Already signed in elsewhere"
+        visible={concurrent.open}
+        style={{ width: "min(26rem, 94vw)" }}
+        modal
+        closable={!concurrent.confirming}
+        closeOnEscape={!concurrent.confirming}
+        onHide={cancelTakeover}
+        footer={
+          <div className="flex gap-2 justify-content-end flex-wrap">
+            <Button
+              type="button"
+              label="Cancel"
+              size="small"
+              outlined
+              disabled={concurrent.confirming}
+              onClick={cancelTakeover}
+            />
+            <Button
+              type="button"
+              label={concurrent.confirming ? "Signing in…" : "Terminate & use this session"}
+              size="small"
+              loading={concurrent.confirming}
+              disabled={concurrent.confirming}
+              onClick={confirmTakeover}
+            />
+          </div>
+        }
+      >
+        <p className="rc-login__forgot-copy" style={{ margin: 0 }}>
+          {concurrent.message ||
+            "This account is already signed in elsewhere. Terminate that session to continue here?"}
         </p>
       </Dialog>
     </div>

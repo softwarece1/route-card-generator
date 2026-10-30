@@ -55,6 +55,12 @@ const PROFILES = {
     allow: null, // strip danger only; keep punctuation
     message: "Text contains unsupported or unsafe content",
   },
+  /** Route-card discussion remarks */
+  remark: {
+    max: 4000,
+    allow: /[^a-zA-Z0-9\s.\-_/()#+&,:%°@'!?;:\n]/g,
+    message: "Only letters, numbers, and basic punctuation are allowed",
+  },
   /** Generic single-line (default) */
   text: {
     max: 500,
@@ -81,7 +87,7 @@ function stripDanger(raw, { keepNewlines = false } = {}) {
  */
 export function sanitizeInput(raw, profile = "text") {
   const cfg = PROFILES[profile] || PROFILES.text;
-  const keepNewlines = profile === "multiline";
+  const keepNewlines = profile === "multiline" || profile === "remark";
   const original = String(raw ?? "");
   let value = stripDanger(original, { keepNewlines });
   if (cfg.allow) {

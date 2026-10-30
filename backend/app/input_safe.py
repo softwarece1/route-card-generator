@@ -24,6 +24,11 @@ _PROFILES: dict[str, dict] = {
     "password": {"max": 128, "allow": re.compile(r"[^\x20-\x7e]|[<>`]")},
     "search": {"max": 120, "allow": re.compile(r"[^a-zA-Z0-9\s.\-_/()#]")},
     "multiline": {"max": 8000, "allow": None},
+    # Route-card discussion remarks — letters/numbers/basic punctuation + newlines
+    "remark": {
+        "max": 4000,
+        "allow": re.compile(r"[^a-zA-Z0-9\s.\-_/()#+&,:%°@'!?;:\n]"),
+    },
     "text": {"max": 500, "allow": re.compile(r"[^a-zA-Z0-9\s.\-_/()#+&,:%°@']")},
 }
 

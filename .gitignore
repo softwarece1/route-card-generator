@@ -10,3 +10,8 @@ docs/
 
 *offline*
 /.cursor
+
+# Graphify
+graphify-out/
+.graphify*
+*graphify*

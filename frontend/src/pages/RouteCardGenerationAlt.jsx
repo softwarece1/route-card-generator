@@ -11,6 +11,7 @@ import { ProgressBar } from "primereact/progressbar";
 import { TabPanel, TabView } from "primereact/tabview";
 import { Tag } from "primereact/tag";
 import { Tooltip } from "primereact/tooltip";
+import { Dropdown } from "primereact/dropdown";
 import { toast } from "@/lib/toast";
 import { getVlmPageIndexes } from "@/lib/vlmPrefs";
 import { isExcelFilename, triggerBlobDownload } from "@/lib/excelPreview";
@@ -18,6 +19,7 @@ import {
   addFavorite,
   analyzeSession,
   approveRouteCard,
+  completeIedReview,
   cancelAnalyzeSession,
   copyJsonToClipboard,
   createSession,
@@ -32,19 +34,24 @@ import {
   fetchRecent,
   fetchReviewFlags,
   fetchSessionDocumentBlob,
+  fetchWorkCenterCatalog,
   getSession,
   isCanceledError,
   learnFormatTemplate,
+  recallIedReview,
   resolveReviewFlag,
   saveRouteDraft,
+  shareRouteToIed,
   updateRouteCard,
   uploadSessionDocument,
 } from "@/services/routeCardApi";
 import { getUser } from "@/lib/auth";
+import { routeStatusLabel as workflowStatusLabel, routeStatusTone } from "@/lib/routeStatus";
 import { Checkbox } from "primereact/checkbox";
 import ExcelPreviewDialog from "@/components/ExcelPreviewDialog";
 import OarcPreviewDialog from "@/components/OarcPreviewDialog";
 import OpTemplatePickerDialog from "@/components/OpTemplatePickerDialog";
+import RouteRemarksPanel from "@/components/RouteRemarksPanel";
 import AppShell from "@/components/AppShell";
 import PageHeader from "@/components/PageHeader";
 import {
@@ -168,7 +175,28 @@ const EMPTY_OPERATION = {
   inspection: "—",
   instructionText: "",
   status: "Planned",
+  workCentreId: null,
+  machineId: null,
+  linkStatus: "manual_override",
 };
+
+function linkStatusSeverity(status) {
+  const s = String(status || "").toLowerCase();
+  if (s === "linked") return "success";
+  if (s === "partial") return "warning";
+  if (s === "unresolved") return "danger";
+  if (s === "manual_override") return "info";
+  return "secondary";
+}
+
+function linkStatusLabel(status) {
+  const s = String(status || "").toLowerCase();
+  if (s === "linked") return "Linked";
+  if (s === "partial") return "Needs machine";
+  if (s === "unresolved") return "Needs WC";
+  if (s === "manual_override") return "Manual";
+  return "";
+}
 
 const ANALYSIS_LABELS = {
   ocr: "Text extraction",
@@ -335,6 +363,7 @@ export default function RouteCardGenerationAlt() {
   const [partsListSummary, setPartsListSummary] = useState(null);
   const [wireListSummary, setWireListSummary] = useState(null);
   const [machines, setMachines] = useState([]);
+  const [wcCatalog, setWcCatalog] = useState([]);
   const [reviewStatus, setReviewStatus] = useState("ready");
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState(null);
@@ -406,8 +435,11 @@ export default function RouteCardGenerationAlt() {
       viewRefs: payload.viewRefs || payload.mind?.viewRefs || [],
     });
     setCrossRefs(payload.crossRefs || payload.mind?.crossRefs || []);
-    if (payload.status === "approved") setReviewStatus("approved");
-    else if (payload.status === "draft") setReviewStatus("draft");
+    const st = (payload.status || "").toLowerCase();
+    if (st === "approved") setReviewStatus("approved");
+    else if (st === "ied_review") setReviewStatus("ied_review");
+    else if (st === "ied_complete") setReviewStatus("ied_complete");
+    else if (st === "draft") setReviewStatus("draft");
     else setReviewStatus("ready");
     if (payload.reviewFlags) setReviewFlags(payload.reviewFlags);
     if (payload.itemLinkReport) setItemLinkReport(payload.itemLinkReport);
@@ -438,13 +470,37 @@ export default function RouteCardGenerationAlt() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchMachinesQuietly().then((rows) => {
-      if (!cancelled) setMachines(rows);
+    Promise.all([fetchMachinesQuietly(), fetchWorkCenterCatalog()]).then(([m, wc]) => {
+      if (!cancelled) {
+        setMachines(m || []);
+        setWcCatalog(wc || []);
+      }
     });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const wcDropdownOptions = useMemo(
+    () =>
+      (wcCatalog || []).map((w) => ({
+        label: `${w.code} — ${w.name}${w.isShared ? " (shared)" : ""}`,
+        value: w.id,
+        raw: w,
+      })),
+    [wcCatalog]
+  );
+
+  const machineOptionsForEdit = useMemo(() => {
+    const wcId = editRow?.workCentreId;
+    const wc = (wcCatalog || []).find((w) => w.id === wcId);
+    const list = wc?.machines || [];
+    return list.map((m) => ({
+      label: m.isManualPlaceholder ? `${m.name} (manpower)` : m.name,
+      value: m.id,
+      raw: m,
+    }));
+  }, [wcCatalog, editRow?.workCentreId]);
 
   const plItemLookup = useMemo(() => {
     const map = {};
@@ -844,10 +900,15 @@ export default function RouteCardGenerationAlt() {
       toast.warn("Operation name is required.");
       return;
     }
+    const nextRow = {
+      ...editRow,
+      linkStatus: "manual_override",
+      type: editRow.workCentreName || editRow.workCentre || editRow.type,
+    };
     const exists = !editIsNew && routeOps.some((r) => String(r.id) === String(editRow.id));
     const rows = exists
-      ? routeOps.map((r) => (String(r.id) === String(editRow.id) ? editRow : r))
-      : [...routeOps, editRow].sort((a, b) => Number(a.opNo) - Number(b.opNo));
+      ? routeOps.map((r) => (String(r.id) === String(editRow.id) ? nextRow : r))
+      : [...routeOps, nextRow].sort((a, b) => Number(a.opNo) - Number(b.opNo));
     setEditVisible(false);
     setEditIsNew(false);
     await persistOps(rows);
@@ -891,9 +952,76 @@ export default function RouteCardGenerationAlt() {
   const unresolvedBlocking = (reviewFlags || []).filter(
     (f) => !f.resolved && ["high", "medium"].includes((f.severity || "").toLowerCase()),
   );
-  const userRole = getUser()?.role;
+  const currentUser = getUser();
+  const userRole = currentUser?.role;
+  const isIedUser = userRole === "ied";
+  const isAdminUser = userRole === "admin";
+  const isDeptHeadUser = userRole === "dept_head";
+  const canShareToIed =
+    Boolean(routeCardId) &&
+    (reviewStatus === "draft" || reviewStatus === "ied_complete") &&
+    !isIedUser;
+  const canCompleteIed =
+    Boolean(routeCardId) &&
+    reviewStatus === "ied_review" &&
+    (isIedUser || isAdminUser);
+  const canRecallIed =
+    Boolean(routeCardId) &&
+    reviewStatus === "ied_review" &&
+    (isAdminUser || isDeptHeadUser || !isIedUser);
   const canApprove =
-    Boolean(routeCardId) && (unresolvedBlocking.length === 0 || userRole === "admin");
+    Boolean(routeCardId) &&
+    reviewStatus === "ied_complete" &&
+    userRole !== "ied" &&
+    (unresolvedBlocking.length === 0 || isAdminUser);
+  const canAdminOverrideApprove =
+    isAdminUser &&
+    Boolean(routeCardId) &&
+    reviewStatus !== "approved" &&
+    (reviewStatus !== "ied_complete" || unresolvedBlocking.length > 0);
+  const opsReadOnly =
+    reviewStatus === "approved" ||
+    (reviewStatus === "ied_review" && !isIedUser && !isAdminUser) ||
+    (isIedUser && reviewStatus !== "ied_review");
+  const iedFieldsOnly = reviewStatus === "ied_review" && isIedUser;
+
+  const shareToIed = async () => {
+    if (!routeCardId) return;
+    try {
+      const wasAlready = reviewStatus === "ied_review";
+      const payload = await shareRouteToIed(routeCardId);
+      applyPayload(payload);
+      toast.success(
+        wasAlready
+          ? "Already awaiting IED review."
+          : "Shared to IED — awaiting review.",
+      );
+    } catch (error) {
+      toast.error(error.message || "Share to IED failed");
+    }
+  };
+
+  const completeIed = async () => {
+    if (!routeCardId) return;
+    try {
+      const payload = await completeIedReview(routeCardId);
+      applyPayload(payload);
+      toast.success("IED review complete — awaiting eng / dept-head approval.");
+    } catch (error) {
+      toast.error(error.message || "Complete IED failed");
+    }
+  };
+
+  const recallIed = async () => {
+    if (!routeCardId) return;
+    try {
+      const payload = await recallIedReview(routeCardId);
+      applyPayload(payload);
+      toast.success("Recalled from IED review.");
+    } catch (error) {
+      toast.error(error.message || "Recall failed");
+    }
+  };
 
   const approveCard = async (override = false) => {
     if (!routeCardId) return;
@@ -906,6 +1034,18 @@ export default function RouteCardGenerationAlt() {
       toast.error(error.message || "Approve failed");
     }
   };
+
+  const reviewStatusLabel = workflowStatusLabel(
+    reviewStatus === "ready" ? "" : reviewStatus,
+  );
+  const reviewTagSeverity =
+    routeStatusTone(reviewStatus) === "success"
+      ? "success"
+      : routeStatusTone(reviewStatus) === "info"
+        ? "info"
+        : routeStatusTone(reviewStatus) === "warn"
+          ? "warning"
+          : "secondary";
 
   const downloadCreateOrder = async () => {
     if (!routeCardId) return;
@@ -1630,10 +1770,22 @@ export default function RouteCardGenerationAlt() {
                               itemLookup={plItemLookup}
                             />
                             <dl className="rca-op__meta">
+                              {op.linkStatus ? (
+                                <div>
+                                  <dt>Link</dt>
+                                  <dd>
+                                    <Tag
+                                      value={linkStatusLabel(op.linkStatus)}
+                                      severity={linkStatusSeverity(op.linkStatus)}
+                                      title={op.linkReason || ""}
+                                    />
+                                  </dd>
+                                </div>
+                              ) : null}
                               {op.workCentre ? (
                                 <div>
                                   <dt>Work centre</dt>
-                                  <dd>{op.workCentre}</dd>
+                                  <dd>{op.workCentreName ? `${op.workCentre} (${op.workCentreName})` : op.workCentre}</dd>
                                 </div>
                               ) : null}
                               {op.machine ? (
@@ -1670,18 +1822,24 @@ export default function RouteCardGenerationAlt() {
                           </article>
                         ))}
                       </div>
-                      {machines?.length > 0 && (
+                      {(wcCatalog?.length > 0 || machines?.length > 0) && (
                         <div className="mt-3">
-                          <h3 className="rca-subhead">Available machines</h3>
+                          <h3 className="rca-subhead">Department work centres</h3>
                           <p className="rca-section-note">
-                            Plant machines from the MES register. Automatic capability matching is not enabled.
+                            Ops are matched to your department catalogue (keywords / capability tags).
+                            Unresolved links show as review flags — edit the route card to pick a WC.
                           </p>
                           <div className="rca-machines">
-                            {machines.slice(0, 6).map((machine) => (
-                              <div className="rca-machine" key={machine.id || machine.name}>
-                                <Tag value={machine.type || machine.machine_type || "Machine"} />
-                                <h4>{machine.name || machine.machine_name || `Machine ${machine.id}`}</h4>
-                                <p>Status: {machine.status || machine.machine_status || "—"}</p>
+                            {(wcCatalog.length ? wcCatalog : []).slice(0, 8).map((wc) => (
+                              <div className="rca-machine" key={wc.id}>
+                                <Tag value={wc.mode || "WC"} />
+                                <h4>
+                                  {wc.code} — {wc.name}
+                                </h4>
+                                <p>
+                                  {wc.isShared ? "Shared · " : ""}
+                                  {(wc.machines || []).length} machine(s)
+                                </p>
                               </div>
                             ))}
                           </div>
@@ -1705,9 +1863,18 @@ export default function RouteCardGenerationAlt() {
                           icon="pi pi-list"
                           outlined
                           size="small"
+                          disabled={opsReadOnly || iedFieldsOnly}
                           onClick={() => setTplPickerOpen(true)}
                         />
-                        <Button type="button" label="Add operation" icon="pi pi-plus" outlined size="small" onClick={() => openEdit(null)} />
+                        <Button
+                          type="button"
+                          label="Add operation"
+                          icon="pi pi-plus"
+                          outlined
+                          size="small"
+                          disabled={opsReadOnly || iedFieldsOnly}
+                          onClick={() => openEdit(null)}
+                        />
                       </div>
                       <DataTable
                         className="rca-data-table"
@@ -1725,12 +1892,43 @@ export default function RouteCardGenerationAlt() {
                         <Column field="workCentre" header="Work centre" />
                         <Column field="machine" header="Machine" />
                         <Column
+                          header="Link"
+                          style={{ width: "7rem" }}
+                          body={(row) =>
+                            row.linkStatus ? (
+                              <Tag
+                                value={linkStatusLabel(row.linkStatus)}
+                                severity={linkStatusSeverity(row.linkStatus)}
+                              />
+                            ) : (
+                              "—"
+                            )
+                          }
+                        />
+                        <Column
                           header=""
                           style={{ width: "7rem" }}
                           body={(row) => (
                             <div className="flex gap-1">
-                              <Button type="button" icon="pi pi-pencil" rounded text size="small" onClick={() => openEdit(row)} />
-                              <Button type="button" icon="pi pi-trash" rounded text size="small" severity="danger" onClick={() => removeOp(row)} />
+                              <Button
+                                type="button"
+                                icon="pi pi-pencil"
+                                rounded
+                                text
+                                size="small"
+                                disabled={opsReadOnly}
+                                onClick={() => openEdit(row)}
+                              />
+                              <Button
+                                type="button"
+                                icon="pi pi-trash"
+                                rounded
+                                text
+                                size="small"
+                                severity="danger"
+                                disabled={opsReadOnly || iedFieldsOnly}
+                                onClick={() => removeOp(row)}
+                              />
                             </div>
                           )}
                         />
@@ -1772,20 +1970,8 @@ export default function RouteCardGenerationAlt() {
                   <span className="rca-tab-with-badge">
                     Engineer Review
                     <Tag
-                      value={
-                        reviewStatus === "approved"
-                          ? "Approved"
-                          : reviewStatus === "draft"
-                            ? "Draft"
-                            : "Pending"
-                      }
-                      severity={
-                        reviewStatus === "approved"
-                          ? "success"
-                          : reviewStatus === "draft"
-                            ? "warning"
-                            : "secondary"
-                      }
+                      value={reviewStatusLabel === "—" ? "Pending" : reviewStatusLabel}
+                      severity={reviewTagSeverity}
                     />
                   </span>
                 }
@@ -1883,8 +2069,55 @@ export default function RouteCardGenerationAlt() {
                       </DataTable>
                     </div>
                   )}
+                  {routeCardId ? (
+                    <div className="mb-3">
+                      <h4 style={{ marginBottom: "0.5rem" }}>Remarks</h4>
+                      <RouteRemarksPanel routeCardId={routeCardId} compact />
+                    </div>
+                  ) : null}
                   <div className="flex gap-2 flex-wrap">
-                    <Button type="button" label="Save Draft" icon="pi pi-save" outlined size="small" onClick={saveDraft} disabled={!routeCardId} />
+                    <Button
+                      type="button"
+                      label="Save Draft"
+                      icon="pi pi-save"
+                      outlined
+                      size="small"
+                      onClick={saveDraft}
+                      disabled={
+                        !routeCardId ||
+                        reviewStatus === "ied_review" ||
+                        reviewStatus === "ied_complete" ||
+                        reviewStatus === "approved"
+                      }
+                    />
+                    {canShareToIed && (
+                      <Button
+                        type="button"
+                        label="Share to IED for review"
+                        icon="pi pi-send"
+                        size="small"
+                        onClick={shareToIed}
+                      />
+                    )}
+                    {canCompleteIed && (
+                      <Button
+                        type="button"
+                        label="Complete IED review"
+                        icon="pi pi-check-circle"
+                        size="small"
+                        onClick={completeIed}
+                      />
+                    )}
+                    {canRecallIed && (
+                      <Button
+                        type="button"
+                        label="Recall from IED"
+                        icon="pi pi-replay"
+                        outlined
+                        size="small"
+                        onClick={recallIed}
+                      />
+                    )}
                     <Button
                       type="button"
                       label="Approve"
@@ -1893,7 +2126,7 @@ export default function RouteCardGenerationAlt() {
                       disabled={!canApprove}
                       onClick={() => approveCard(false)}
                     />
-                    {userRole === "admin" && unresolvedBlocking.length > 0 && (
+                    {canAdminOverrideApprove && (
                       <Button
                         type="button"
                         label="Admin override approve"
@@ -1949,6 +2182,8 @@ export default function RouteCardGenerationAlt() {
         visible={oarcPreviewOpen}
         onHide={() => setOarcPreviewOpen(false)}
         docs={docs}
+        sessionId={sessionId}
+        mode="preview"
         payload={
           analysisPayload
             ? {
@@ -2002,39 +2237,139 @@ export default function RouteCardGenerationAlt() {
         footer={
           <div className="flex justify-content-end gap-2">
             <Button type="button" label="Cancel" outlined size="small" onClick={() => setEditVisible(false)} />
-            <Button type="button" label="Save" icon="pi pi-check" size="small" onClick={saveEdit} />
+            <Button
+              type="button"
+              label="Save"
+              icon="pi pi-check"
+              size="small"
+              disabled={opsReadOnly}
+              onClick={saveEdit}
+            />
           </div>
         }
       >
         {editRow && (
           <div className="grid formgrid p-fluid">
+            <div className="field col-12">
+              <label htmlFor="rca-operation">Operation</label>
+              <SafeInputText
+                profile="text"
+                id="rca-operation"
+                value={editRow.operation ?? ""}
+                disabled={opsReadOnly}
+                onChange={(e) => setEditRow((r) => ({ ...r, operation: e.target.value }))}
+              />
+            </div>
+            <div className="field col-12 md:col-6">
+              <label htmlFor="rca-workCentre">Work centre</label>
+              {wcDropdownOptions.length > 0 ? (
+                <Dropdown
+                  inputId="rca-workCentre"
+                  value={editRow.workCentreId ?? null}
+                  options={wcDropdownOptions}
+                  placeholder="Select work centre"
+                  showClear
+                  filter
+                  disabled={opsReadOnly}
+                  onChange={(e) => {
+                    const wc = (wcCatalog || []).find((w) => w.id === e.value);
+                    setEditRow((r) => ({
+                      ...r,
+                      workCentreId: e.value ?? null,
+                      workCentre: wc ? wc.code || wc.name : "",
+                      workCentreName: wc?.name || "",
+                      machineId: null,
+                      machine: "",
+                      linkStatus: "manual_override",
+                    }));
+                  }}
+                />
+              ) : (
+                <SafeInputText
+                  profile="text"
+                  id="rca-workCentre"
+                  value={editRow.workCentre ?? ""}
+                  disabled={opsReadOnly}
+                  onChange={(e) =>
+                    setEditRow((r) => ({
+                      ...r,
+                      workCentre: e.target.value,
+                      workCentreId: null,
+                      linkStatus: "manual_override",
+                    }))
+                  }
+                />
+              )}
+            </div>
+            <div className="field col-12 md:col-6">
+              <label htmlFor="rca-machine">Machine</label>
+              {machineOptionsForEdit.length > 0 ? (
+                <Dropdown
+                  inputId="rca-machine"
+                  value={editRow.machineId ?? null}
+                  options={machineOptionsForEdit}
+                  placeholder="Select machine"
+                  showClear
+                  disabled={opsReadOnly}
+                  onChange={(e) => {
+                    const m = machineOptionsForEdit.find((o) => o.value === e.value)?.raw;
+                    setEditRow((r) => ({
+                      ...r,
+                      machineId: e.value ?? null,
+                      machine: m?.name || "",
+                      linkStatus: "manual_override",
+                    }));
+                  }}
+                />
+              ) : (
+                <SafeInputText
+                  profile="text"
+                  id="rca-machine"
+                  value={editRow.machine ?? ""}
+                  disabled={opsReadOnly}
+                  onChange={(e) =>
+                    setEditRow((r) => ({
+                      ...r,
+                      machine: e.target.value,
+                      machineId: null,
+                      linkStatus: "manual_override",
+                    }))
+                  }
+                />
+              )}
+            </div>
             {[
-              ["operation", "Operation"],
-              ["workCentre", "Work centre"],
-              ["machine", "Machine"],
               ["tool", "Tool"],
               ["items", "Items"],
               ["torqueSpec", "Torque"],
               ["reference", "Reference"],
-              ["setup", "Setup"],
-              ["time", "Time"],
+              ["setup", "Setup (std)"],
+              ["time", "Per-piece time"],
               ["inspection", "Inspection"],
-            ].map(([key, label]) => (
+            ].map(([key, label]) => {
+              const iedKey = key === "setup" || key === "time";
+              const fieldDisabled = opsReadOnly || (iedFieldsOnly && !iedKey);
+              return (
               <div className="field col-12 md:col-6" key={key}>
                 <label htmlFor={`rca-${key}`}>{label}</label>
-                <SafeInputText profile="text"
+                <SafeInputText
+                  profile="text"
                   id={`rca-${key}`}
                   value={editRow[key] ?? ""}
+                  disabled={fieldDisabled}
                   onChange={(e) => setEditRow((r) => ({ ...r, [key]: e.target.value }))}
                 />
               </div>
-            ))}
+              );
+            })}
             <div className="field col-12">
               <label htmlFor="rca-instructionText">Operation instruction</label>
-              <SafeInputTextarea profile="multiline"
+              <SafeInputTextarea
+                profile="multiline"
                 id="rca-instructionText"
                 rows={4}
                 value={editRow.instructionText ?? ""}
+                disabled={opsReadOnly || iedFieldsOnly}
                 onChange={(e) => setEditRow((r) => ({ ...r, instructionText: e.target.value }))}
               />
             </div>

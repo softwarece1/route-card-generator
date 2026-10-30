@@ -25,6 +25,7 @@ export default function DeptRulesPanel() {
   const [autoIds, setAutoIds] = useState("");
   const [keywords, setKeywords] = useState("");
   const [addendum, setAddendum] = useState("");
+  const [wcAliasesText, setWcAliasesText] = useState("");
   const [examples, setExamples] = useState([]);
   const [exTitle, setExTitle] = useState("");
   const [exOut, setExOut] = useState("");
@@ -38,12 +39,32 @@ export default function DeptRulesPanel() {
         setAutoIds((rr.autoTemplateIds || []).join(", "));
         setKeywords((rr.keywords || []).join(", "));
         setAddendum(rr.promptAddendum || "");
+        const aliases = rr.wcAliases || {};
+        setWcAliasesText(
+          Object.entries(aliases)
+            .map(([k, v]) => `${k}=${v}`)
+            .join("\n")
+        );
         setExamples(f.items || []);
       } catch (e) {
         toast.error(e.message || "Could not load dept rules");
       }
     })();
   }, []);
+
+  function parseAliases(text) {
+    const out = {};
+    for (const line of String(text || "").split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const eq = t.indexOf("=");
+      if (eq < 1) continue;
+      const k = t.slice(0, eq).trim();
+      const v = t.slice(eq + 1).trim();
+      if (k && v) out[k] = v;
+    }
+    return out;
+  }
 
   if (!canEdit) return null;
 
@@ -59,6 +80,18 @@ export default function DeptRulesPanel() {
       <SafeInputText profile="text" className="w-full mb-3" value={keywords} onChange={(e) => setKeywords(e.target.value)} />
       <label className="block mb-2">VLM prompt addendum</label>
       <SafeInputTextarea profile="multiline" className="w-full mb-3" rows={4} value={addendum} onChange={(e) => setAddendum(e.target.value)} />
+      <label className="block mb-2">Work centre aliases (one per line: Heuristic=CODE)</label>
+      <p style={{ color: "var(--pmf-text-muted)", fontSize: "0.8rem", marginTop: 0 }}>
+        Example: <code>PCB Assembly=PCB</code> or <code>Assembly=ASM</code> — maps heuristic names to your WC codes.
+      </p>
+      <SafeInputTextarea
+        profile="multiline"
+        className="w-full mb-3"
+        rows={4}
+        value={wcAliasesText}
+        onChange={(e) => setWcAliasesText(e.target.value)}
+        placeholder={"PCB Assembly=PCB\nTorque=TORQUE\nAssembly=ASM"}
+      />
       <Button
         type="button"
         label="Save rules"
@@ -78,6 +111,7 @@ export default function DeptRulesPanel() {
               .map((x) => x.trim())
               .filter(Boolean),
             promptAddendum: addendum,
+            wcAliases: parseAliases(wcAliasesText),
           };
           await saveDeptRules({ dept: user.dept, rules: next });
           toast.success("Dept rules saved");

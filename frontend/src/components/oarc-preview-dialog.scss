@@ -92,12 +92,16 @@
 .oarc-preview-dialog .om-grid .p-inputtext,
 .oarc-preview-dialog .om-grid .p-inputnumber-input,
 .oarc-preview-dialog .om-create-order-card .om-input,
-.oarc-preview-dialog .om-create-order-card .p-inputtext:not(textarea) {
+.oarc-preview-dialog .om-create-order-card .p-inputtext:not(textarea),
+.oarc-preview-dialog .om-create-order-table .p-inputtext,
+.oarc-preview-dialog .om-create-order-table .p-inputnumber-input,
+.oarc-preview-dialog .om-create-order-table .p-dropdown {
   width: 100%;
-  height: 2.35rem;
-  font-size: 0.84rem;
-  padding: 0.35rem 0.65rem;
-  border-radius: 6px;
+  height: 1.85rem;
+  min-height: 1.85rem;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 5px;
 }
 
 .oarc-preview-dialog .om-grid .p-inputnumber {
@@ -105,7 +109,17 @@
 }
 
 .oarc-preview-dialog .om-grid .p-inputnumber-input {
-  height: 2.35rem;
+  height: 1.85rem;
+}
+
+.oarc-preview-dialog .om-create-order-table .p-dropdown .p-dropdown-label {
+  font-size: 0.8rem;
+  padding: 0.2rem 0.45rem;
+}
+
+.oarc-preview-dialog .om-create-order-table .p-datatable-tbody > tr > td {
+  padding: 0.28rem 0.35rem;
+  font-size: 0.8rem;
 }
 
 .oarc-preview-dialog .om-create-order-divider {
@@ -287,8 +301,8 @@
 
   .p-inputtext,
   .p-inputnumber-input {
-    height: 2.35rem;
-    font-size: 0.84rem;
+    height: 1.85rem;
+    font-size: 0.8rem;
   }
 }
 
@@ -406,8 +420,8 @@
 }
 
 .oarc-preview-dialog .om-create-order-card__body .p-button {
-  height: 2.35rem;
-  font-size: 0.84rem;
+  height: 1.85rem;
+  font-size: 0.8rem;
 }
 
 .oarc-preview-dialog .om-create-order-file-debug {

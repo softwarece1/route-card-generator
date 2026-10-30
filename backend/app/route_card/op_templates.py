@@ -10,7 +10,7 @@ from pony.orm import db_session, flush, select
 from app.route_card.models import RcDepartment, RcOperationTemplate, RcOperationTemplateStep, RcUser
 
 VALID_PLACEMENTS = {"pre", "post", "any"}
-VALID_ROLES = {"admin", "dept_head", "engineer"}
+VALID_ROLES = {"admin", "dept_head", "engineer", "ied"}
 
 
 def _role(user: dict | None) -> str:
@@ -29,12 +29,26 @@ def _is_dept_head(user: dict | None) -> bool:
     return _role(user) == "dept_head"
 
 
+def _is_ied(user: dict | None) -> bool:
+    return _role(user) == "ied"
+
+
 def _can_write_dept(user: dict | None, dept: str) -> bool:
     if _is_admin(user):
         return True
     if _is_dept_head(user) and _dept(user) and _dept(user) == (dept or "").strip():
         return True
     return False
+
+
+def _can_manage_templates(user: dict | None, dept: str) -> bool:
+    """Admin any dept; dept_head / IED own department only."""
+    if _is_admin(user):
+        return True
+    d = _dept(user)
+    if not d or d != (dept or "").strip():
+        return False
+    return _is_dept_head(user) or _is_ied(user)
 
 
 def _can_read_template(user: dict | None, tpl: RcOperationTemplate) -> bool:
@@ -302,8 +316,8 @@ def get_template(template_id: int, user: dict | None) -> dict:
 
 @db_session
 def create_template(body: dict, user: dict | None) -> dict:
-    if not (_is_admin(user) or _is_dept_head(user)):
-        raise HTTPException(403, "Department head or admin access required")
+    if not (_is_admin(user) or _is_dept_head(user) or _is_ied(user)):
+        raise HTTPException(403, "Department head, IED, or admin access required")
 
     name = (body.get("name") or "").strip()
     if not name:
@@ -317,7 +331,7 @@ def create_template(body: dict, user: dict | None) -> dict:
     else:
         dept = _validate_dept_name(_dept(user))
 
-    if not _can_write_dept(user, dept):
+    if not _can_manage_templates(user, dept):
         raise HTTPException(403, "Cannot create templates for another department")
 
     _assert_unique_name(dept, name)
@@ -348,7 +362,7 @@ def update_template(template_id: int, body: dict, user: dict | None) -> dict:
     tpl = RcOperationTemplate.get(id=template_id)
     if not tpl or not tpl.is_active:
         raise HTTPException(404, "Template not found")
-    if not _can_write_dept(user, tpl.dept):
+    if not _can_manage_templates(user, tpl.dept):
         raise HTTPException(403, "Cannot edit this template")
 
     if body.get("name") is not None:
@@ -378,7 +392,7 @@ def delete_template(template_id: int, user: dict | None) -> dict:
     tpl = RcOperationTemplate.get(id=template_id)
     if not tpl or not tpl.is_active:
         raise HTTPException(404, "Template not found")
-    if not _can_write_dept(user, tpl.dept):
+    if not _can_manage_templates(user, tpl.dept):
         raise HTTPException(403, "Cannot delete this template")
     tpl.is_active = False
     tpl.updated_at = datetime.utcnow()
@@ -387,16 +401,12 @@ def delete_template(template_id: int, user: dict | None) -> dict:
 
 @db_session
 def duplicate_template(template_id: int, body: dict, user: dict | None) -> dict:
-    if not (_is_admin(user) or _is_dept_head(user)):
-        raise HTTPException(403, "Department head or admin access required")
+    if not (_is_admin(user) or _is_dept_head(user) or _is_ied(user)):
+        raise HTTPException(403, "Department head, IED, or admin access required")
 
     src = RcOperationTemplate.get(id=template_id)
     if not src or not src.is_active:
         raise HTTPException(404, "Template not found")
-
-    # dept_head / admin can read any; engineers cannot call this anyway
-    if not (_is_admin(user) or _is_dept_head(user)):
-        raise HTTPException(403, "Not allowed")
 
     target_dept = _validate_dept_name(_dept(user) if not _is_admin(user) else (_dept(user) or src.dept))
     if _is_admin(user) and body.get("dept"):
@@ -404,7 +414,7 @@ def duplicate_template(template_id: int, body: dict, user: dict | None) -> dict:
     elif not _is_admin(user):
         target_dept = _validate_dept_name(_dept(user))
 
-    if not _can_write_dept(user, target_dept):
+    if not _can_manage_templates(user, target_dept):
         raise HTTPException(403, "Cannot duplicate into this department")
 
     root_id = _template_root_id(src)

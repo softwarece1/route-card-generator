@@ -4,6 +4,7 @@ import { Checkbox } from "primereact/checkbox";
 import { Column } from "primereact/column";
 import { DataTable } from "primereact/datatable";
 import { Dialog } from "primereact/dialog";
+import { Dropdown } from "primereact/dropdown";
 import { InputNumber } from "primereact/inputnumber";
 import SafeInputText from "@/components/SafeInputText";
 import SafeInputTextarea from "@/components/SafeInputTextarea";
@@ -18,6 +19,7 @@ import {
   emptyRawMaterial,
   insertTemplateSteps,
   mapPayloadToOrderPrefill,
+  oarcOpsToRouteOperations,
   parseItemsLabel,
   renumberOarcOps,
   squashConsecutiveSameWc,
@@ -25,19 +27,33 @@ import {
   templateStepToOarcRow,
 } from "@/lib/pmfOrderPrefill";
 import { printOarcPdf } from "@/lib/oarcPrint";
-import { downloadJson } from "@/services/routeCardApi";
+import { isExcelFilename, triggerBlobDownload } from "@/lib/excelPreview";
+import {
+  completeIedReview,
+  downloadJson,
+  fetchSessionDocumentBlob,
+  fetchWorkCenterCatalog,
+  updateRouteCard,
+} from "@/services/routeCardApi";
 import OpTemplatePickerDialog from "@/components/OpTemplatePickerDialog";
+import ExcelPreviewDialog from "@/components/ExcelPreviewDialog";
+import RouteRemarksPanel from "@/components/RouteRemarksPanel";
 import "./oarc-preview-dialog.scss";
 
 /**
  * View OARC preview — CreateOrderModal-shaped dialog (this project only).
  * Prefills from extract + uploaded drawing/PL; leaves unknown fields empty.
+ * mode="ied": persist standards + complete IED + view uploaded files.
  */
 export default function OarcPreviewDialog({
   visible,
   onHide,
   payload,
   docs = {},
+  mode = "preview",
+  sessionId = null,
+  onSaved,
+  onCompleted,
 }) {
   const [header, setHeader] = useState(null);
   const [operations, setOperations] = useState([]);
@@ -74,6 +90,32 @@ export default function OarcPreviewDialog({
     fileName: "",
   });
   const [tplPickerOpen, setTplPickerOpen] = useState(false);
+  const [wcCatalog, setWcCatalog] = useState([]);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [excelPreview, setExcelPreview] = useState(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
+
+  const isIedMode = mode === "ied";
+  const routeStatus = String(payload?.status || "").toLowerCase();
+  const canEditStandards = isIedMode ? routeStatus === "ied_review" : true;
+  const routeCardId = payload?.id || null;
+
+  useEffect(() => {
+    if (!visible) return;
+    fetchWorkCenterCatalog()
+      .then((rows) => setWcCatalog(rows || []))
+      .catch(() => setWcCatalog([]));
+  }, [visible]);
+
+  const wcOptions = useMemo(
+    () =>
+      (wcCatalog || []).map((w) => ({
+        label: `${w.code} — ${w.name}`,
+        value: w.sapCode || w.code || w.name,
+      })),
+    [wcCatalog]
+  );
 
   const itemLookup = useMemo(() => {
     const map = {};
@@ -137,9 +179,19 @@ export default function OarcPreviewDialog({
       fileName: pl?.name || "",
     });
     setTab(0);
+    setDirty(false);
   }, [visible, remapKey, payload, docs.drawing, docs.partslist]);
 
-  const setH = (key, value) => setHeader((h) => (h ? { ...h, [key]: value } : h));
+  useEffect(() => {
+    return () => {
+      if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+    };
+  }, [pdfPreviewUrl]);
+
+  const setH = (key, value) => {
+    setHeader((h) => (h ? { ...h, [key]: value } : h));
+    if (isIedMode) setDirty(true);
+  };
 
   /** Keep Oprn No ascending 10, 20, 30… after reorder / delete */
   const renumberOps = (rows) =>
@@ -149,6 +201,7 @@ export default function OarcPreviewDialog({
     }));
 
   const updateOp = (rowId, field, value) => {
+    if (isIedMode) setDirty(true);
     setOperations((rows) =>
       rows.map((r) => (r._rowId === rowId ? { ...r, [field]: value } : r)),
     );
@@ -158,6 +211,7 @@ export default function OarcPreviewDialog({
     const next = renumberOps(e.value || []);
     setOperations(next);
     setH("total_operations", next.length);
+    if (isIedMode) setDirty(true);
   };
 
   const deleteOp = (rowId) => {
@@ -301,20 +355,146 @@ export default function OarcPreviewDialog({
     toast.success("OARC preview JSON downloaded.");
   };
 
+  const persistIedStandards = async () => {
+    if (!routeCardId) throw new Error("No route card to save");
+    const routeOps = oarcOpsToRouteOperations(
+      operations,
+      payload?.routeOperations || [],
+    );
+    const next = await updateRouteCard(routeCardId, {
+      operations: routeOps,
+      comment: "IED standards update",
+    });
+    setDirty(false);
+    onSaved?.(next);
+    return next;
+  };
+
+  const saveIedStandards = async () => {
+    setSaving(true);
+    try {
+      await persistIedStandards();
+      toast.success("Standards saved.");
+    } catch (error) {
+      toast.error(error.message || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const completeIed = async () => {
+    if (!routeCardId) return;
+    setSaving(true);
+    try {
+      if (dirty) await persistIedStandards();
+      const next = await completeIedReview(routeCardId);
+      toast.success("IED review complete — awaiting approval.");
+      onCompleted?.(next);
+      onHide?.();
+    } catch (error) {
+      toast.error(error.message || "Complete IED failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openUploadedDoc = async (role, meta) => {
+    if (!sessionId || !meta?.fileName) {
+      toast.warn("No uploaded file for this document.");
+      return;
+    }
+    try {
+      const blob = await fetchSessionDocumentBlob(sessionId, role, meta.id || null);
+      const name = meta.fileName || `${role}.bin`;
+      if (isExcelFilename(name)) {
+        setExcelPreview({ blob, name });
+        return;
+      }
+      if (String(name).toLowerCase().endsWith(".pdf") || (meta.type || "").includes("pdf")) {
+        if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+        setPdfPreviewUrl(URL.createObjectURL(blob));
+        return;
+      }
+      triggerBlobDownload(blob, name);
+    } catch (error) {
+      toast.error(error.message || "Could not open file");
+    }
+  };
+
   const footer = (
     <div className="oarc-preview-dialog__footer">
-      <Button type="button" label="Close" outlined size="small" onClick={onHide} />
-      <Button type="button" label="Export to SAP" icon="pi pi-download" outlined size="small" onClick={handleExport} />
-      <Button type="button" label="Print" icon="pi pi-print" size="small" onClick={handlePrint} />
+      <Button
+        type="button"
+        label="Close"
+        outlined
+        size="small"
+        disabled={saving}
+        onClick={onHide}
+      />
+      {isIedMode && canEditStandards ? (
+        <>
+          <Button
+            type="button"
+            label="Save standards"
+            icon="pi pi-save"
+            outlined
+            size="small"
+            loading={saving}
+            disabled={!routeCardId || !dirty}
+            onClick={saveIedStandards}
+          />
+          <Button
+            type="button"
+            label="Complete IED review"
+            icon="pi pi-check-circle"
+            size="small"
+            loading={saving}
+            disabled={!routeCardId}
+            onClick={completeIed}
+          />
+        </>
+      ) : null}
+      {!isIedMode ? (
+        <>
+          <Button
+            type="button"
+            label="Export to SAP"
+            icon="pi pi-download"
+            outlined
+            size="small"
+            onClick={handleExport}
+          />
+          <Button
+            type="button"
+            label="Print"
+            icon="pi pi-print"
+            size="small"
+            onClick={handlePrint}
+          />
+        </>
+      ) : (
+        <Button
+          type="button"
+          label="Print"
+          icon="pi pi-print"
+          outlined
+          size="small"
+          onClick={handlePrint}
+        />
+      )}
     </div>
   );
 
   return (
     <>
       <Dialog
-        header="View OARC preview"
+        header={
+          isIedMode
+            ? `IED review${header?.part_number ? ` — ${header.part_number}` : ""}`
+            : "View OARC preview"
+        }
         visible={visible}
-        onHide={onHide}
+        onHide={() => !saving && onHide?.()}
         className="oarc-preview-dialog"
         style={{ width: "min(96vw, 88rem)" }}
         breakpoints={{ "1400px": "94vw", "960px": "98vw" }}
@@ -466,6 +646,9 @@ export default function OarcPreviewDialog({
                       icon: "pi pi-folder",
                       count: (drawingMeta.fileName ? 1 : 0) + (plMeta.fileName ? 1 : 0),
                     },
+                    ...(isIedMode || routeCardId
+                      ? [{ label: "Remarks", icon: "pi pi-comments", count: null }]
+                      : []),
                   ];
                   const meta = tabs[options.index] || tabs[0];
                   return (
@@ -481,7 +664,9 @@ export default function OarcPreviewDialog({
                       <span className="om-zepto-tab-label">
                         <i className={meta.icon} aria-hidden />
                         <span>{meta.label}</span>
-                        <span className="om-zepto-tab-count">{meta.count}</span>
+                        {meta.count != null ? (
+                          <span className="om-zepto-tab-count">{meta.count}</span>
+                        ) : null}
                       </span>
                     </button>
                   );
@@ -491,10 +676,15 @@ export default function OarcPreviewDialog({
                   <div className="om-create-order-section">
                     <div className="om-create-order-section__toolbar">
                       <span className="om-create-order-section__hint">
-                        {operations.length
-                          ? "Drag rows to reorder. Operation numbers stay ascending (10, 20, 30…)."
-                          : "No operations found. Click 'Add Operation' to add new operations:"}
+                        {isIedMode
+                          ? canEditStandards
+                            ? "Set standards, reorder/merge ops, or add from templates. Then save or complete IED review."
+                            : "Read-only — IED review already completed."
+                          : operations.length
+                            ? "Drag rows to reorder. Operation numbers stay ascending (10, 20, 30…)."
+                            : "No operations found. Click 'Add Operation' to add new operations:"}
                       </span>
+                      {canEditStandards ? (
                       <div className="flex gap-2 flex-wrap">
                         <Button
                           type="button"
@@ -509,7 +699,10 @@ export default function OarcPreviewDialog({
                               : "No consecutive operations share the same work centre"
                           }
                           tooltipOptions={{ position: "top" }}
-                          onClick={mergeSameWcOps}
+                          onClick={() => {
+                            mergeSameWcOps();
+                            if (isIedMode) setDirty(true);
+                          }}
                         />
                         <Button
                           type="button"
@@ -523,19 +716,31 @@ export default function OarcPreviewDialog({
                           type="button"
                           label="Add Operation"
                           size="small"
-                          onClick={addOp}
+                          onClick={() => {
+                            addOp();
+                            if (isIedMode) setDirty(true);
+                          }}
                         />
                       </div>
+                      ) : null}
                     </div>
                     <DataTable
                       value={operations}
                       dataKey="_rowId"
+                      size="small"
                       scrollable
                       scrollHeight="360px"
-                      tableStyle={{ minWidth: "78rem" }}
+                      tableStyle={{ minWidth: isIedMode ? "56rem" : "78rem" }}
                       className="om-create-order-table"
-                      reorderableRows
-                      onRowReorder={onOpsReorder}
+                      reorderableRows={canEditStandards}
+                      onRowReorder={
+                        canEditStandards
+                          ? (e) => {
+                              onOpsReorder(e);
+                              if (isIedMode) setDirty(true);
+                            }
+                          : undefined
+                      }
                       emptyMessage={
                         <div className="om-create-order-empty">
                           <p>No operations added yet.</p>
@@ -545,7 +750,9 @@ export default function OarcPreviewDialog({
                         </div>
                       }
                     >
-                      <Column rowReorder style={{ width: "3rem", minWidth: "3rem" }} />
+                      {canEditStandards ? (
+                        <Column rowReorder style={{ width: "3rem", minWidth: "3rem" }} />
+                      ) : null}
                       <Column
                         header="Operation No"
                         style={{ minWidth: "7.5rem", width: "7.5rem" }}
@@ -556,14 +763,29 @@ export default function OarcPreviewDialog({
                       <Column
                         header="Workcenter"
                         style={{ minWidth: "14rem" }}
-                        body={(row) => (
-                          <SafeInputText profile="text"
-                            value={row["Wc/Plant"]}
-                            className="w-full"
-                            placeholder="Select workcenter"
-                            onChange={(e) => updateOp(row._rowId, "Wc/Plant", e.target.value)}
-                          />
-                        )}
+                        body={(row) =>
+                          wcOptions.length > 0 ? (
+                            <Dropdown
+                              value={row["Wc/Plant"] || null}
+                              options={wcOptions}
+                              className="w-full"
+                              placeholder="Select workcentre"
+                              filter
+                              editable
+                              disabled={!canEditStandards}
+                              onChange={(e) => updateOp(row._rowId, "Wc/Plant", e.value || "")}
+                            />
+                          ) : (
+                            <SafeInputText
+                              profile="text"
+                              value={row["Wc/Plant"]}
+                              className="w-full"
+                              placeholder="Select workcentre"
+                              disabled={!canEditStandards}
+                              onChange={(e) => updateOp(row._rowId, "Wc/Plant", e.target.value)}
+                            />
+                          )
+                        }
                       />
                       <Column
                         header="Operation"
@@ -576,6 +798,7 @@ export default function OarcPreviewDialog({
                                 value={row.Operation}
                                 placeholder="Enter operation description"
                                 className="om-op-desc-field__input w-full"
+                                disabled={!canEditStandards}
                                 onChange={(e) => updateOp(row._rowId, "Operation", e.target.value)}
                               />
                               <div className="om-op-desc-field__actions">
@@ -586,6 +809,7 @@ export default function OarcPreviewDialog({
                                   rounded
                                   text
                                   size="small"
+                                  disabled={!canEditStandards && !hasInstruction}
                                   tooltip={hasInstruction ? "Edit instruction" : "Add instruction"}
                                   tooltipOptions={{ position: "top" }}
                                   aria-label={hasInstruction ? "Edit instruction" : "Add instruction"}
@@ -614,6 +838,7 @@ export default function OarcPreviewDialog({
                             minFractionDigits={0}
                             maxFractionDigits={2}
                             className="w-full"
+                            disabled={!canEditStandards}
                             onValueChange={(e) => updateOp(row._rowId, "Setup Time", e.value)}
                           />
                         )}
@@ -629,10 +854,12 @@ export default function OarcPreviewDialog({
                             minFractionDigits={0}
                             maxFractionDigits={2}
                             className="w-full"
+                            disabled={!canEditStandards}
                             onValueChange={(e) => updateOp(row._rowId, "Per Pc Time", e.value)}
                           />
                         )}
                       />
+                      {!isIedMode ? (
                       <Column
                         header="Requires input"
                         style={{ minWidth: "8.5rem", width: "8.5rem" }}
@@ -650,6 +877,8 @@ export default function OarcPreviewDialog({
                           </div>
                         )}
                       />
+                      ) : null}
+                      {!isIedMode ? (
                       <Column
                         header="Generate o/p"
                         style={{ minWidth: "8.5rem", width: "8.5rem" }}
@@ -667,6 +896,8 @@ export default function OarcPreviewDialog({
                           </div>
                         )}
                       />
+                      ) : null}
+                      {!isIedMode ? (
                       <Column
                         header="Manual"
                         style={{ minWidth: "7rem", width: "7rem" }}
@@ -682,6 +913,8 @@ export default function OarcPreviewDialog({
                           </div>
                         )}
                       />
+                      ) : null}
+                      {canEditStandards ? (
                       <Column
                         header="Actions"
                         style={{ minWidth: "6rem", width: "6rem" }}
@@ -692,10 +925,14 @@ export default function OarcPreviewDialog({
                             severity="danger"
                             text
                             size="small"
-                            onClick={() => deleteOp(row._rowId)}
+                            onClick={() => {
+                              deleteOp(row._rowId);
+                              if (isIedMode) setDirty(true);
+                            }}
                           />
                         )}
                       />
+                      ) : null}
                     </DataTable>
                   </div>
                 </TabPanel>
@@ -860,17 +1097,50 @@ export default function OarcPreviewDialog({
                                 }
                               />
                             </div>
-                            <Button
-                              type="button"
-                              className="w-full"
-                              icon="pi pi-upload"
-                              label={drawingMeta.fileName ? drawingMeta.fileName : "Select Drawing File"}
-                              outlined={!drawingMeta.fileName}
-                              disabled
-                            />
+                            <div className="flex gap-2 flex-wrap">
+                              <Button
+                                type="button"
+                                className="flex-1"
+                                icon="pi pi-eye"
+                                label={drawingMeta.fileName ? "View drawing" : "No drawing"}
+                                outlined
+                                size="small"
+                                disabled={!sessionId || !drawingMeta.fileName}
+                                onClick={() =>
+                                  openUploadedDoc("drawing", {
+                                    ...drawingMeta,
+                                    ...docs.drawing,
+                                    fileName: drawingMeta.fileName || docs.drawing?.name,
+                                  })
+                                }
+                              />
+                              <Button
+                                type="button"
+                                icon="pi pi-download"
+                                outlined
+                                size="small"
+                                disabled={!sessionId || !drawingMeta.fileName}
+                                onClick={async () => {
+                                  try {
+                                    const blob = await fetchSessionDocumentBlob(
+                                      sessionId,
+                                      "drawing",
+                                      docs.drawing?.id,
+                                    );
+                                    triggerBlobDownload(
+                                      blob,
+                                      drawingMeta.fileName || "drawing.pdf",
+                                    );
+                                  } catch (e) {
+                                    toast.error(e.message || "Download failed");
+                                  }
+                                }}
+                              />
+                            </div>
                             <p className="om-create-order-file-debug">
-                              File selected:{" "}
-                              {drawingMeta.fileName ? `Yes — ${drawingMeta.fileName}` : "No"}
+                              {drawingMeta.fileName
+                                ? `File: ${drawingMeta.fileName}`
+                                : "No drawing uploaded"}
                             </p>
                           </div>
                         </div>
@@ -911,16 +1181,50 @@ export default function OarcPreviewDialog({
                                 onChange={(e) => setPlMeta((m) => ({ ...m, version: e.target.value }))}
                               />
                             </div>
-                            <Button
-                              type="button"
-                              className="w-full"
-                              icon="pi pi-upload"
-                              label={plMeta.fileName ? plMeta.fileName : "Select Part List"}
-                              outlined={!plMeta.fileName}
-                              disabled
-                            />
+                            <div className="flex gap-2 flex-wrap">
+                              <Button
+                                type="button"
+                                className="flex-1"
+                                icon="pi pi-eye"
+                                label={plMeta.fileName ? "View parts list" : "No parts list"}
+                                outlined
+                                size="small"
+                                disabled={!sessionId || !plMeta.fileName}
+                                onClick={() =>
+                                  openUploadedDoc("partslist", {
+                                    ...plMeta,
+                                    ...docs.partslist,
+                                    fileName: plMeta.fileName || docs.partslist?.name,
+                                  })
+                                }
+                              />
+                              <Button
+                                type="button"
+                                icon="pi pi-download"
+                                outlined
+                                size="small"
+                                disabled={!sessionId || !plMeta.fileName}
+                                onClick={async () => {
+                                  try {
+                                    const blob = await fetchSessionDocumentBlob(
+                                      sessionId,
+                                      "partslist",
+                                      docs.partslist?.id,
+                                    );
+                                    triggerBlobDownload(
+                                      blob,
+                                      plMeta.fileName || "partslist.bin",
+                                    );
+                                  } catch (e) {
+                                    toast.error(e.message || "Download failed");
+                                  }
+                                }}
+                              />
+                            </div>
                             <p className="om-create-order-file-debug">
-                              File selected: {plMeta.fileName ? `Yes — ${plMeta.fileName}` : "No"}
+                              {plMeta.fileName
+                                ? `File: ${plMeta.fileName}`
+                                : "No parts list uploaded"}
                             </p>
                           </div>
                         </div>
@@ -928,6 +1232,11 @@ export default function OarcPreviewDialog({
                     </div>
                   </div>
                 </TabPanel>
+                {(isIedMode || routeCardId) && (
+                  <TabPanel header="Remarks">
+                    <RouteRemarksPanel routeCardId={routeCardId} compact />
+                  </TabPanel>
+                )}
               </TabView>
             </div>
           </div>
@@ -1005,6 +1314,32 @@ export default function OarcPreviewDialog({
         onHide={() => setTplPickerOpen(false)}
         onSelect={addFromTemplate}
       />
+
+      <ExcelPreviewDialog
+        visible={Boolean(excelPreview)}
+        blob={excelPreview?.blob || null}
+        filename={excelPreview?.name || ""}
+        onHide={() => setExcelPreview(null)}
+      />
+
+      <Dialog
+        header="Drawing preview"
+        visible={Boolean(pdfPreviewUrl)}
+        onHide={() => {
+          if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+          setPdfPreviewUrl(null);
+        }}
+        style={{ width: "min(96vw, 56rem)" }}
+        maximizable
+      >
+        {pdfPreviewUrl ? (
+          <iframe
+            title="Drawing PDF"
+            src={pdfPreviewUrl}
+            style={{ width: "100%", height: "70vh", border: 0 }}
+          />
+        ) : null}
+      </Dialog>
     </>
   );
 }

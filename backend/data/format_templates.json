@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-24T04:32:28+00:00",
+  "updatedAt": "2026-10-30T10:09:22+00:00",
   "templates": [
     {
       "id": "bel-ga-default",
@@ -97,11 +97,11 @@
         "noteHeaderCountMin": 0
       },
       "stats": {
-        "useCount": 56,
+        "useCount": 65,
         "learnCount": 0
       },
       "createdAt": "2026-09-24T06:42:40+00:00",
-      "updatedAt": "2026-10-24T04:32:28+00:00"
+      "updatedAt": "2026-10-30T10:09:15+00:00"
     },
     {
       "id": "bel-wl-default",
@@ -803,13 +803,13 @@
         ]
       },
       "stats": {
-        "useCount": 5,
+        "useCount": 13,
         "learnCount": 1
       },
       "sourceSessionId": 275,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-28T11:18:11+00:00",
-      "updatedAt": "2026-10-07T05:55:47+00:00"
+      "updatedAt": "2026-10-30T10:09:22+00:00"
     },
     {
       "id": "learned-ga-b80d291367",
@@ -900,13 +900,13 @@
         ]
       },
       "stats": {
-        "useCount": 4,
+        "useCount": 8,
         "learnCount": 1
       },
       "sourceSessionId": 9,
       "notes": "Saved after engineer review",
       "createdAt": "2026-10-13T06:25:44+00:00",
-      "updatedAt": "2026-10-24T04:27:49+00:00"
+      "updatedAt": "2026-10-30T07:46:26+00:00"
     }
   ]
 }

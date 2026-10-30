@@ -10,6 +10,7 @@ import {
 } from "@/services/authApi";
 import { isAuthenticated } from "@/lib/auth";
 import { sanitizeInput } from "@/lib/inputSafe";
+import { getPasswordErrors } from "@/lib/passwordPolicy";
 import AuthLogo from "@/components/AuthLogo";
 import SafeInputText from "@/components/SafeInputText";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -17,39 +18,6 @@ import heroImg from "@/assets/hero.png";
 import "./login.scss";
 
 const EMP_ID_DIGITS = /^\d{6}$/;
-
-const PASSWORD_RULES = [
-  { id: "length", label: "Contain at least 12 characters", test: (p) => p.length >= 12 },
-  { id: "maxLength", label: "Not exceed 64 characters", test: (p) => p.length <= 64 },
-  { id: "noSpaces", label: "Not contain spaces", test: (p) => !/\s/.test(p) },
-  { id: "uppercase", label: "Contain at least one uppercase letter", test: (p) => /[A-Z]/.test(p) },
-  { id: "lowercase", label: "Contain at least one lowercase letter", test: (p) => /[a-z]/.test(p) },
-  { id: "digit", label: "Contain at least one number", test: (p) => /\d/.test(p) },
-  {
-    id: "special",
-    label: "Contain at least one special character",
-    test: (p) => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/.test(p),
-  },
-];
-
-const COMMON_PASSWORDS = new Set([
-  "password", "password123", "admin123456", "123456789012",
-  "welcome12345", "qwerty123456", "routecard123", "administrator",
-]);
-
-function getPasswordErrors(pwd) {
-  if (!pwd) return ["Contain at least 12 characters", "Contain at least one uppercase letter", "Contain at least one lowercase letter", "Contain at least one number", "Contain at least one special character", "Not contain spaces"];
-  const failed = [];
-  for (const rule of PASSWORD_RULES) {
-    if (!rule.test(pwd)) {
-      failed.push(rule.label);
-    }
-  }
-  if (COMMON_PASSWORDS.has(pwd.toLowerCase())) {
-    failed.push("Not be a commonly used or compromised password");
-  }
-  return failed;
-}
 
 function isValidEmployeeId(value) {
   return EMP_ID_DIGITS.test(String(value || "").trim());

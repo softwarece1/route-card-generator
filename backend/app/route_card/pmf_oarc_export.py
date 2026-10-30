@@ -104,15 +104,20 @@ def _operations_from_payload(payload: dict) -> list[dict]:
         if not desc:
             continue
         wc = _s(
-            op.get("workCentre")
+            op.get("sapCode")
+            or op.get("work_center_code")
+            or op.get("workCentre")
             or op.get("workCenter")
             or op.get("Wc/Plant")
-            or op.get("work_center_code")
         )
+        plant = _s(op.get("plant") or op.get("Plant Number") or op.get("WcWerks"))
         long_text = _instruction_for_op(op, notes)
         items = _s(op.get("items"))
         torque = _s(op.get("torqueSpec"))
         ref = _s(op.get("reference"))
+        manual = op.get("manual_operation")
+        if manual is None:
+            manual = not bool(op.get("machineId") or op.get("machine"))
 
         setup = _num(op.get("setup"), 0) or 0
         per_pc = _num(op.get("time"), 0) or 0
@@ -121,20 +126,20 @@ def _operations_from_payload(payload: dict) -> list[dict]:
             {
                 "Oprn No": _op_no(op.get("opNo"), i),
                 "Wc/Plant": wc,
-                "Work Center": wc,
+                "Work Center": _s(op.get("workCentreName") or wc),
                 "work_center_code": wc,
                 "Operation": desc,
                 "Setup Time": float(setup) if setup else 0,
                 "Per Pc Time": float(per_pc) if per_pc else 0,
                 "LongText": long_text,
-                "Plant Number": "",
+                "Plant Number": plant,
                 "Jmp Qty": 0,
                 "Tot Qty": 0,
                 "Allowed Time": 0,
                 "Confirm No": "",
                 "generates_output_serial": False,
                 "requires_input_material": False,
-                "manual_operation": True,
+                "manual_operation": bool(manual),
                 "_itemsLabel": items,
                 "_torqueSpec": torque,
                 "_reference": ref,

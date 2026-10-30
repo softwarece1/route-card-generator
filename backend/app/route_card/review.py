@@ -173,6 +173,31 @@ def rebuild_review_flags(
     if len(ops) == 0:
         add("empty_ops", "high", "No operations generated — review drawing notes and regenerate.")
 
+    unresolved_wc = [
+        o for o in ops if (o.get("linkStatus") or o.get("link_status") or "") == "unresolved"
+    ]
+    partial_wc = [
+        o for o in ops if (o.get("linkStatus") or o.get("link_status") or "") == "partial"
+    ]
+    if unresolved_wc:
+        sample = ", ".join(f"OP {o.get('opNo')}" for o in unresolved_wc[:5])
+        more = f" (+{len(unresolved_wc) - 5} more)" if len(unresolved_wc) > 5 else ""
+        add(
+            "wc_unresolved",
+            "high",
+            f"Work centre not linked for {len(unresolved_wc)} operation(s): {sample}{more}. "
+            "Pick a department work centre or add one under Work centers.",
+            source="auto:wc_resolve",
+        )
+    if partial_wc:
+        sample = ", ".join(f"OP {o.get('opNo')}" for o in partial_wc[:5])
+        add(
+            "wc_partial",
+            "medium",
+            f"Machine not selected for {len(partial_wc)} linked work centre(s): {sample}.",
+            source="auto:wc_resolve",
+        )
+
     notes = parsed.get("notes") or []
     mind = mind or {}
     low_conf = False

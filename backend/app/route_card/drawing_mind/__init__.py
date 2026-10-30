@@ -6,7 +6,11 @@ from app.route_card.drawing_mind.base import DrawingMind
 from app.route_card.drawing_mind.cpu_spatial import CpuSpatialMind
 from app.route_card.drawing_mind.merge import merge_ga_extractions, resolve_cross_refs
 from app.route_card.drawing_mind.types import MindResult
-from app.route_card.drawing_mind.view_refs import resolve_view_refs_for_notes
+from app.route_card.drawing_mind.view_refs import (
+    extract_detail_row_snippet,
+    parse_detail_item_table,
+    resolve_view_refs_for_notes,
+)
 
 
 def get_drawing_mind(engine: str | None = None) -> DrawingMind:
@@ -32,4 +36,6 @@ __all__ = [
     "merge_ga_extractions",
     "resolve_cross_refs",
     "resolve_view_refs_for_notes",
+    "parse_detail_item_table",
+    "extract_detail_row_snippet",
 ]

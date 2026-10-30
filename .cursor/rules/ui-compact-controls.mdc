@@ -1,28 +1,43 @@
 ---
-description: Prefer compact/regular PrimeReact control sizes (not large)
+description: Mandatory compact UI — TableComponent, small buttons/inputs everywhere
 globs: frontend/**/*.{jsx,tsx,js,ts,scss}
-alwaysApply: false
+alwaysApply: true
 ---
 
-# Compact UI controls
+# Compact UI controls (mandatory)
 
-Default to **small** or **regular** control sizing. Do not use large buttons, inputs, or dialog chrome unless the design explicitly needs a hero CTA.
+Use the same compact control language **everywhere** in this app. Do not invent larger tables, inputs, or buttons on new screens.
+
+## Page shell (fixed width, centered)
+
+- Wrap list/admin page roots in a class registered in [`tokens.scss`](frontend/src/styles/tokens.scss) shared shell (`.pmf-page`, `.rc-users`, `.rc-wc`, `.rc-org`, …).
+- Content uses `max-width: var(--pmf-page-max)` with `margin-left/right: auto` and horizontal pad — **do not** let new pages stretch edge-to-edge past the shell.
+- When adding a new page class (e.g. `.rc-foo`), add it to both shell selector groups in `tokens.scss`.
+
+## Tables
+
+- Prefer shared [`TableComponent`](frontend/src/components/TableComponent.jsx) for list pages.
+- Default table size is **`small`** (do not pass `size="large"` / oversized Prime DataTables).
+- Row action buttons: rounded, ~2rem, `size="small"` / text icons via `TableActions`.
 
 ## Buttons & inputs
 
-- Prefer `size="small"` on PrimeReact `Button`, or leave default (regular). Avoid `size="large"`.
-- Prefer compact padding / `0.8–0.875rem` font for form labels and dialog body text.
-- Dialog footers: small outlined Cancel + small primary action; keep button row tight.
+- Prefer `size="small"` on PrimeReact `Button`. Avoid `size="large"`.
+- Prefer `SafeInputText` / `SafeInputTextarea` for text fields.
+- Form labels and dialog body: ~`0.8–0.875rem`; table body ~`0.85–0.9rem`.
+- Dialog footers: small outlined Cancel + small primary action; tight gap.
+- Tab toolbars (search + primary Add): same row as tabs, tools on the **far right** (see Work centres / Org).
 
-## Confirm dialogs
+## Dialogs & nested editors
 
-- Use `confirmDialog` with a short message (1–2 sentences).
-- Pass `acceptClassName` / `rejectClassName` with `p-button-sm`.
-- Prefer `className: "p-confirm-dialog-sm"` (or rely on global `.pmf-compact .p-confirm-dialog` styles).
-- Avoid oversized icons and multi-paragraph confirm copy.
+- Confirm: `p-button-sm` / `p-confirm-dialog-sm`; short copy.
+- Instruction / note editors: compact title, hint, textarea, small footer.
+- OARC / IED dialogs: inherit `.om-input` / `.pmf-compact` sizing — no oversized Prime defaults inside tables.
 
-## Nested edit dialogs
+## Anti-patterns
 
-- Instruction / note editors should stay compact: modest title, hint, textarea, small footer buttons.
-- Put reference-only metadata (Items, Ref, Torque) in chips **below** the input — not inside LongText / print / OARC export.
----
+- Full-bleed content that ignores `--pmf-page-max`.
+- Full-width hero inputs inside data tables.
+- Mixing a one-off “big” DataTable style on a single page.
+- Rebuilding table chrome instead of `TableComponent` when a standard list will do.
+- Putting Add / Search on a separate row below tabs when peers use the tabs-tools row.

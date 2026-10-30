@@ -1,0 +1,12 @@
+---
+description: Never attribute commits or PRs to Cursor/AI
+alwaysApply: true
+---
+
+# No Cursor / AI co-author
+
+Never add Cursor, Composer, Agent, Auto, or any AI identity as co-author or attribution on commits, PRs, CODEOWNERS, or README authors.
+
+- No `Co-authored-by: Cursor` (or any AI trailer)
+- No `Made-with: Cursor` / `Generated-by: Cursor`
+- Strip any such trailer before committing if a hook/template adds it

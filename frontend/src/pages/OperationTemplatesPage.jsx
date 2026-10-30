@@ -19,6 +19,7 @@ import {
   createOperationTemplate,
   deleteOperationTemplate,
   duplicateOperationTemplate,
+  fetchWorkCenterCatalog,
   getOperationTemplate,
   listOperationTemplates,
   updateOperationTemplate,
@@ -37,11 +38,13 @@ const EMPTY_STEP = () => ({
   _key: `s-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   operation: "",
   workCentre: "",
+  workCentreId: null,
   setup: "1",
   time: "",
   instructionText: "",
   inspection: "",
   machine: "",
+  machineId: null,
   tool: "",
   generates_output_serial: false,
   requires_input_material: false,
@@ -52,7 +55,8 @@ export default function OperationTemplatesPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
   const isDeptHead = user?.role === "dept_head";
-  const canManage = isAdmin || isDeptHead;
+  const isIed = user?.role === "ied";
+  const canManage = isAdmin || isDeptHead || isIed;
   const isEngineer = !canManage;
 
   const [tab, setTab] = useState(0);
@@ -77,6 +81,23 @@ export default function OperationTemplatesPage() {
     steps: [EMPTY_STEP()],
     saving: false,
   });
+  const [wcCatalog, setWcCatalog] = useState([]);
+
+  useEffect(() => {
+    fetchWorkCenterCatalog(user?.dept)
+      .then((rows) => setWcCatalog(rows || []))
+      .catch(() => setWcCatalog([]));
+  }, [user?.dept]);
+
+  const wcOptions = useMemo(
+    () =>
+      (wcCatalog || []).map((w) => ({
+        label: `${w.code} — ${w.name}`,
+        value: w.id,
+        raw: w,
+      })),
+    [wcCatalog]
+  );
 
   const [dup, setDup] = useState({
     visible: false,
@@ -286,6 +307,13 @@ export default function OperationTemplatesPage() {
     setEditor((e) => ({
       ...e,
       steps: e.steps.map((s) => (s._key === key ? { ...s, [field]: value } : s)),
+    }));
+  };
+
+  const patchStep = (key, patch) => {
+    setEditor((e) => ({
+      ...e,
+      steps: e.steps.map((s) => (s._key === key ? { ...s, ...patch } : s)),
     }));
   };
 
@@ -653,12 +681,72 @@ export default function OperationTemplatesPage() {
                 </div>
                 <div>
                   <label>Work centre</label>
-                  <SafeInputText profile="text"
-                    value={step.workCentre}
-                    onChange={(e) => updateStep(step._key, "workCentre", e.target.value)}
-                    className="w-full"
-                    placeholder="Assembly"
-                  />
+                  {wcOptions.length > 0 ? (
+                    <Dropdown
+                      value={step.workCentreId ?? null}
+                      options={wcOptions}
+                      showClear
+                      filter
+                      className="w-full"
+                      placeholder="Select WC"
+                      onChange={(e) => {
+                        const wc = (wcCatalog || []).find((w) => w.id === e.value);
+                        patchStep(step._key, {
+                          workCentreId: e.value ?? null,
+                          workCentre: wc ? wc.code || wc.name : "",
+                          machineId: null,
+                          machine: "",
+                        });
+                      }}
+                    />
+                  ) : (
+                    <SafeInputText
+                      profile="text"
+                      value={step.workCentre}
+                      onChange={(e) => updateStep(step._key, "workCentre", e.target.value)}
+                      className="w-full"
+                      placeholder="Assembly"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label>Machine</label>
+                  {(() => {
+                    const wc = (wcCatalog || []).find((w) => w.id === step.workCentreId);
+                    const mOpts = (wc?.machines || []).map((m) => ({
+                      label: m.name,
+                      value: m.id,
+                      raw: m,
+                    }));
+                    if (!mOpts.length) {
+                      return (
+                        <SafeInputText
+                          profile="text"
+                          value={step.machine}
+                          onChange={(e) => updateStep(step._key, "machine", e.target.value)}
+                          className="w-full"
+                          placeholder="Optional"
+                        />
+                      );
+                    }
+                    return (
+                      <Dropdown
+                        value={step.machineId ?? null}
+                        options={mOpts}
+                        showClear
+                        className="w-full"
+                        placeholder="Select machine"
+                        onChange={(e) => {
+                          const m = mOpts.find((o) => o.value === e.value)?.raw;
+                          patchStep(step._key, {
+                            machineId: e.value ?? null,
+                            machine: m?.name || "",
+                            ...(m && !m.isManualPlaceholder ? { manual_operation: false } : {}),
+                          });
+                        }}
+                      />
+                    );
+                  })()}
                 </div>
                 <div>
                   <label>Setup</label>

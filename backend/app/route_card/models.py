@@ -13,9 +13,13 @@ class RcUser(db.Entity):
     name = Required(str)
     dept = Optional(str, default="")
     password_hash = Required(str)
-    role = Required(str, default="engineer")  # admin | dept_head | engineer
+    role = Required(str, default="engineer")  # admin | dept_head | engineer | ied
     is_active = Required(bool, default=True)
+    must_change_password = Required(bool, default=False)
     created_at = Required(datetime, default=datetime.utcnow)
+    # Engineer → dept_head (same dept). Null for admin / dept_head / ied.
+    reports_to = Optional("RcUser", reverse="direct_reports")
+    direct_reports = Set("RcUser", reverse="reports_to")
     sessions = Set("RcSession")
     drawings = Set("RcDrawing")
     operation_templates = Set("RcOperationTemplate")
@@ -25,6 +29,22 @@ class RcUser(db.Entity):
     notifications = Set("RcNotification")
     favorites = Set("RcUserFavorite")
     few_shot_examples = Set("RcFewShotExample")
+    password_history = Set("RcPasswordHistory")
+    route_remarks = Set("RcRouteRemark")
+
+
+class RcPlant(db.Entity):
+    """SAP plant / WERKS master for sync dropdowns."""
+
+    _table_ = ("route_card", "plants")
+
+    id = PrimaryKey(int, auto=True)
+    code = Required(str, unique=True)  # e.g. 1100
+    name = Required(str)
+    description = Optional(str, default="")
+    is_active = Required(bool, default=True)
+    sort_order = Required(int, default=0)
+    created_at = Required(datetime, default=datetime.utcnow)
 
 
 class RcDepartment(db.Entity):
@@ -35,6 +55,7 @@ class RcDepartment(db.Entity):
     id = PrimaryKey(int, auto=True)
     code = Required(str, unique=True)
     name = Required(str)
+    plant_id = Optional(str, default="")  # SAP-style plant / WERKS for WC+machines
     is_active = Required(bool, default=True)
     sort_order = Required(int, default=0)
     created_at = Required(datetime, default=datetime.utcnow)
@@ -118,14 +139,19 @@ class RcRouteCard(db.Entity):
 
     id = PrimaryKey(int, auto=True)
     drawing = Required(RcDrawing)
-    status = Required(str, default="draft")
+    status = Required(str, default="draft")  # draft | ied_review | ied_complete | approved
     part_info = Optional(Json)
     created_at = Required(datetime, default=datetime.utcnow)
     updated_at = Required(datetime, default=datetime.utcnow)
+    ied_shared_at = Optional(datetime)
+    ied_shared_by_id = Optional(int)
+    ied_completed_at = Optional(datetime)
+    ied_completed_by_id = Optional(int)
     operations = Set("RcOperation")
     inspection_chars = Set("RcInspectionChar")
     review_flags = Set("RcReviewFlag")
     audit_events = Set("RcAuditEvent")
+    remarks = Set("RcRouteRemark")
 
 
 class RcOperation(db.Entity):
@@ -146,6 +172,11 @@ class RcOperation(db.Entity):
     inspection = Optional(str)
     instruction_text = Optional(str)
     status = Required(str, default="Planned")
+    # Master links (nullable — strings kept for export compatibility)
+    work_centre_id = Optional(int)
+    machine_id = Optional(int)
+    link_status = Optional(str)  # linked | partial | unresolved | manual_override
+    link_confidence = Optional(float)
 
 
 class RcInspectionChar(db.Entity):
@@ -260,6 +291,18 @@ class RcNotification(db.Entity):
     created_at = Required(datetime, default=datetime.utcnow)
 
 
+class RcRouteRemark(db.Entity):
+    """Flat discussion thread on a route card (eng / dept_head / IED)."""
+
+    _table_ = ("route_card", "route_remarks")
+
+    id = PrimaryKey(int, auto=True)
+    route_card = Required(RcRouteCard)
+    user = Optional(RcUser)
+    body = Required(str)
+    created_at = Required(datetime, default=datetime.utcnow)
+
+
 class RcUserFavorite(db.Entity):
     _table_ = ("route_card", "user_favorites")
 
@@ -296,14 +339,53 @@ class RcFewShotExample(db.Entity):
     is_active = Required(bool, default=True)
 
 
+class RcWorkCenter(db.Entity):
+    """Department-owned (or shared plant) work centre master."""
+
+    _table_ = ("route_card", "work_centers")
+
+    id = PrimaryKey(int, auto=True)
+    dept = Optional(str)  # empty/None when is_shared
+    code = Required(str)
+    name = Required(str)
+    mode = Required(str, default="hybrid")  # manual | machine | hybrid
+    is_shared = Required(bool, default=False)
+    plant = Optional(str)
+    sap_code = Optional(str)
+    capability_tags = Optional(Json)  # list[str]
+    match_keywords = Optional(Json)  # list[str]
+    default_tool = Optional(str)
+    is_active = Required(bool, default=True)
+    sort_order = Required(int, default=0)
+    created_at = Required(datetime, default=datetime.utcnow)
+    updated_at = Required(datetime, default=datetime.utcnow)
+    machines = Set("RcMachine")
+
+
 class RcMachine(db.Entity):
     _table_ = ("route_card", "machines")
 
     id = PrimaryKey(int, auto=True)
-    plant = Optional(str, default="")
-    work_centre = Required(str)
+    plant = Optional(str)
+    work_centre = Required(str)  # denormalized label (legacy + display)
+    work_center = Optional(RcWorkCenter)
+    dept = Optional(str)
+    code = Optional(str)
+    sap_code = Optional(str)
     name = Required(str)
-    description = Optional(str, default="")
+    description = Optional(str)
+    capability_tags = Optional(Json)  # list[str]
+    is_manual_placeholder = Required(bool, default=False)
     is_active = Required(bool, default=True)
     sort_order = Required(int, default=0)
     created_at = Required(datetime, default=datetime.utcnow)
+
+
+class RcPasswordHistory(db.Entity):
+    _table_ = ("route_card", "password_history")
+
+    id = PrimaryKey(int, auto=True)
+    user = Required(RcUser)
+    password_hash = Required(str)
+    created_at = Required(datetime, default=datetime.utcnow)
+

@@ -10,11 +10,13 @@ import PageHeader from "@/components/PageHeader";
 import TableComponent, { TableActions, TableStatusBadge } from "@/components/TableComponent";
 import { getUser } from "@/lib/auth";
 import { sanitizeInput } from "@/lib/inputSafe";
+import { generateCompliantPassword, getPasswordErrors } from "@/lib/passwordPolicy";
 import { toast } from "@/lib/toast";
 import { fetchDepartments } from "@/services/authApi";
 import {
   createManagedUser,
   fetchAdminUsers,
+  fetchDeptHeads,
   fetchDeptUsers,
   resetManagedUserPassword,
   updateManagedUser,
@@ -28,6 +30,97 @@ function passwordValue(e) {
   return sanitizeInput(raw, "password").value;
 }
 
+async function copyPasswordToClipboard(password) {
+  const text = String(password || "");
+  if (!text) throw new Error("Nothing to copy");
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+}
+
+function TempPasswordField({
+  label,
+  value,
+  onChange,
+  show,
+  onToggleShow,
+  disabled,
+  readOnly = false,
+  placeholder,
+  autoComplete = "new-password",
+  headerExtra = null,
+  showCopy = true,
+}) {
+  const copyPwd = async () => {
+    try {
+      await copyPasswordToClipboard(value);
+      toast.success("Password copied — paste it to share with the employee");
+    } catch {
+      toast.error("Could not copy password");
+    }
+  };
+
+  return (
+    <label className="rc-users__pwd-field">
+      <div className="rc-users__pwd-label-row">
+        <span>{label}</span>
+        <div className="rc-users__pwd-label-actions">{headerExtra}</div>
+      </div>
+      <div className="rc-users__pwd-input-row">
+        <SafeInputText
+          profile="password"
+          type={show ? "text" : "password"}
+          value={value}
+          onChange={onChange || (() => {})}
+          disabled={disabled}
+          readOnly={readOnly}
+          autoComplete={autoComplete}
+          placeholder={placeholder}
+          className="w-full"
+        />
+        <Button
+          type="button"
+          icon={show ? "pi pi-eye-slash" : "pi pi-eye"}
+          rounded
+          text
+          size="small"
+          className="rc-users__pwd-icon-btn"
+          disabled={disabled || !value}
+          onClick={onToggleShow}
+          aria-label={show ? "Hide password" : "Show password"}
+          tooltip={show ? "Hide" : "Show"}
+          tooltipOptions={{ position: "top" }}
+        />
+        {showCopy ? (
+          <Button
+            type="button"
+            icon="pi pi-copy"
+            rounded
+            text
+            size="small"
+            className="rc-users__pwd-icon-btn"
+            disabled={disabled || !value}
+            onClick={copyPwd}
+            aria-label="Copy password"
+            tooltip="Copy"
+            tooltipOptions={{ position: "top" }}
+          />
+        ) : null}
+      </div>
+    </label>
+  );
+}
+
 const EMP_ID_DIGITS = /^\d{6}$/;
 
 function isValidEmployeeId(value) {
@@ -37,19 +130,22 @@ function isValidEmployeeId(value) {
 const ROLE_OPTIONS_ADMIN = [
   { label: "Engineer", value: "engineer" },
   { label: "Dept head", value: "dept_head" },
+  { label: "IED", value: "ied" },
 ];
 
-const ROLE_OPTIONS_ENGINEER_ONLY = [{ label: "Engineer", value: "engineer" }];
+const ROLE_OPTIONS_DEPT_HEAD = [{ label: "Engineer", value: "engineer" }];
 
 function roleTone(role) {
   if (role === "admin") return "danger";
   if (role === "dept_head") return "info";
+  if (role === "ied") return "success";
   return "neutral";
 }
 
 function roleLabel(role) {
   if (role === "admin") return "Admin";
   if (role === "dept_head") return "Dept head";
+  if (role === "ied") return "IED";
   return "Engineer";
 }
 
@@ -58,6 +154,7 @@ const emptyCreate = () => ({
   name: "",
   dept: "",
   role: "engineer",
+  reportsToId: null,
   password: "",
   confirmPassword: "",
 });
@@ -67,6 +164,7 @@ const emptyEdit = () => ({
   name: "",
   dept: "",
   role: "engineer",
+  reportsToId: null,
 });
 
 export default function UsersPage() {
@@ -92,7 +190,11 @@ export default function UsersPage() {
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState("");
   const [resetConfirm, setResetConfirm] = useState("");
+  const [resetShowPwd, setResetShowPwd] = useState(false);
+  const [resetShareReady, setResetShareReady] = useState(false);
+  const [createShowPwd, setCreateShowPwd] = useState(false);
   const [dialogError, setDialogError] = useState("");
+  const [headOptions, setHeadOptions] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -144,14 +246,49 @@ export default function UsersPage() {
     return false;
   };
 
+  const loadHeads = useCallback(async (deptName) => {
+    const d = (deptName || "").trim();
+    if (!d) {
+      setHeadOptions([]);
+      return;
+    }
+    try {
+      const items = await fetchDeptHeads(d);
+      setHeadOptions(
+        (items || []).map((h) => ({
+          label: h.label || `${h.name} (${h.empId})`,
+          value: h.id,
+        })),
+      );
+    } catch {
+      setHeadOptions([]);
+    }
+  }, []);
+
   const openCreate = () => {
+    const deptVal = isAdmin ? "" : user?.dept || "";
     setCreateForm({
       ...emptyCreate(),
-      dept: isAdmin ? "" : user?.dept || "",
+      dept: deptVal,
       role: "engineer",
+      reportsToId: isDeptHead ? user?.id || null : null,
     });
+    setCreateShowPwd(false);
     setDialogError("");
     setCreateOpen(true);
+    if (deptVal) loadHeads(deptVal);
+    else setHeadOptions([]);
+  };
+
+  const closeResetDialog = () => {
+    if (saving) return;
+    setResetOpen(false);
+    setResetTarget(null);
+    setResetPassword("");
+    setResetConfirm("");
+    setResetShowPwd(false);
+    setResetShareReady(false);
+    setDialogError("");
   };
 
   const openEdit = (row) => {
@@ -161,15 +298,20 @@ export default function UsersPage() {
       name: row.name || "",
       dept: row.dept || "",
       role: row.role === "admin" ? "engineer" : row.role,
+      reportsToId: row.reportsToId || null,
     });
     setDialogError("");
     setEditOpen(true);
+    if (row.dept) loadHeads(row.dept);
+    else setHeadOptions([]);
   };
 
   const openReset = (row) => {
     setResetTarget(row);
     setResetPassword("");
     setResetConfirm("");
+    setResetShowPwd(false);
+    setResetShareReady(false);
     setDialogError("");
     setResetOpen(true);
   };
@@ -185,8 +327,9 @@ export default function UsersPage() {
       setDialogError("Employee ID must be exactly 6 digits");
       return;
     }
-    if (createForm.password.length < 4) {
-      setDialogError("Password must be at least 4 characters");
+    const pwdErrors = getPasswordErrors(createForm.password);
+    if (pwdErrors.length > 0) {
+      setDialogError(`Password requirements: ${pwdErrors[0]}`);
       return;
     }
     if (createForm.password !== createForm.confirmPassword) {
@@ -197,6 +340,11 @@ export default function UsersPage() {
       setDialogError("Select a department");
       return;
     }
+    const role = isAdmin ? createForm.role : "engineer";
+    if (role === "engineer" && !createForm.reportsToId) {
+      setDialogError("Select a reporting officer (department head)");
+      return;
+    }
     setSaving(true);
     setDialogError("");
     setError("");
@@ -205,8 +353,9 @@ export default function UsersPage() {
         empId,
         name,
         dept: isAdmin ? createForm.dept : undefined,
-        role: isAdmin ? createForm.role : "engineer",
+        role,
         password: createForm.password,
+        reportsToId: role === "engineer" ? createForm.reportsToId : undefined,
       });
       setCreateOpen(false);
       toast.success(`User ${empId} created`);
@@ -234,6 +383,11 @@ export default function UsersPage() {
       setDialogError("Select a department");
       return;
     }
+    const role = isAdmin ? editForm.role : editTarget.role;
+    if (role === "engineer" && !editForm.reportsToId) {
+      setDialogError("Select a reporting officer (department head)");
+      return;
+    }
     setSaving(true);
     setDialogError("");
     setError("");
@@ -242,6 +396,9 @@ export default function UsersPage() {
       if (isAdmin) {
         payload.dept = editForm.dept;
         payload.role = editForm.role;
+      }
+      if (role === "engineer") {
+        payload.reportsToId = editForm.reportsToId;
       }
       const updated = await updateManagedUser(editTarget.id, payload);
       setUsers((list) =>
@@ -253,6 +410,9 @@ export default function UsersPage() {
                 name: updated.name,
                 dept: updated.dept,
                 role: updated.role,
+                reportsToId: updated.reportsToId,
+                reportsToName: updated.reportsToName,
+                reportsToEmpId: updated.reportsToEmpId,
               }
             : u
         )
@@ -268,9 +428,10 @@ export default function UsersPage() {
   };
 
   const saveReset = async () => {
-    if (!resetTarget?.id) return;
-    if (resetPassword.length < 4) {
-      setDialogError("Password must be at least 4 characters");
+    if (!resetTarget?.id || resetShareReady) return;
+    const pwdErrors = getPasswordErrors(resetPassword);
+    if (pwdErrors.length > 0) {
+      setDialogError(`Password requirements: ${pwdErrors[0]}`);
       return;
     }
     if (resetPassword !== resetConfirm) {
@@ -282,13 +443,18 @@ export default function UsersPage() {
     setError("");
     try {
       const res = await resetManagedUserPassword(resetTarget.id, resetPassword);
-      setResetOpen(false);
-      setResetTarget(null);
-      setResetPassword("");
-      setResetConfirm("");
-      toast.success(
-        `Password reset for ${res.empId || resetTarget.empId}. They can sign in with the new password now.`
-      );
+      setResetShowPwd(true);
+      setResetShareReady(true);
+      try {
+        await copyPasswordToClipboard(resetPassword);
+        toast.success(
+          `Password reset for ${res.empId || resetTarget.empId}. Copied — share it with the employee now.`
+        );
+      } catch {
+        toast.success(
+          `Password reset for ${res.empId || resetTarget.empId}. Copy it below and share with the employee.`
+        );
+      }
     } catch (err) {
       setDialogError(err.message || "Could not reset password");
     } finally {
@@ -298,12 +464,12 @@ export default function UsersPage() {
 
   const pageDescription = useMemo(() => {
     if (isAdmin) {
-      return "Add department heads or engineers, edit details, and reset passwords.";
+      return "Add department heads, engineers, or IED users; assign reporting officers; reset passwords.";
     }
     if (isDeptHead) {
       return dept
-        ? `Manage engineers in ${dept} — add users, edit details, and reset passwords.`
-        : "Add engineers, edit details, and reset passwords for your department.";
+        ? `Manage your direct reports in ${dept} — add engineers, edit details, and reset passwords.`
+        : "Manage your direct-report engineers — add users, edit details, and reset passwords.";
     }
     return "";
   }, [isAdmin, isDeptHead, dept]);
@@ -331,7 +497,7 @@ export default function UsersPage() {
               />
               <Button
                 type="button"
-                label={isAdmin ? "Add user" : "Add engineer"}
+                label={isAdmin ? "Add user" : "Add user"}
                 icon="pi pi-user-plus"
                 size="small"
                 onClick={openCreate}
@@ -361,6 +527,16 @@ export default function UsersPage() {
               body: (row) => (
                 <TableStatusBadge value={roleLabel(row.role)} tone={roleTone(row.role)} />
               ),
+            },
+            {
+              header: "Reports to",
+              style: { width: "10rem" },
+              body: (row) =>
+                row.reportsToName
+                  ? `${row.reportsToName}`
+                  : row.role === "engineer"
+                    ? "—"
+                    : "—",
             },
             {
               header: "Sessions",
@@ -413,7 +589,7 @@ export default function UsersPage() {
         />
 
         <Dialog
-          header={isAdmin ? "Add user" : "Add engineer"}
+          header="Add user"
           visible={createOpen}
           style={{ width: "min(36rem, 94vw)" }}
           className="rc-users-dialog"
@@ -477,7 +653,15 @@ export default function UsersPage() {
                 <Dropdown
                   value={createForm.dept || null}
                   options={deptOptions}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, dept: e.value || "" }))}
+                  onChange={(e) => {
+                    const next = e.value || "";
+                    setCreateForm((f) => ({
+                      ...f,
+                      dept: next,
+                      reportsToId: null,
+                    }));
+                    loadHeads(next);
+                  }}
                   placeholder="Select department"
                   disabled={saving || deptOptions.length === 0}
                   className="w-full"
@@ -493,36 +677,85 @@ export default function UsersPage() {
               Role
               <Dropdown
                 value={createForm.role}
-                options={isAdmin ? ROLE_OPTIONS_ADMIN : ROLE_OPTIONS_ENGINEER_ONLY}
-                onChange={(e) => setCreateForm((f) => ({ ...f, role: e.value }))}
-                disabled={saving || !isAdmin}
+                options={isAdmin ? ROLE_OPTIONS_ADMIN : ROLE_OPTIONS_DEPT_HEAD}
+                onChange={(e) =>
+                  setCreateForm((f) => ({
+                    ...f,
+                    role: e.value,
+                    reportsToId:
+                      e.value === "engineer"
+                        ? f.reportsToId || (isDeptHead ? user?.id : null)
+                        : null,
+                  }))
+                }
+                disabled={saving}
                 className="w-full"
               />
             </label>
-            <label>
-              Password
-              <SafeInputText profile="password"
-                type="password"
-                value={createForm.password}
-                onChange={(e) =>
-                  setCreateForm((f) => ({ ...f, password: passwordValue(e) }))
-                }
-                disabled={saving}
-                autoComplete="new-password"
-              />
-            </label>
-            <label>
-              Confirm password
-              <SafeInputText profile="password"
-                type="password"
-                value={createForm.confirmPassword}
-                onChange={(e) =>
-                  setCreateForm((f) => ({ ...f, confirmPassword: passwordValue(e) }))
-                }
-                disabled={saving}
-                autoComplete="new-password"
-              />
-            </label>
+            {createForm.role === "engineer" ? (
+              <label>
+                Reporting officer
+                <Dropdown
+                  value={createForm.reportsToId}
+                  options={headOptions}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, reportsToId: e.value || null }))
+                  }
+                  placeholder={
+                    headOptions.length ? "Select dept head" : "No dept heads in this dept"
+                  }
+                  disabled={saving || headOptions.length === 0}
+                  className="w-full"
+                />
+              </label>
+            ) : null}
+            <TempPasswordField
+              label="Temporary password"
+              value={createForm.password}
+              onChange={(e) =>
+                setCreateForm((f) => ({ ...f, password: passwordValue(e) }))
+              }
+              show={createShowPwd}
+              onToggleShow={() => setCreateShowPwd((v) => !v)}
+              disabled={saving}
+              placeholder="At least 12 chars (upper, lower, digit, special)"
+              headerExtra={
+                <Button
+                  type="button"
+                  label="Auto-generate"
+                  icon="pi pi-sparkles"
+                  size="small"
+                  text
+                  className="p-0 text-xs"
+                  onClick={() => {
+                    const generated = generateCompliantPassword();
+                    setCreateForm((f) => ({
+                      ...f,
+                      password: generated,
+                      confirmPassword: generated,
+                    }));
+                    setCreateShowPwd(true);
+                    toast.info("Generated — use Show/Copy to share with the employee");
+                  }}
+                />
+              }
+            />
+            <TempPasswordField
+              label="Confirm password"
+              value={createForm.confirmPassword}
+              onChange={(e) =>
+                setCreateForm((f) => ({ ...f, confirmPassword: passwordValue(e) }))
+              }
+              show={createShowPwd}
+              onToggleShow={() => setCreateShowPwd((v) => !v)}
+              disabled={saving}
+              placeholder="Confirm password"
+              showCopy={false}
+            />
+            <div className="col-12" style={{ fontSize: "0.8rem", color: "var(--pmf-text-muted)" }}>
+              <i className="pi pi-info-circle mr-1" />
+              The user will be required to change this password to their own private password upon first login.
+            </div>
           </div>
         </Dialog>
 
@@ -591,7 +824,11 @@ export default function UsersPage() {
                 <Dropdown
                   value={editForm.dept || null}
                   options={deptOptions}
-                  onChange={(e) => setEditForm((f) => ({ ...f, dept: e.value || "" }))}
+                  onChange={(e) => {
+                    const next = e.value || "";
+                    setEditForm((f) => ({ ...f, dept: next, reportsToId: null }));
+                    loadHeads(next);
+                  }}
                   placeholder="Select department"
                   disabled={saving || deptOptions.length === 0}
                   className="w-full"
@@ -606,7 +843,13 @@ export default function UsersPage() {
                 <Dropdown
                   value={editForm.role}
                   options={ROLE_OPTIONS_ADMIN}
-                  onChange={(e) => setEditForm((f) => ({ ...f, role: e.value }))}
+                  onChange={(e) =>
+                    setEditForm((f) => ({
+                      ...f,
+                      role: e.value,
+                      reportsToId: e.value === "engineer" ? f.reportsToId : null,
+                    }))
+                  }
                   disabled={saving}
                   className="w-full"
                 />
@@ -614,6 +857,23 @@ export default function UsersPage() {
                 <SafeInputText profile="text" value={roleLabel(editForm.role)} disabled />
               )}
             </label>
+            {editForm.role === "engineer" ? (
+              <label>
+                Reporting officer
+                <Dropdown
+                  value={editForm.reportsToId}
+                  options={headOptions}
+                  onChange={(e) =>
+                    setEditForm((f) => ({ ...f, reportsToId: e.value || null }))
+                  }
+                  placeholder={
+                    headOptions.length ? "Select dept head" : "No dept heads in this dept"
+                  }
+                  disabled={saving || headOptions.length === 0}
+                  className="w-full"
+                />
+              </label>
+            ) : null}
           </div>
         </Dialog>
 
@@ -624,60 +884,110 @@ export default function UsersPage() {
               : "Reset password"
           }
           visible={resetOpen}
-          style={{ width: "min(28rem, 94vw)" }}
+          style={{ width: "min(30rem, 94vw)" }}
           className="rc-users-dialog"
           modal
-          onHide={() => !saving && setResetOpen(false)}
+          onHide={closeResetDialog}
           footer={
             <div className="rc-users__dialog-footer">
-              <Button
-                type="button"
-                label="Cancel"
-                outlined
-                size="small"
-                disabled={saving}
-                onClick={() => setResetOpen(false)}
-              />
-              <Button
-                type="button"
-                label="Reset password"
-                icon="pi pi-key"
-                size="small"
-                loading={saving}
-                onClick={saveReset}
-              />
+              {resetShareReady ? (
+                <Button
+                  type="button"
+                  label="Done"
+                  icon="pi pi-check"
+                  size="small"
+                  onClick={closeResetDialog}
+                />
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    label="Cancel"
+                    outlined
+                    size="small"
+                    disabled={saving}
+                    onClick={closeResetDialog}
+                  />
+                  <Button
+                    type="button"
+                    label="Reset password"
+                    icon="pi pi-key"
+                    size="small"
+                    loading={saving}
+                    onClick={saveReset}
+                  />
+                </>
+              )}
             </div>
           }
         >
           {dialogError ? (
             <Message severity="error" text={dialogError} className="w-full mb-2" />
           ) : null}
-          <p className="rc-users__hint">
-            Set a temporary password and share it with the user. They can sign in immediately with
-            Emp ID <strong>{resetTarget?.empId}</strong> and this new password.
-          </p>
-          <div className="rc-users__form rc-users__form--grid">
-            <label>
-              New password
-              <SafeInputText profile="password"
-                type="password"
+          {resetShareReady ? (
+            <div className="rc-users__share-panel">
+              <Message
+                severity="success"
+                className="w-full mb-2"
+                text="Temporary password is set. Copy it and send it to the employee — they must change it on next login."
+              />
+              <TempPasswordField
+                label="Temporary password to share"
                 value={resetPassword}
-                onChange={(e) => setResetPassword(passwordValue(e))}
-                disabled={saving}
-                autoComplete="new-password"
+                show={resetShowPwd}
+                onToggleShow={() => setResetShowPwd((v) => !v)}
+                readOnly
+                placeholder=""
               />
-            </label>
-            <label>
-              Confirm password
-              <SafeInputText profile="password"
-                type="password"
-                value={resetConfirm}
-                onChange={(e) => setResetConfirm(passwordValue(e))}
-                disabled={saving}
-                autoComplete="new-password"
-              />
-            </label>
-          </div>
+            </div>
+          ) : (
+            <>
+              <p className="rc-users__hint">
+                Set a temporary password and share it with the user. Use{" "}
+                <strong>Show</strong> / <strong>Copy</strong> after auto-generate.
+                The user must change this password on their next login.
+              </p>
+              <div className="rc-users__form">
+                <TempPasswordField
+                  label="New temporary password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(passwordValue(e))}
+                  show={resetShowPwd}
+                  onToggleShow={() => setResetShowPwd((v) => !v)}
+                  disabled={saving}
+                  placeholder="At least 12 chars (upper, lower, digit, special)"
+                  headerExtra={
+                    <Button
+                      type="button"
+                      label="Auto-generate"
+                      icon="pi pi-sparkles"
+                      size="small"
+                      text
+                      className="p-0 text-xs"
+                      disabled={saving}
+                      onClick={() => {
+                        const generated = generateCompliantPassword();
+                        setResetPassword(generated);
+                        setResetConfirm(generated);
+                        setResetShowPwd(true);
+                        toast.info("Generated — password is visible; Copy to share");
+                      }}
+                    />
+                  }
+                />
+                <TempPasswordField
+                  label="Confirm password"
+                  value={resetConfirm}
+                  onChange={(e) => setResetConfirm(passwordValue(e))}
+                  show={resetShowPwd}
+                  onToggleShow={() => setResetShowPwd((v) => !v)}
+                  disabled={saving}
+                  placeholder="Confirm password"
+                  showCopy={false}
+                />
+              </div>
+            </>
+          )}
         </Dialog>
       </div>
     </AppShell>

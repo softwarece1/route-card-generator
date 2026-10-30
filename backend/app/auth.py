@@ -28,6 +28,11 @@ _revoked_tokens: Set[str] = set()
 # Mapping of user ID to the current active token's jti (session identifier)
 _active_sessions: dict[int, str] = {}
 
+# Short-lived tokens after concurrent-login 409 — confirm takeover without re-CAPTCHA
+# resumeToken -> {user_id, emp_id, role, exp}
+_pending_session_takeovers: dict[str, dict] = {}
+_TAKEOVER_TTL_SEC = 120
+
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 security = HTTPBearer(auto_error=False)
@@ -51,12 +56,28 @@ class LoginRequest(BaseModel):
     alg: str = Field(default=CREDS_ALG, max_length=64)
     captchaId: Optional[str] = None
     captchaAnswer: Optional[str] = None
+    # When true with a valid resumeToken, end the other session and issue this one
+    terminateExistingSession: bool = False
+    resumeToken: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: dict
+    replacedSession: bool = False
+
+
+class SessionTakeoverRequest(BaseModel):
+    """Confirm concurrent-login takeover using resumeToken from 409 response."""
+
+    resumeToken: str = Field(..., min_length=8, max_length=128)
+
+
+class ChangePasswordRequest(BaseModel):
+    currentPassword: str = Field(..., min_length=1, max_length=128)
+    newPassword: str = Field(..., min_length=1, max_length=128)
+
 
 
 def _normalize_emp_id(raw: str) -> str:
@@ -84,14 +105,19 @@ def validate_employee_id(raw: str, *, allow_admin_id: bool = False) -> str:
 
 
 def _user_public(user: RcUser) -> dict:
+    from app.route_card.plants import plant_id_for_dept
+
+    dept = user.dept or ""
     return {
         "id": user.id,
         "empId": user.emp_id,
         "username": user.emp_id,  # backward compatible with UI
         "name": user.name,
         "display_name": user.name,
-        "dept": user.dept or "",
+        "dept": dept,
+        "plantId": plant_id_for_dept(dept),
         "role": user.role,
+        "mustChangePassword": bool(getattr(user, "must_change_password", False)),
     }
 
 
@@ -107,9 +133,42 @@ def create_access_token(*, emp_id: str, role: str, user_id: int) -> str:
         "exp": expire,
         "jti": jti,
     }
-    # Store the active session identifier for this user
+    # End any previous session for this user
+    prev = _active_sessions.get(user_id)
+    if prev and prev != jti:
+        _revoked_tokens.add(prev)
     _active_sessions[user_id] = jti
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _purge_expired_takeovers() -> None:
+    now = datetime.now(timezone.utc).timestamp()
+    dead = [k for k, v in _pending_session_takeovers.items() if float(v.get("exp") or 0) < now]
+    for k in dead:
+        _pending_session_takeovers.pop(k, None)
+
+
+def _issue_takeover_resume(*, user_id: int, emp_id: str, role: str) -> str:
+    _purge_expired_takeovers()
+    token = secrets.token_urlsafe(24)
+    _pending_session_takeovers[token] = {
+        "user_id": int(user_id),
+        "emp_id": emp_id,
+        "role": role,
+        "exp": datetime.now(timezone.utc).timestamp() + _TAKEOVER_TTL_SEC,
+    }
+    return token
+
+
+def _consume_takeover_resume(resume_token: str) -> dict:
+    _purge_expired_takeovers()
+    pending = _pending_session_takeovers.pop((resume_token or "").strip(), None)
+    if not pending:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session takeover expired. Please sign in again.",
+        )
+    return pending
 
 
 def decode_token(token: str) -> dict:
@@ -143,6 +202,7 @@ def get_current_user(
             "name": "Dev",
             "display_name": "Dev",
             "dept": "IT",
+            "plantId": "",
             "role": "admin",
         }
 
@@ -171,12 +231,17 @@ def get_current_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found or inactive",
             )
-        # Verify session identifier matches active session
+        # Single active session: adopt token after restart; otherwise reject stale jti
         active_jti = _active_sessions.get(user.id)
-        if active_jti != jti:
+        if active_jti is None:
+            _active_sessions[user.id] = jti
+        elif active_jti != jti:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Your account has been signed in from another browser. Please sign in again."
+                detail=(
+                    "Your account is signed in elsewhere. "
+                    "This session was ended — sign in again and choose to terminate the other session."
+                ),
             )
         return _user_public(user)
 
@@ -207,6 +272,15 @@ def require_dept_head_or_admin(current_user: dict = Depends(get_current_user)) -
     return current_user
 
 
+def require_template_manager(current_user: dict = Depends(get_current_user)) -> dict:
+    """Admin, dept head, or IED may manage operation templates (IED: own dept)."""
+    if current_user.get("role") not in {"admin", "dept_head", "ied"}:
+        raise HTTPException(
+            status_code=403, detail="Department head, IED, or admin access required"
+        )
+    return current_user
+
+
 @router.get("/departments")
 @db_session
 def list_departments():
@@ -215,7 +289,14 @@ def list_departments():
         RcDepartment.sort_order, RcDepartment.name
     )[:]
     return [
-        {"id": d.id, "code": d.code, "name": d.name, "label": d.name, "value": d.name}
+        {
+            "id": d.id,
+            "code": d.code,
+            "name": d.name,
+            "plantId": (d.plant_id or "").strip(),
+            "label": d.name,
+            "value": d.name,
+        }
         for d in rows
     ]
 
@@ -319,6 +400,25 @@ def get_captcha(request: Request):
 @limiter.limit(getattr(settings, "RATE_LIMIT_LOGIN", "5/min"))
 @db_session
 def login(request: Request, body: LoginRequest = Body(...)):
+    # Confirmed takeover from concurrent-session dialog (no CAPTCHA / cipher re-entry)
+    if body.terminateExistingSession and (body.resumeToken or "").strip():
+        pending = _consume_takeover_resume(body.resumeToken)
+        user = RcUser.get(id=int(pending["user_id"]))
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or inactive",
+            )
+        token = create_access_token(
+            emp_id=user.emp_id, role=user.role, user_id=user.id
+        )
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user": _user_public(user),
+            "replacedSession": True,
+        }
+
     creds = decrypt_creds_cipher(body.cipher, body.alg)
     emp_id = require_safe(_normalize_emp_id(str(creds.get("empId") or "")), "empId", field="empId")
     password = require_safe(str(creds.get("password") or ""), "password", field="password")
@@ -338,14 +438,94 @@ def login(request: Request, body: LoginRequest = Body(...)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid empId or password",
         )
+
+    existing_jti = _active_sessions.get(user.id)
+    if existing_jti and not body.terminateExistingSession:
+        resume = _issue_takeover_resume(
+            user_id=user.id, emp_id=user.emp_id, role=user.role
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "CONCURRENT_SESSION",
+                "message": (
+                    "This account is already signed in elsewhere. "
+                    "Terminate that session to continue here?"
+                ),
+                "resumeToken": resume,
+            },
+        )
+
+    replaced = bool(existing_jti)
     token = create_access_token(emp_id=user.emp_id, role=user.role, user_id=user.id)
     return {
         "access_token": token,
         "token_type": "bearer",
         "user": _user_public(user),
+        "replacedSession": replaced,
+    }
+
+
+@router.post("/login/takeover", response_model=LoginResponse)
+@limiter.limit(getattr(settings, "RATE_LIMIT_LOGIN", "5/min"))
+@db_session
+def login_takeover(request: Request, body: SessionTakeoverRequest = Body(...)):
+    """End the other active session and sign in here (after concurrent-login 409)."""
+    pending = _consume_takeover_resume(body.resumeToken)
+    user = RcUser.get(id=int(pending["user_id"]))
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+    token = create_access_token(emp_id=user.emp_id, role=user.role, user_id=user.id)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": _user_public(user),
+        "replacedSession": True,
     }
 
 
 @router.get("/me")
 def me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/change-password")
+@db_session
+def change_password(
+    body: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user = RcUser.get(id=current_user["id"])
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+
+    current_pass = require_safe(body.currentPassword, "password", field="currentPassword")
+    new_pass = require_safe(body.newPassword, "password", field="newPassword")
+
+    if not verify_password(current_pass, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    from app.password_policy import check_password_history, validate_password_complexity
+    validate_password_complexity(new_pass)
+    check_password_history(user, new_pass, history_limit=5)
+
+    from app.route_card.models import RcPasswordHistory
+    RcPasswordHistory(
+        user=user,
+        password_hash=user.password_hash,
+        created_at=datetime.utcnow(),
+    )
+
+    user.password_hash = hash_password(new_pass)
+    user.must_change_password = False
+    from pony.orm import commit
+    commit()
+
+    return {
+        "detail": "Password updated successfully",
+        "user": _user_public(user),
+    }
+

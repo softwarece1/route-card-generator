@@ -1,0 +1,305 @@
+.rc-wc {
+  &__sync-banner {
+    font-size: 0.85rem;
+
+    .p-message-text {
+      font-size: 0.85rem;
+    }
+  }
+
+  &__shell {
+    background: var(--pmf-surface);
+    border: 1px solid var(--pmf-table-border, var(--pmf-border));
+    border-radius: 0.85rem;
+    overflow: hidden;
+    box-shadow: var(--pmf-shadow-card);
+  }
+
+  /* Tabs + tools on one row */
+  &__tabs-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    flex-wrap: wrap;
+    padding: 0 0.85rem;
+    min-height: 3.1rem;
+    border-bottom: 1px solid var(--pmf-border, #e2e8f0);
+    background: var(--pmf-surface);
+  }
+
+  &__tabs {
+    display: flex;
+    align-items: stretch;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  &__tab {
+    appearance: none;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--pmf-text-muted, #64748b);
+    padding: 0.85rem 0.9rem 0.75rem;
+    margin-bottom: -1px;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+      color: var(--pmf-text-heading, #0f172a);
+    }
+
+    &.is-active {
+      color: var(--pmf-accent, var(--pmf-info, #5b50d6));
+      border-bottom-color: var(--pmf-accent, var(--pmf-info, #5b50d6));
+    }
+  }
+
+  &__tabs-tools {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  &__dept-filter {
+    width: 11.5rem;
+    max-width: 100%;
+    height: 2.25rem;
+    min-height: 2.25rem;
+    align-items: center;
+    font-size: 0.84rem;
+
+    .p-dropdown-label {
+      padding: 0.35rem 0.6rem;
+      font-size: 0.84rem;
+      line-height: 1.3;
+    }
+
+    .p-dropdown-trigger {
+      width: 2.25rem;
+    }
+  }
+
+  &__dept-label {
+    font-size: 0.8rem;
+    color: var(--pmf-text-muted);
+    font-weight: 500;
+    white-space: nowrap;
+    padding: 0 0.25rem;
+  }
+
+  &__search {
+    width: 15.5rem;
+    max-width: 100%;
+
+    .p-inputtext {
+      height: 2.25rem;
+      min-height: 2.25rem;
+      font-size: 0.84rem;
+      padding: 0.35rem 0.6rem 0.35rem 2.15rem;
+    }
+  }
+
+  &__panel {
+    padding: 0.85rem;
+  }
+
+  &__nested {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  &__nested-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  &__nested-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--pmf-text-heading);
+  }
+
+  &__count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.75rem;
+    height: 1.5rem;
+    padding: 0 0.45rem;
+    border-radius: 999px;
+    background: var(--pmf-info-soft, var(--pmf-accent-soft, #eef2ff));
+    color: var(--pmf-info, var(--pmf-accent, #5b50d6));
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Main WC table fills card width; nested sits inside expansion */
+  .rc-table {
+    box-shadow: none;
+    border: 1px solid var(--pmf-table-border, var(--pmf-border));
+  }
+
+  .rc-table .rc-table__dt.p-datatable .p-datatable-tbody > tr {
+    cursor: pointer;
+  }
+
+  .rc-table--nested .rc-table__dt.p-datatable .p-datatable-tbody > tr {
+    cursor: default;
+  }
+}
+
+/* Compact dialogs */
+.wc-dialog.p-dialog {
+  .p-dialog-header {
+    padding: 0.65rem 0.9rem;
+  }
+
+  .p-dialog-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+  }
+
+  .p-dialog-header-icon {
+    width: 1.7rem;
+    height: 1.7rem;
+  }
+
+  .p-dialog-content {
+    padding: 0.55rem 0.9rem 0.35rem;
+  }
+
+  .p-dialog-footer {
+    padding: 0.45rem 0.9rem 0.65rem;
+    border-top: 1px solid var(--pmf-border, #e2e8f0);
+  }
+}
+
+.wc-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.wc-dialog__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem 0.55rem;
+  align-items: end;
+}
+
+.wc-dialog__row--full {
+  grid-template-columns: 1fr;
+}
+
+.wc-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+
+  label {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--pmf-text-muted, #64748b);
+    line-height: 1.2;
+  }
+}
+
+.wc-dialog__check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.15rem;
+  padding-bottom: 0.05rem;
+
+  label {
+    font-size: 0.78rem;
+    color: var(--pmf-text, #334155);
+    margin: 0;
+    cursor: pointer;
+  }
+}
+
+.wc-dialog .p-inputtext,
+.wc-dialog .p-dropdown {
+  height: 2.15rem;
+  min-height: 2.15rem;
+  font-size: 0.82rem;
+  width: 100%;
+}
+
+.wc-dialog .p-inputtext {
+  padding: 0.3rem 0.55rem;
+}
+
+.wc-dialog .p-dropdown {
+  align-items: center;
+
+  .p-dropdown-label {
+    padding: 0.3rem 0.55rem;
+    line-height: 1.35;
+    display: flex;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+
+  .p-dropdown-trigger {
+    width: 2.15rem;
+  }
+}
+
+.wc-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.4rem;
+
+  .p-button {
+    height: 2.15rem;
+    min-height: 2.15rem;
+    padding: 0 0.75rem;
+    font-size: 0.82rem;
+
+    .p-button-icon {
+      font-size: 0.78rem;
+    }
+  }
+}
+
+@media (max-width: 720px) {
+  .rc-wc__tabs-row {
+    flex-direction: column;
+    align-items: stretch;
+    padding-top: 0.35rem;
+  }
+
+  .rc-wc__tabs-tools {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .rc-wc__dept-filter,
+  .rc-wc__search {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .wc-dialog__row {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
-import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
-import SafeInputText from "@/components/SafeInputText";
+import { DataTable } from "primereact/datatable";
 import { InputNumber } from "primereact/inputnumber";
 import { MultiSelect } from "primereact/multiselect";
 import AppShell from "@/components/AppShell";
@@ -10,11 +10,9 @@ import PageHeader from "@/components/PageHeader";
 import { toast } from "@/lib/toast";
 import { getVlmPageIndexes, setVlmPageIndexes } from "@/lib/vlmPrefs";
 import {
-  createMachine,
-  deleteMachine,
-  fetchMachinesQuietly,
   fetchStorageStats,
   fetchSystemHealth,
+  migrateLegacyMachines,
   runAdminBackup,
   runAdminCleanup,
 } from "@/services/routeCardApi";
@@ -26,24 +24,18 @@ const VLM_PAGE_OPTIONS = Array.from({ length: 12 }, (_, i) => ({
 }));
 
 export default function SystemPage() {
+  const navigate = useNavigate();
   const [health, setHealth] = useState(null);
   const [storage, setStorage] = useState(null);
-  const [machines, setMachines] = useState([]);
-  const [form, setForm] = useState({ name: "", workCentre: "", plant: "" });
   const [cleanupDays, setCleanupDays] = useState(90);
   const [busy, setBusy] = useState("");
   const [vlmPages, setVlmPages] = useState(() => getVlmPageIndexes());
 
   const load = useCallback(async () => {
     try {
-      const [h, s, m] = await Promise.all([
-        fetchSystemHealth(),
-        fetchStorageStats(),
-        fetchMachinesQuietly(),
-      ]);
+      const [h, s] = await Promise.all([fetchSystemHealth(), fetchStorageStats()]);
       setHealth(h);
       setStorage(s);
-      setMachines(m || []);
     } catch (e) {
       toast.error(e.message || "Could not load system");
     }
@@ -277,62 +269,46 @@ export default function SystemPage() {
           <section className="rc-system__card rc-system__card--wide">
             <div className="rc-system__card-head">
               <div>
-                <h3>Plant machines</h3>
-                <p>Work-centre machines available when editing route operations.</p>
+                <h3>Work centres &amp; machines</h3>
+                <p>
+                  Master data moved to the Work centres page (dept-scoped). Use migrate to link
+                  legacy plant machines to work centres.
+                </p>
               </div>
               <div className="rc-system__icon" aria-hidden>
-                <i className="pi pi-wrench" />
+                <i className="pi pi-building" />
               </div>
             </div>
             <div className="rc-system__actions">
-              <SafeInputText profile="label" placeholder="Name"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-              <SafeInputText profile="code"
-                placeholder="Work centre"
-                value={form.workCentre}
-                onChange={(e) => setForm({ ...form, workCentre: e.target.value })}
-              />
-              <SafeInputText profile="code"
-                placeholder="Plant"
-                value={form.plant}
-                onChange={(e) => setForm({ ...form, plant: e.target.value })}
+              <Button
+                type="button"
+                label="Open Work centres"
+                icon="pi pi-arrow-right"
+                size="small"
+                onClick={() => navigate("/work-centers")}
               />
               <Button
                 type="button"
-                label="Add"
-                icon="pi pi-plus"
+                label="Migrate legacy machines"
+                icon="pi pi-sync"
                 size="small"
+                outlined
+                loading={busy === "migrate"}
                 onClick={async () => {
-                  await createMachine(form);
-                  setForm({ name: "", workCentre: "", plant: "" });
-                  load();
-                  toast.success("Machine added");
+                  setBusy("migrate");
+                  try {
+                    const r = await migrateLegacyMachines();
+                    toast.success(
+                      `Linked ${r.linked || 0} machine(s); created ${r.createdWorkCenters || 0} WC(s)`
+                    );
+                  } catch (e) {
+                    toast.error(e.message || "Migrate failed");
+                  } finally {
+                    setBusy("");
+                  }
                 }}
               />
             </div>
-            <DataTable value={machines} size="small" emptyMessage="No machines">
-              <Column field="name" header="Name" />
-              <Column field="workCentre" header="WC" />
-              <Column field="plant" header="Plant" />
-              <Column
-                header=""
-                body={(r) => (
-                  <Button
-                    type="button"
-                    icon="pi pi-trash"
-                    text
-                    severity="danger"
-                    onClick={async () => {
-                      await deleteMachine(r.id);
-                      load();
-                      toast.info("Machine removed");
-                    }}
-                  />
-                )}
-              />
-            </DataTable>
           </section>
         </div>
       </div>

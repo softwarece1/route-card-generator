@@ -1,6 +1,7 @@
 # Standalone Route Card backend — runtime deps only (Python 3.11, Windows)
-# Install online:  pip install -r requirements.txt
-# Install offline: pip install --no-index --find-links=offline_packages -r requirements.txt
+# Install online:  .venv/Scripts/python -m pip install -r requirements.txt
+# Install offline: .venv/Scripts/python -m pip install --no-index --find-links=offline_packages -r requirements.txt
+# Always create .venv on the target PC (never copy .venv between paths).
 
 # API
 fastapi==0.115.6
@@ -31,6 +32,10 @@ Pillow==11.1.0
 
 # Local VLM (Ollama HTTP)
 httpx==0.28.1
+
+# SAP OARC work-centre sync (SOAP; optional if SAP_OARC_API_BASE_URL gateway is used)
+requests==2.32.3
+zeep==4.3.1
 
 # CAD + legacy Parts List
 ezdxf==1.4.2

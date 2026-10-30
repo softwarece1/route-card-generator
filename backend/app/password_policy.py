@@ -78,3 +78,26 @@ def validate_password_complexity(password: str) -> None:
             detail="\n".join(errors) if len(errors) > 1 else errors[0],
         )
 
+
+def check_password_history(user, new_password: str, history_limit: int = 5) -> None:
+    """Ensure new password is not the current password and not in recent password history."""
+    from app.security import verify_password
+    from pony.orm import desc
+
+    if getattr(user, "password_hash", None) and verify_password(new_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password cannot be the same as your current or temporary password.",
+        )
+
+    if hasattr(user, "password_history"):
+        from app.route_card.models import RcPasswordHistory
+        past = user.password_history.select().order_by(desc(RcPasswordHistory.created_at))[:history_limit]
+        for item in past:
+            if verify_password(new_password, item.password_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"You cannot reuse any of your last {history_limit} passwords. Please choose a new password.",
+                )
+
+

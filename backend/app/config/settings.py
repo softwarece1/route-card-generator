@@ -80,6 +80,21 @@ class Settings(BaseSettings):
     ANALYZE_QUEUE_ENABLED: bool = True
     ANALYZE_QUEUE_POLL_SEC: float = 2.0
 
+    # When True, resolve extracted ops against dept WorkCenter/Machine master
+    WC_RESOLVER_ENABLED: bool = True
+
+    # SAP OARC work-centre sync (from main1_fixed production order APIs)
+    # Prefer HTTP gateway if set (running main1_fixed); else direct SOAP with credentials.
+    SAP_OARC_API_BASE_URL: str = ""
+    SAP_USERNAME: str = ""
+    SAP_PASSWORD: str = ""
+    SAP_VERIFY_SSL: bool = True
+    SAP_TRUST_ENV: bool = True
+    SAP_TIMEOUT_SEC: int = 60
+    SAP_MAX_ORDERS: int = 500
+    SAP_ORDER_PRODUCTION_LIST_WSDL: str = ""
+    SAP_ORDER_PRODUCTION_DETAIL_WSDL: str = ""
+
     # Backup output directory (empty = <LOCAL_UPLOAD_ROOT>/../backups or cwd/backups)
     BACKUP_ROOT: str = ""
 

@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { isAuthenticated } from '@/lib/auth';
+import { getUser, isAuthenticated } from '@/lib/auth';
 import LoginPage from '@/pages/LoginPage';
 import SignupPage from '@/pages/SignupPage';
 import ExtractionsPage from '@/pages/ExtractionsPage';
@@ -10,10 +10,20 @@ import UsersPage from '@/pages/UsersPage';
 import AboutPage from '@/pages/AboutPage';
 import RouteCardGenerationAlt from '@/pages/RouteCardGenerationAlt';
 import SystemPage from '@/pages/SystemPage';
+import WorkCentersPage from '@/pages/WorkCentersPage';
+import OrgStructurePage from '@/pages/OrgStructurePage';
 
-/** `/` → generator when signed in, otherwise login. */
+/** `/` → IED review queue, else generator when signed in; otherwise login. */
 function HomeRedirect() {
-  return <Navigate to={isAuthenticated() ? '/generator' : '/login'} replace />;
+  if (!isAuthenticated()) return <Navigate to="/login" replace />;
+  const role = getUser()?.role;
+  if (role === "ied") return <Navigate to="/history" replace />;
+  return <Navigate to="/generator" replace />;
+}
+
+function IedBlockGenerator({ children }) {
+  if (getUser()?.role === "ied") return <Navigate to="/history" replace />;
+  return children;
 }
 
 export default function App() {
@@ -27,7 +37,9 @@ export default function App() {
         path="/generator"
         element={
           <ProtectedRoute>
-            <RouteCardGenerationAlt />
+            <IedBlockGenerator>
+              <RouteCardGenerationAlt />
+            </IedBlockGenerator>
           </ProtectedRoute>
         }
       />
@@ -71,8 +83,24 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="/new" element={<Navigate to="/generator" replace />} />
-      <Route path="/classic" element={<Navigate to="/generator" replace />} />
+      <Route
+        path="/work-centers"
+        element={
+          <ProtectedRoute>
+            <WorkCentersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/org"
+        element={
+          <ProtectedRoute>
+            <OrgStructurePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="/new" element={<Navigate to="/" replace />} />
+      <Route path="/classic" element={<Navigate to="/" replace />} />
       <Route path="*" element={<HomeRedirect />} />
     </Routes>
   );

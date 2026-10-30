@@ -22,6 +22,14 @@ http.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error?.response?.status === 401) {
+      const detail = error?.response?.data?.detail;
+      if (typeof detail === 'string' && /signed in elsewhere|another browser|session was ended/i.test(detail)) {
+        try {
+          sessionStorage.setItem('rc_auth_notice', detail);
+        } catch {
+          /* ignore */
+        }
+      }
       clearAuth();
       if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/signup')) {
         window.location.assign('/login');

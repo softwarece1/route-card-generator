@@ -88,6 +88,12 @@ class OperationOut(BaseModel):
     type: str = "Assembly"
     reason: str = ""
     features: list[str] = Field(default_factory=list)
+    workCentreId: int | None = None
+    machineId: int | None = None
+    linkStatus: str = ""
+    linkConfidence: float | None = None
+    linkReason: str = ""
+    workCentreName: str = ""
 
 
 class InspectionOut(BaseModel):
@@ -155,6 +161,10 @@ class OperationUpdate(BaseModel):
     inspection: str = ""
     instructionText: str = ""
     status: str = "Planned"
+    workCentreId: Optional[int] = None
+    machineId: Optional[int] = None
+    linkStatus: str = ""
+    linkConfidence: Optional[float] = None
 
 
 class RouteCardUpdate(BaseModel):
@@ -185,6 +195,8 @@ class OpTemplateStepIn(BaseModel):
     generates_output_serial: bool = False
     requires_input_material: bool = False
     manual_operation: bool = True
+    workCentreId: Optional[int] = None
+    machineId: Optional[int] = None
 
 
 class OpTemplateCreate(BaseModel):
@@ -216,6 +228,7 @@ class ManagedUserCreate(BaseModel):
     dept: Optional[str] = Field(None, max_length=128)
     role: str = Field("engineer", min_length=1, max_length=32)
     password: str = Field(..., min_length=4, max_length=128)
+    reportsToId: Optional[int] = None
 
 
 class ManagedUserUpdate(BaseModel):
@@ -223,6 +236,7 @@ class ManagedUserUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     dept: Optional[str] = Field(None, max_length=128)
     role: Optional[str] = Field(None, min_length=1, max_length=32)
+    reportsToId: Optional[int] = None
 
 
 class ManagedUserResetPassword(BaseModel):

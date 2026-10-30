@@ -358,7 +358,9 @@ body {
 .rc-system,
 .rc-users,
 .rc-otpl,
-.rc-jobs {
+.rc-jobs,
+.rc-wc,
+.rc-org {
   width: 100%;
   max-width: var(--pmf-page-max);
   margin-left: auto;
@@ -373,7 +375,9 @@ body {
 .rc-system,
 .rc-users,
 .rc-otpl,
-.rc-jobs {
+.rc-jobs,
+.rc-wc,
+.rc-org {
   padding-top: var(--pmf-page-pad-top);
   padding-bottom: var(--pmf-page-pad-bottom);
 }

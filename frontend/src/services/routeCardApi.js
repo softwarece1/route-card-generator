@@ -1,4 +1,5 @@
 import http from '@/lib/http';
+import { getToken } from '@/lib/auth';
 
 const BASE = '/route-card';
 
@@ -201,6 +202,31 @@ export async function approveRouteCard(routeId, { adminOverride = false } = {}) 
   return data;
 }
 
+export async function shareRouteToIed(routeId) {
+  const { data } = await http.post(`${BASE}/route-cards/${routeId}/share-ied`);
+  return data;
+}
+
+export async function completeIedReview(routeId) {
+  const { data } = await http.post(`${BASE}/route-cards/${routeId}/complete-ied`);
+  return data;
+}
+
+export async function recallIedReview(routeId) {
+  const { data } = await http.post(`${BASE}/route-cards/${routeId}/recall-ied`);
+  return data;
+}
+
+export async function fetchRouteRemarks(routeId) {
+  const { data } = await http.get(`${BASE}/route-cards/${routeId}/remarks`);
+  return data;
+}
+
+export async function createRouteRemark(routeId, body) {
+  const { data } = await http.post(`${BASE}/route-cards/${routeId}/remarks`, { body });
+  return data;
+}
+
 /** PMF Create-Order (OARC) JSON — ops, LongText, raw materials prefill */
 export async function exportPmfOarc(routeId, params = {}) {
   try {
@@ -392,6 +418,181 @@ export async function fetchMachinesQuietly() {
   } catch {
     return [];
   }
+}
+
+export async function fetchWorkCenters(dept) {
+  const { data } = await http.get(`${BASE}/work-centers`, {
+    params: dept ? { dept } : undefined,
+  });
+  return data?.items || [];
+}
+
+export async function fetchWorkCenterCatalog(dept) {
+  try {
+    const { data } = await http.get(`${BASE}/work-centers/catalog`, {
+      params: dept ? { dept } : undefined,
+    });
+    return data?.items || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function createWorkCenter(payload) {
+  const { data } = await http.post(`${BASE}/work-centers`, payload);
+  return data;
+}
+
+export async function updateWorkCenter(id, payload) {
+  const { data } = await http.put(`${BASE}/work-centers/${id}`, payload);
+  return data;
+}
+
+export async function deleteWorkCenter(id) {
+  const { data } = await http.delete(`${BASE}/work-centers/${id}`);
+  return data;
+}
+
+export async function migrateLegacyMachines() {
+  const { data } = await http.post(`${BASE}/work-centers/migrate-machines`);
+  return data;
+}
+
+export async function fetchPlants({ activeOnly = true } = {}) {
+  const { data } = await http.get(`${BASE}/plants`, {
+    params: { active_only: activeOnly },
+  });
+  return data?.items || [];
+}
+
+export async function createPlant(body) {
+  try {
+    const { data } = await http.post(`${BASE}/plants`, body);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not create plant'));
+  }
+}
+
+export async function updatePlant(id, body) {
+  try {
+    const { data } = await http.put(`${BASE}/plants/${id}`, body);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not update plant'));
+  }
+}
+
+export async function fetchOrgDepartments({ activeOnly = false } = {}) {
+  const { data } = await http.get(`${BASE}/departments`, {
+    params: { active_only: activeOnly },
+  });
+  return data?.items || [];
+}
+
+export async function createDepartment(body) {
+  try {
+    const { data } = await http.post(`${BASE}/departments`, body);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not create department'));
+  }
+}
+
+export async function updateDepartment(id, body) {
+  try {
+    const { data } = await http.put(`${BASE}/departments/${id}`, body);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not update department'));
+  }
+}
+
+export async function fetchDeptHeads(dept) {
+  const { data } = await http.get(`${BASE}/dept-heads`, {
+    params: { dept },
+  });
+  return data?.items || [];
+}
+
+/**
+ * Stream SAP work-centre sync (NDJSON). Calls onEvent for each line.
+ * Payload: { plantCode, fromDate, toDate, partNumber?, isShared?, dept? }
+ */
+export async function syncWorkCentersFromSap(payload, { onEvent, signal } = {}) {
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+  const token = getToken();
+  const body = {
+    from_date: payload.fromDate,
+    to_date: payload.toDate,
+    part_number: payload.partNumber || null,
+    is_shared: payload.isShared !== false,
+    dept: payload.dept || '',
+  };
+  if (payload.plantCode) {
+    body.plant_code = payload.plantCode;
+  }
+  const res = await fetch(`${API_BASE}${BASE}/work-centers/sync-from-sap`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const errJson = await res.json();
+      detail = detailFromPayload(errJson);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `Sync failed (${res.status})`);
+  }
+  const reader = res.body?.getReader();
+  if (!reader) {
+    throw new Error('Streaming response not supported');
+  }
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let lastEvent = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let evt;
+      try {
+        evt = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      lastEvent = evt;
+      if (typeof onEvent === 'function') onEvent(evt);
+      if (evt.type === 'error') {
+        throw new Error(evt.message || 'SAP sync failed');
+      }
+    }
+  }
+  if (buffer.trim()) {
+    try {
+      const evt = JSON.parse(buffer.trim());
+      lastEvent = evt;
+      if (typeof onEvent === 'function') onEvent(evt);
+      if (evt.type === 'error') {
+        throw new Error(evt.message || 'SAP sync failed');
+      }
+    } catch (e) {
+      if (e.message && !/Unexpected token|JSON/i.test(e.message)) throw e;
+    }
+  }
+  return lastEvent;
 }
 
 export async function fetchSystemHealth() {

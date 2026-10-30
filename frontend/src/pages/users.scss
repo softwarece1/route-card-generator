@@ -96,6 +96,74 @@
   line-height: 1.45;
 }
 
+.rc-users__form--grid > .rc-users__pwd-field {
+  grid-column: 1 / -1;
+}
+
+.rc-users__pwd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--pmf-text-heading);
+  min-width: 0;
+}
+
+.rc-users__pwd-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.5rem;
+}
+
+.rc-users__pwd-label-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.rc-users__pwd-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.rc-users__pwd-input-row .p-inputtext {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+
+.rc-users-dialog .rc-users__pwd-input-row .p-inputtext {
+  height: 2.25rem;
+  min-height: 2.25rem;
+  font-size: 0.875rem;
+  padding: 0.35rem 0.65rem;
+}
+
+.rc-users__pwd-icon-btn.p-button {
+  width: 2.25rem;
+  height: 2.25rem;
+  min-width: 2.25rem;
+  flex-shrink: 0;
+  color: var(--pmf-text-muted);
+}
+
+.rc-users__pwd-icon-btn.p-button:not(:disabled):hover {
+  color: var(--pmf-text-heading);
+}
+
+.rc-users__share-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 @media (max-width: 560px) {
   .rc-users__form--grid {
     grid-template-columns: 1fr;

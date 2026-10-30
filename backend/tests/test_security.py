@@ -112,6 +112,56 @@ def test_password_policy_enforcement():
     validate_password_complexity("StrongSecurePass2026!#")
 
 
+def test_password_history_prevent_reuse():
+    """Verify that password history checks prevent reusing current and recent passwords."""
+    from app.password_policy import check_password_history
+    from app.security import hash_password
+
+    class MockHistoryItem:
+        def __init__(self, pwd):
+            self.password_hash = hash_password(pwd)
+
+    class MockUserWithHistory:
+        def __init__(self, current_pwd, past_pwds):
+            self.password_hash = hash_password(current_pwd)
+            self._past = [MockHistoryItem(p) for p in past_pwds]
+
+        @property
+        def password_history(self):
+            class Query:
+                def __init__(self, items):
+                    self.items = items
+                def select(self):
+                    return self
+                def order_by(self, *args):
+                    return self
+                def __getitem__(self, sl):
+                    return self.items[sl]
+            return Query(self._past)
+
+    user = MockUserWithHistory(
+        current_pwd="CurrentPass2026!#",
+        past_pwds=["OldPassOne2025!#", "OldPassTwo2025!#", "OldPassThree2025!#"],
+    )
+
+    # Reusing current/temporary password must be rejected
+    with pytest.raises(HTTPException) as exc:
+        check_password_history(user, "CurrentPass2026!#")
+    assert exc.value.status_code == 400
+    assert "current or temporary password" in exc.value.detail
+
+    # Reusing any recent password in history must be rejected
+    for past_pwd in ["OldPassOne2025!#", "OldPassTwo2025!#", "OldPassThree2025!#"]:
+        with pytest.raises(HTTPException) as exc:
+            check_password_history(user, past_pwd)
+        assert exc.value.status_code == 400
+        assert "cannot reuse" in exc.value.detail
+
+    # A brand new strong password passes without exception
+    check_password_history(user, "BrandNewSecurePass2026!#")
+
+
+
 
 def test_upload_file_hardening():
     """Verify upload validation rejects dangerous extensions, invalid MIME, and invalid headers."""
@@ -278,6 +328,14 @@ def test_login_captcha_scenarios():
             u.is_active = True
         commit()
 
+    # Clear any prior active session so first login is not a concurrent conflict
+    from app.auth import _active_sessions, _pending_session_takeovers
+
+    with db_session:
+        test_user = RcUser.get(emp_id="999999")
+        if test_user:
+            _active_sessions.pop(test_user.id, None)
+
     r4 = client.get("/api/v1/auth/captcha")
     c4 = r4.json()
     valid_code4 = _captcha_cache[c4["captchaId"]]["code"]
@@ -295,4 +353,38 @@ def test_login_captcha_scenarios():
     body = resp.json()
     assert "access_token" in body
     assert body["user"]["empId"] == "999999"
+
+    # 7. Second login without takeover → 409 concurrent session + resumeToken
+    r5 = client.get("/api/v1/auth/captcha")
+    c5 = r5.json()
+    valid_code5 = _captcha_cache[c5["captchaId"]]["code"]
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={
+            "cipher": cipher_valid,
+            "captchaId": c5["captchaId"],
+            "captchaAnswer": valid_code5,
+        },
+    )
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["code"] == "CONCURRENT_SESSION"
+    assert detail.get("resumeToken")
+
+    # 8. Takeover ends prior session and issues a new token
+    old_token = body["access_token"]
+    resp = client.post(
+        "/api/v1/auth/login/takeover",
+        json={"resumeToken": detail["resumeToken"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["replacedSession"] is True
+    new_token = resp.json()["access_token"]
+    assert new_token != old_token
+
+    me_old = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old_token}"})
+    assert me_old.status_code == 401
+    me_new = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {new_token}"})
+    assert me_new.status_code == 200
+    _pending_session_takeovers.clear()
 
