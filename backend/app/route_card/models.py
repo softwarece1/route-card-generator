@@ -39,23 +39,24 @@ class RcPlant(db.Entity):
     _table_ = ("route_card", "plants")
 
     id = PrimaryKey(int, auto=True)
-    code = Required(str, unique=True)  # e.g. 1100
+    code = Required(str, unique=True)  # e.g. 1110
     name = Required(str)
     description = Optional(str, default="")
     is_active = Required(bool, default=True)
     sort_order = Required(int, default=0)
+    work_center_synced_at = Optional(datetime)
     created_at = Required(datetime, default=datetime.utcnow)
 
 
 class RcDepartment(db.Entity):
-    """Department master for signup dropdown."""
+    """SBU master (stored as departments) for signup / org dropdown."""
 
     _table_ = ("route_card", "departments")
 
     id = PrimaryKey(int, auto=True)
     code = Required(str, unique=True)
     name = Required(str)
-    plant_id = Optional(str, default="")  # SAP-style plant / WERKS for WC+machines
+    plant_id = Optional(str, default="")  # one SAP plant / WERKS per SBU
     is_active = Required(bool, default=True)
     sort_order = Required(int, default=0)
     created_at = Required(datetime, default=datetime.utcnow)

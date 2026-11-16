@@ -933,17 +933,36 @@
     line-height: 1.3;
   }
 
+  .rca-op__instr-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.35rem;
+    margin: 0;
+  }
+
   .rca-op__instr {
     margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: 0.76rem;
     color: var(--pmf-text-muted);
     line-height: 1.45;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 5.8em;
-    overflow: auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .rca-op__instr-btn.p-button {
+    flex: 0 0 auto;
+    width: 1.85rem;
+    height: 1.85rem;
+
+    &.rca-op__instr-btn--filled {
+      color: var(--pmf-accent-strong);
+    }
   }
 }
+
 
 .rca-op__features {
   margin-top: 0.35rem;
@@ -960,14 +979,8 @@
 }
 
 .rca-op__item {
-  cursor: help;
   font-weight: 500;
-  white-space: nowrap;
-  border-bottom: 1px dotted color-mix(in srgb, var(--pmf-accent) 45%, transparent);
-
-  &:hover {
-    color: var(--pmf-accent-strong);
-  }
+  white-space: normal;
 }
 
 .rca-op__item-no {
@@ -1094,6 +1107,46 @@
   .p-inputtextarea {
     font-size: 0.8rem;
     padding: 0.4rem 0.55rem;
+  }
+
+  .rca-edit-dropdown.p-dropdown {
+    height: 2rem;
+    align-items: center;
+
+    .p-dropdown-label {
+      font-size: 0.8rem;
+      padding: 0.35rem 0.55rem;
+    }
+
+    .p-dropdown-trigger {
+      width: 2rem;
+    }
+  }
+}
+
+/* Overlay is appendTo=body — keep options compact (outside .rca-edit-dialog) */
+.rca-edit-dropdown-panel.p-dropdown-panel {
+  font-size: 0.8rem;
+  max-width: min(22rem, 92vw);
+
+  .p-dropdown-header {
+    padding: 0.35rem 0.45rem;
+
+    .p-dropdown-filter {
+      font-size: 0.78rem;
+      padding: 0.3rem 0.45rem;
+    }
+  }
+
+  .p-dropdown-items {
+    padding: 0.15rem 0;
+  }
+
+  .p-dropdown-item {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.55rem;
+    min-height: 1.75rem;
+    line-height: 1.25;
   }
 }
 

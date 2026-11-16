@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 import { Dropdown } from "primereact/dropdown";
+import { IconField } from "primereact/iconfield";
+import { InputIcon } from "primereact/inputicon";
+import { InputText } from "primereact/inputtext";
 import SafeInputText from "@/components/SafeInputText";
 import { Message } from "primereact/message";
 import { Navigate } from "react-router-dom";
@@ -23,6 +26,19 @@ import {
 } from "@/services/routeCardApi";
 import "./route-card-generation-alt.scss";
 import "./users.scss";
+
+const ROLE_FILTER_ALL = [
+  { label: "All roles", value: "" },
+  { label: "Admin", value: "admin" },
+  { label: "SBU head", value: "dept_head" },
+  { label: "IED", value: "ied" },
+  { label: "Engineer", value: "engineer" },
+];
+
+const ROLE_FILTER_DEPT_HEAD = [
+  { label: "All roles", value: "" },
+  { label: "Engineer", value: "engineer" },
+];
 
 /** PrimeReact Password can miss React state updates inside Dialogs; use plain input. */
 function passwordValue(e) {
@@ -129,7 +145,7 @@ function isValidEmployeeId(value) {
 
 const ROLE_OPTIONS_ADMIN = [
   { label: "Engineer", value: "engineer" },
-  { label: "Dept head", value: "dept_head" },
+  { label: "SBU head", value: "dept_head" },
   { label: "IED", value: "ied" },
 ];
 
@@ -144,7 +160,7 @@ function roleTone(role) {
 
 function roleLabel(role) {
   if (role === "admin") return "Admin";
-  if (role === "dept_head") return "Dept head";
+  if (role === "dept_head") return "SBU head";
   if (role === "ied") return "IED";
   return "Engineer";
 }
@@ -178,6 +194,9 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [filterDept, setFilterDept] = useState("");
+  const [filterRole, setFilterRole] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);
@@ -238,6 +257,30 @@ export default function UsersPage() {
       })),
     [departments]
   );
+
+  const deptFilterOptions = useMemo(
+    () => [{ label: "All SBUs", value: "" }, ...deptOptions],
+    [deptOptions]
+  );
+
+  const roleFilterOptions = isAdmin ? ROLE_FILTER_ALL : ROLE_FILTER_DEPT_HEAD;
+
+  const filteredUsers = useMemo(() => {
+    const q = String(search || "").trim().toLowerCase();
+    const wantDept = String(filterDept || "").trim().toLowerCase();
+    const wantRole = String(filterRole || "").trim();
+    return (users || []).filter((u) => {
+      if (wantRole && u.role !== wantRole) return false;
+      if (isAdmin && wantDept) {
+        if ((u.dept || "").trim().toLowerCase() !== wantDept) return false;
+      }
+      if (!q) return true;
+      const blob = `${u.empId || ""} ${u.name || ""} ${u.dept || ""} ${roleLabel(u.role)} ${
+        u.reportsToName || ""
+      }`.toLowerCase();
+      return blob.includes(q);
+    });
+  }, [users, search, filterDept, filterRole, isAdmin]);
 
   const canManageRow = (row) => {
     if (!row || row.role === "admin") return false;
@@ -337,12 +380,12 @@ export default function UsersPage() {
       return;
     }
     if (isAdmin && !createForm.dept) {
-      setDialogError("Select a department");
+      setDialogError("Select an SBU");
       return;
     }
     const role = isAdmin ? createForm.role : "engineer";
     if (role === "engineer" && !createForm.reportsToId) {
-      setDialogError("Select a reporting officer (department head)");
+      setDialogError("Select a reporting officer (SBU head)");
       return;
     }
     setSaving(true);
@@ -380,12 +423,12 @@ export default function UsersPage() {
       return;
     }
     if (isAdmin && !editForm.dept) {
-      setDialogError("Select a department");
+      setDialogError("Select an SBU");
       return;
     }
     const role = isAdmin ? editForm.role : editTarget.role;
     if (role === "engineer" && !editForm.reportsToId) {
-      setDialogError("Select a reporting officer (department head)");
+      setDialogError("Select a reporting officer (SBU head)");
       return;
     }
     setSaving(true);
@@ -464,7 +507,7 @@ export default function UsersPage() {
 
   const pageDescription = useMemo(() => {
     if (isAdmin) {
-      return "Add department heads, engineers, or IED users; assign reporting officers; reset passwords.";
+      return "Add SBU heads, engineers, or IED users; assign reporting officers; reset passwords.";
     }
     if (isDeptHead) {
       return dept
@@ -507,19 +550,60 @@ export default function UsersPage() {
         />
         {error ? <Message severity="error" text={error} className="w-full mb-3" /> : null}
 
+        <div className="rc-users__toolbar">
+          <IconField iconPosition="left" className="rc-users__search">
+            <InputIcon className="pi pi-search" />
+            <InputText
+              placeholder="Search name, emp ID…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </IconField>
+          {isAdmin ? (
+            <Dropdown
+              value={filterDept || null}
+              options={deptFilterOptions}
+              optionLabel="label"
+              optionValue="value"
+              onChange={(e) =>
+                setFilterDept(e.value == null || e.value === "" ? "" : String(e.value))
+              }
+              placeholder="SBU"
+              showClear
+              className="rc-users__filter"
+            />
+          ) : null}
+          <Dropdown
+            value={filterRole || null}
+            options={roleFilterOptions}
+            optionLabel="label"
+            optionValue="value"
+            onChange={(e) =>
+              setFilterRole(e.value == null || e.value === "" ? "" : String(e.value))
+            }
+            placeholder="Role"
+            showClear
+            className="rc-users__filter rc-users__filter--role"
+          />
+        </div>
+
         <TableComponent
-          value={users}
+          value={filteredUsers}
           loading={loading}
           dataKey="id"
           paginator
           rows={12}
-          emptyMessage="No users found."
+          emptyMessage={
+            search.trim() || filterDept || filterRole
+              ? "No users match your search / filters."
+              : "No users found."
+          }
           columns={[
             { type: "index", header: "#", style: { width: "3.25rem" } },
             { field: "empId", header: "Emp ID", sortable: true, style: { width: "8.5rem" } },
             { field: "name", header: "Name", sortable: true },
             ...(isAdmin
-              ? [{ field: "dept", header: "Department", sortable: true, style: { width: "9rem" } }]
+              ? [{ field: "dept", header: "SBU", sortable: true, style: { width: "9rem" } }]
               : []),
             {
               header: "Role",
@@ -649,7 +733,7 @@ export default function UsersPage() {
             </label>
             {isAdmin ? (
               <label>
-                Department
+                SBU
                 <Dropdown
                   value={createForm.dept || null}
                   options={deptOptions}
@@ -662,14 +746,14 @@ export default function UsersPage() {
                     }));
                     loadHeads(next);
                   }}
-                  placeholder="Select department"
+                  placeholder="Select SBU"
                   disabled={saving || deptOptions.length === 0}
                   className="w-full"
                 />
               </label>
             ) : (
               <label>
-                Department
+                SBU
                 <SafeInputText profile="text" value={user?.dept || dept || ""} disabled />
               </label>
             )}
@@ -819,7 +903,7 @@ export default function UsersPage() {
               />
             </label>
             <label>
-              Department
+              SBU
               {isAdmin ? (
                 <Dropdown
                   value={editForm.dept || null}
@@ -829,7 +913,7 @@ export default function UsersPage() {
                     setEditForm((f) => ({ ...f, dept: next, reportsToId: null }));
                     loadHeads(next);
                   }}
-                  placeholder="Select department"
+                  placeholder="Select SBU"
                   disabled={saving || deptOptions.length === 0}
                   className="w-full"
                 />

@@ -55,10 +55,12 @@ class NoteStep(BaseModel):
     standards: list[str] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
     elaboratedText: str = ""
+    insight: str = ""
     placement: list[dict[str, Any]] = Field(default_factory=list)
     viewRefs: list[dict[str, Any]] = Field(default_factory=list)
     mindEngine: str = ""
     mindConfidence: float | None = None
+    needsReview: bool = False
     sourceDrawingId: int | None = None
     sourceFilename: str = ""
 
@@ -84,10 +86,12 @@ class OperationOut(BaseModel):
     time: str = ""
     inspection: str = ""
     instructionText: str = ""
+    insight: str = ""
     status: str = "Planned"
     type: str = "Assembly"
     reason: str = ""
     features: list[str] = Field(default_factory=list)
+    needsReview: bool = False
     workCentreId: int | None = None
     machineId: int | None = None
     linkStatus: str = ""

@@ -132,6 +132,15 @@ async def analyze_session(
         raise HTTPException(status_code=409, detail="Analysis cancelled") from None
 
 
+@router.post("/sessions/{session_id}/operations/relink-work-centres")
+def relink_session_work_centres(
+    session_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Re-match route ops to the session owner's plant WC master (keeps manual overrides)."""
+    return service.relink_session_work_centres(session_id, user=current_user)
+
+
 @router.post("/sessions/{session_id}/analyze/cancel")
 def cancel_analyze_session(
     session_id: int,
@@ -678,11 +687,19 @@ def delete_few_shot(example_id: int, current_user: dict = Depends(require_dept_h
 @router.get("/work-centers")
 def list_work_centers(
     dept: str | None = Query(None),
+    plant: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
     from app.route_card import work_centers as wc_mod
 
-    return {"items": wc_mod.list_work_centers(current_user, dept=dept)}
+    return {
+        "items": wc_mod.list_work_centers(
+            current_user,
+            dept=dept,
+            plant=plant,
+            include_machines=False,
+        )
+    }
 
 
 @router.get("/work-centers/catalog")
@@ -829,12 +846,13 @@ def list_dept_heads_for_dept(
 async def sync_work_centers_from_sap(
     request: Request, current_user: dict = Depends(require_dept_head_or_admin)
 ):
-    """Stream unique SAP work centres (NDJSON) and upsert into the master as found.
+    """Discover unique SAP work centres and upsert into the plant master.
 
-    Body: { plant_code?, from_date?, to_date?, part_number?, is_shared?, dept? }
-    Non-admins: plant is always taken from their department plant_id.
-    Dates default to the last 1 year when omitted.
-    Event types: status | progress | work_center | warning | done | error
+    Body: { plant_code?, from_date?, to_date?, part_number?, dept? }
+    Dates: when omitted, from_date is last plant sync (or 1 year ago) through today.
+
+    Returns a normal JSON body (same shape as main1_fixed search_unique_work_center),
+    plus created_count / existing_count from local upserts.
     """
     from datetime import date, timedelta
 
@@ -850,41 +868,28 @@ async def sync_work_centers_from_sap(
     plant_code = plants_mod.resolve_sync_plant_code(current_user, requested_plant)
 
     today = date.today()
-    default_from = (today - timedelta(days=365)).isoformat()
     default_to = today.isoformat()
+    last_synced = plants_mod.get_work_center_synced_at(plant_code)
+    if last_synced:
+        default_from = last_synced.date().isoformat()
+    else:
+        default_from = (today - timedelta(days=365)).isoformat()
     from_date = str(body.get("from_date") or body.get("fromDate") or default_from).strip()
     to_date = str(body.get("to_date") or body.get("toDate") or default_to).strip()
     part_number = body.get("part_number") or body.get("partNumber")
 
-    role = (current_user.get("role") or "").strip()
-    if role == "admin":
-        if "is_shared" in body:
-            is_shared = body.get("is_shared")
-        elif "isShared" in body:
-            is_shared = body.get("isShared")
-        else:
-            is_shared = True
-        dept = str(body.get("dept") or "").strip()
-    else:
-        # Dept heads sync into their own department (not shared)
-        is_shared = False
+    dept = str(body.get("dept") or "").strip()
+    if (current_user.get("role") or "").strip() != "admin":
         dept = (current_user.get("dept") or "").strip()
 
-    return StreamingResponse(
-        wc_mod.sync_work_centers_from_sap_events(
-            current_user,
-            plant_code=plant_code,
-            from_date=from_date,
-            to_date=to_date,
-            part_number=str(part_number).strip() if part_number else None,
-            is_shared=bool(is_shared),
-            dept=dept,
-        ),
-        media_type="application/x-ndjson",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+    return wc_mod.sync_work_centers_from_sap(
+        current_user,
+        plant_code=plant_code,
+        from_date=from_date,
+        to_date=to_date,
+        part_number=str(part_number).strip() if part_number else None,
+        is_shared=False,
+        dept=dept,
     )
 
 

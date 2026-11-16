@@ -21,14 +21,21 @@ def dept_dict(d: RcDepartment) -> dict:
     }
 
 
-def _assert_plant_code(plant_code: str) -> str:
+def _ensure_plant_code(plant_code: str, *, required: bool = False) -> str:
+    """Accept plantId on the SBU; create the plant row if missing."""
     code = (plant_code or "").strip()
     if not code:
-        raise HTTPException(400, "plantId is required")
-    hit = select(p for p in RcPlant if p.is_active and p.code == code)[:1]
-    if not hit:
-        raise HTTPException(400, f"Unknown or inactive plant '{code}'")
-    return hit[0].code
+        if required:
+            raise HTTPException(400, "plantId is required")
+        return ""
+    hit = select(p for p in RcPlant if p.code == code)[:1]
+    if hit:
+        p = hit[0]
+        if not p.is_active:
+            p.is_active = True
+        return p.code
+    RcPlant(code=code, name=code, description="", is_active=True, sort_order=0)
+    return code
 
 
 @db_session
@@ -49,7 +56,8 @@ def upsert_department(body: dict, dept_id: int | None = None) -> dict:
     name = (body.get("name") or "").strip()
     if not code or not name:
         raise HTTPException(400, "code and name are required")
-    plant = _assert_plant_code(body.get("plantId") or body.get("plant_id") or "")
+    # Plant ID is part of the SBU row (optional until assigned)
+    plant = _ensure_plant_code(body.get("plantId") or body.get("plant_id") or "")
 
     if dept_id:
         d = RcDepartment.get(id=dept_id)

@@ -217,7 +217,6 @@ class CpuSpatialMind(DrawingMind):
             surface = "the face shown on the drawing"
 
         offset_dims = [d for d in dimensions if d["value"] <= 50]
-        fiveish = [d for d in offset_dims if abs(d["value"] - 5.0) < 0.05]
 
         facts: list[PlacementFact] = []
         sentences: list[str] = []
@@ -240,7 +239,7 @@ class CpuSpatialMind(DrawingMind):
             }
 
             if idx == 0:
-                # Top-of-stack item: top + left offsets from view
+                # Top-of-stack item: only offsets tied to this balloon (no invented 5 mm).
                 if ball:
                     near = dims_near(ball, offset_dims or dimensions, radius=140)
                     roles_used: set[str] = set()
@@ -253,45 +252,10 @@ class CpuSpatialMind(DrawingMind):
                             {"from": role, "value": d["value"], "unit": unit, "relativeToItem": None}
                         )
                         conf = max(conf, 0.55)
-                    page_fives = [d for d in fiveish if d.get("page") == page_no]
-                    if "top" not in roles_used and page_fives:
-                        top_cand = min(page_fives, key=lambda d: d["cy"])
-                        offsets.append(
-                            {
-                                "from": "top",
-                                "value": top_cand["value"],
-                                "unit": unit,
-                                "relativeToItem": None,
-                            }
-                        )
-                        roles_used.add("top")
-                        conf = max(conf, 0.5)
-                    if "left" not in roles_used and page_fives:
-                        left_cand = min(page_fives, key=lambda d: d["cx"])
-                        offsets.append(
-                            {
-                                "from": "left",
-                                "value": left_cand["value"],
-                                "unit": unit,
-                                "relativeToItem": None,
-                            }
-                        )
-                        conf = max(conf, 0.5)
-                if not offsets and (fiveish or AS_SHOWN.search(text)):
-                    offsets = [
-                        {"from": "top", "value": 5.0, "unit": unit, "relativeToItem": None},
-                        {"from": "left", "value": 5.0, "unit": unit, "relativeToItem": None},
-                    ]
-                    conf = max(conf, 0.42)
-                    if not ball:
-                        warns.append(
-                            f"Drawing mind: inferred 5 {unit} top/left for Item {it} "
-                            "(verify on drawing)."
-                        )
             else:
-                # Stacked below previous item in note order
+                # Stacked below previous item in note order — gap only when measured.
                 prev = ordered[idx - 1]
-                gap_val = 5.0
+                gap_val = None
                 conf = 0.42
                 if (
                     use_balloon_stack
@@ -315,17 +279,15 @@ class CpuSpatialMind(DrawingMind):
                         )
                         gap_val = g["value"]
                         conf = 0.6
-                elif fiveish:
-                    gap_val = fiveish[0]["value"]
-                offsets = [
-                    {
-                        "from": "item",
-                        "value": gap_val,
-                        "unit": unit,
-                        "relativeToItem": prev,
-                        "relation": "below",
-                    }
-                ]
+                entry: dict = {
+                    "from": "item",
+                    "unit": unit,
+                    "relativeToItem": prev,
+                    "relation": "below",
+                }
+                if gap_val is not None:
+                    entry["value"] = gap_val
+                offsets = [entry]
 
             fact = PlacementFact(
                 item_no=it,
@@ -336,6 +298,20 @@ class CpuSpatialMind(DrawingMind):
             )
             facts.append(fact)
             sentences.append(self._sentence_for(fact, unit))
+
+        def _has_measured_offset(fact: PlacementFact) -> bool:
+            for o in fact.offsets or []:
+                if o.get("value") is not None:
+                    return True
+            return False
+
+        measured = any(_has_measured_offset(f) for f in facts)
+        if not measured:
+            warns.append(
+                "Drawing mind: could not resolve placement offsets for "
+                f"items {items}; keeping source note wording."
+            )
+            return text, facts, warns
 
         adhesive = ""
         if ADHESIVE.search(text):
@@ -351,13 +327,6 @@ class CpuSpatialMind(DrawingMind):
         # Attach original note for traceability
         if text and text.upper() not in elaborated.upper():
             elaborated = f"{elaborated} (From drawing: {text})"
-
-        if not any(f.offsets for f in facts):
-            warns.append(
-                "Drawing mind: could not resolve placement offsets for "
-                f"items {items}; keeping source note wording."
-            )
-            return text, facts, warns
 
         return elaborated, facts, warns
 
@@ -376,10 +345,12 @@ class CpuSpatialMind(DrawingMind):
             prev = rel.get("relativeToItem")
             val = rel.get("value")
             relation = rel_words.get(rel.get("relation") or "below", "below")
-            return (
-                f"Stick Item {it} on the {surf} side, "
-                f"{val:g} {unit} {relation} Item {prev}."
-            )
+            if val is not None:
+                return (
+                    f"Stick Item {it} on the {surf} side, "
+                    f"{val:g} {unit} {relation} Item {prev}."
+                )
+            return f"Stick Item {it} on the {surf} side, {relation} Item {prev}."
         top = next((o for o in fact.offsets if o.get("from") == "top"), None)
         left = next((o for o in fact.offsets if o.get("from") == "left"), None)
         right = next((o for o in fact.offsets if o.get("from") == "right"), None)

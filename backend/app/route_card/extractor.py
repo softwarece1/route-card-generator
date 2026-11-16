@@ -232,6 +232,138 @@ def _items_in(text: str) -> list[int]:
     return seen
 
 
+_KEEP_ACRONYMS = frozenset(
+    {
+        "GA",
+        "PCB",
+        "PCBA",
+        "CTQ",
+        "DC",
+        "AC",
+        "WL",
+        "PL",
+        "BOM",
+        "OARC",
+        "ISO",
+        "DIN",
+        "IEC",
+        "EMI",
+        "ESD",
+        "SMT",
+        "THT",
+        "LED",
+        "LCD",
+        "USB",
+        "RF",
+        "NM",
+        "MM",
+        "IP",
+        "QC",
+        "QA",
+        "SOP",
+    }
+)
+_ACRONYM_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_KEEP_ACRONYMS, key=len, reverse=True)) + r")\b",
+    re.I,
+)
+_CONNECTOR_RE = re.compile(r"\b[JPCX]\d{1,3}\b", re.I)
+_PART_GROUP_RE = re.compile(r"\b\d{3,}(?:\s+\d{2,}){1,4}\b")
+_LIST_PREFIX_RE = re.compile(
+    r"^(\s*(?:[a-z]\)|\d{1,3}\)|\([a-z]\)|[ivx]+\))\s+)(.*)$",
+    re.I,
+)
+
+
+def _cap_first_alpha(s: str) -> str:
+    for i, ch in enumerate(s):
+        if ch.isalpha():
+            return s[:i] + ch.upper() + s[i + 1 :]
+    return s
+
+
+def normalize_instruction_case(text: str) -> str:
+    """Turn OCR ALL-CAPS shop instructions into readable sentence case.
+
+    Leaves already-mixed text alone. Keeps common drawing acronyms, connector
+    refs (J1/P2), and digit groups that look like part numbers.
+    """
+    if not text:
+        return ""
+    raw = str(text)
+    letters = [c for c in raw if c.isalpha()]
+    if not letters:
+        return raw
+    if sum(1 for c in letters if c.isupper()) / len(letters) < 0.65:
+        return raw
+
+    tokens: list[str] = []
+
+    def _protect(match: re.Match) -> str:
+        tokens.append(match.group(0))
+        return f"\x00{len(tokens) - 1}\x00"
+
+    out = raw
+    out = _PART_GROUP_RE.sub(_protect, out)
+    out = _CONNECTOR_RE.sub(_protect, out)
+    out = _ACRONYM_RE.sub(_protect, out)
+    out = out.lower()
+
+    lines: list[str] = []
+    for line in out.split("\n"):
+        m = _LIST_PREFIX_RE.match(line)
+        if m:
+            prefix = m.group(1).lower()
+            rest = m.group(2)
+            # Capitalize sentence starts inside the rest
+            parts = re.split(r"([.!?]\s+)", rest)
+            rebuilt: list[str] = []
+            cap_next = True
+            for part in parts:
+                if re.fullmatch(r"[.!?]\s+", part or ""):
+                    rebuilt.append(part)
+                    cap_next = True
+                    continue
+                if cap_next and part:
+                    rebuilt.append(_cap_first_alpha(part))
+                    cap_next = False
+                else:
+                    rebuilt.append(part)
+            lines.append(prefix + "".join(rebuilt))
+        else:
+            parts = re.split(r"([.!?]\s+)", line)
+            rebuilt = []
+            cap_next = True
+            for part in parts:
+                if re.fullmatch(r"[.!?]\s+", part or ""):
+                    rebuilt.append(part)
+                    cap_next = True
+                    continue
+                if cap_next and part:
+                    rebuilt.append(_cap_first_alpha(part))
+                    cap_next = False
+                else:
+                    rebuilt.append(part)
+            lines.append("".join(rebuilt))
+    out = "\n".join(lines)
+
+    out = re.sub(
+        r"\bitem\s*(?:no\.?|nos\.?|number|#)?\s*-?\s*(\d{1,3})\b",
+        lambda m: f"Item No. {m.group(1)}",
+        out,
+        flags=re.I,
+    )
+    for i, tok in enumerate(tokens):
+        if _ACRONYM_RE.fullmatch(tok or ""):
+            restored = tok.upper()
+        elif _CONNECTOR_RE.fullmatch(tok or ""):
+            restored = tok[0].upper() + tok[1:]
+        else:
+            restored = tok
+        out = out.replace(f"\x00{i}\x00", restored)
+    return out
+
+
 def break_instruction_points(text: str) -> str:
     """
     Put list-style markers on their own lines inside instruction / Long Text.
@@ -242,6 +374,7 @@ def break_instruction_points(text: str) -> str:
 
     Does not invent bullets for ordinary prose; only splits on existing markers.
     Does NOT treat "(REVISION E)" / "REVISION E)" as a list point.
+    Also normalizes OCR ALL-CAPS into sentence case.
     """
     if not text:
         return ""
@@ -284,7 +417,7 @@ def break_instruction_points(text: str) -> str:
 
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return normalize_instruction_case(text.strip())
 
 
 def _note_step_dict(sheet: int, step_no: int, text: str) -> dict | None:
@@ -809,7 +942,12 @@ def extract_title_block(text: str, filename: str, page_count: int) -> dict:
         wm = WEIGHT.search(text)
     if wm:
         weight = f"{wm.group(1)} +/- {wm.group(2)} kg"
-    elif m := re.search(r"(?:WEIGHT|MASS|WT\.?)\s*:?\s*([^\n]+)", text, re.I):
+    elif m := re.search(
+        r"(?:WEIGHT|MASS|WT\.?)\s*:?\s*(\d+(?:[.,]\d+)?\s*(?:kg|g)\b)",
+        text,
+        re.I,
+    ):
+        # Accept only a numeric mass with unit — never a note / part-number line.
         weight = _norm_spaces(m.group(1))
 
     finish = ""

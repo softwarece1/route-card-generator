@@ -3,38 +3,47 @@
 -- ============================================================
 -- Connect to database "route_card" in pgAdmin, then run.
 -- Safe to re-run (upsert by code). Deactivates non-BEL rows.
--- Source: BEL dept list (BG excluded). Includes plant_id (WERKS).
+-- Source: BEL SBU list (BG excluded). plant_id left blank until
+-- SBU → SAP plant mapping is provided.
 -- ============================================================
 
 ALTER TABLE route_card.departments
     ADD COLUMN IF NOT EXISTS plant_id VARCHAR(32) NOT NULL DEFAULT '';
 
 INSERT INTO route_card.departments (code, name, plant_id, is_active, sort_order) VALUES
-    ('MR',          'MR',                    '1100', TRUE, 10),
-    ('MS',          'MS',                    '1200', TRUE, 20),
-    ('ARMS_AMMO',   'Arms & Ammunition',     '1300', TRUE, 30),
-    ('NS1',         'NS1',                   '1400', TRUE, 40),
-    ('NS2',         'NS2',                   '1500', TRUE, 50),
-    ('ADSN',        'ADSN',                  '1600', TRUE, 60),
-    ('MCE_NCS',     'MCE/NCS',               '1700', TRUE, 70),
-    ('NWCS',        'NWCS',                  '1800', TRUE, 80),
-    ('SC',          'SC',                    '1900', TRUE, 90),
-    ('US',          'US',                    '2000', TRUE, 100),
-    ('HLS',         'HLS',                   '2100', TRUE, 110),
-    ('EW_A',        'EW&A',                  '2200', TRUE, 120),
-    ('SEEKERS',     'Seekers (RF & IR)',     '2300', TRUE, 130),
-    ('EM',          'EM',                    '2400', TRUE, 140),
-    ('COMPONENTS',  'Components',            '2500', TRUE, 150),
-    ('SOFTWARE',    'Software',              '2600', TRUE, 160),
-    ('AF',          'A&F',                   '2700', TRUE, 170),
-    ('ES',          'ES',                    '2800', TRUE, 180),
-    ('CSG',         'CSG',                   '2900', TRUE, 190),
-    ('CUSTOMER',    'Customer',              '3000', TRUE, 200)
+    ('MR',          'MR',                    '', TRUE, 10),
+    ('MS',          'MS',                    '', TRUE, 20),
+    ('ARMS_AMMO',   'Arms & Ammunition',     '', TRUE, 30),
+    ('NS1',         'NS1',                   '', TRUE, 40),
+    ('NS2',         'NS2',                   '', TRUE, 50),
+    ('ADSN',        'ADSN',                  '', TRUE, 60),
+    ('MCE_NCS',     'MCE/NCS',               '', TRUE, 70),
+    ('NWCS',        'NWCS',                  '', TRUE, 80),
+    ('SC',          'SC',                    '', TRUE, 90),
+    ('US',          'US',                    '', TRUE, 100),
+    ('HLS',         'HLS',                   '', TRUE, 110),
+    ('EW_A',        'EW&A',                  '', TRUE, 120),
+    ('SEEKERS',     'Seekers (RF & IR)',     '', TRUE, 130),
+    ('EM',          'EM',                    '', TRUE, 140),
+    ('COMPONENTS',  'Components',            '', TRUE, 150),
+    ('SOFTWARE',    'Software',              '', TRUE, 160),
+    ('AF',          'A&F',                   '', TRUE, 170),
+    ('ES',          'ES',                    '', TRUE, 180),
+    ('CSG',         'CSG',                   '', TRUE, 190),
+    ('CUSTOMER',    'Customer',              '', TRUE, 200)
 ON CONFLICT (code) DO UPDATE
 SET name = EXCLUDED.name,
-    plant_id = EXCLUDED.plant_id,
     is_active = TRUE,
     sort_order = EXCLUDED.sort_order;
+
+-- Clear legacy dummy plant codes (1100–3000)
+UPDATE route_card.departments
+SET plant_id = ''
+WHERE plant_id IN (
+    '1100', '1200', '1300', '1400', '1500', '1600', '1700', '1800',
+    '1900', '2000', '2100', '2200', '2300', '2400', '2500', '2600',
+    '2700', '2800', '2900', '3000'
+);
 
 UPDATE route_card.departments
 SET is_active = FALSE

@@ -1,5 +1,4 @@
 import http from '@/lib/http';
-import { getToken } from '@/lib/auth';
 
 const BASE = '/route-card';
 
@@ -344,6 +343,19 @@ export async function analyzeSession(sessionId, { signal, vlmPageIndexes } = {})
   }
 }
 
+export async function relinkSessionWorkCentres(sessionId) {
+  try {
+    const { data } = await http.post(
+      `${BASE}/sessions/${sessionId}/operations/relink-work-centres`,
+      {},
+      { timeout: 120_000 },
+    );
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Re-link work centres failed'));
+  }
+}
+
 export async function fetchAnalyzeJobs({ mineOnly = true } = {}) {
   const { data } = await http.get(`${BASE}/analyze-jobs`, { params: { mineOnly } });
   return data;
@@ -420,9 +432,12 @@ export async function fetchMachinesQuietly() {
   }
 }
 
-export async function fetchWorkCenters(dept) {
+export async function fetchWorkCenters(dept, { plant } = {}) {
+  const params = {};
+  if (dept) params.dept = dept;
+  if (plant) params.plant = plant;
   const { data } = await http.get(`${BASE}/work-centers`, {
-    params: dept ? { dept } : undefined,
+    params: Object.keys(params).length ? params : undefined,
   });
   return data?.items || [];
 }
@@ -495,7 +510,7 @@ export async function createDepartment(body) {
     const { data } = await http.post(`${BASE}/departments`, body);
     return data;
   } catch (error) {
-    throw new Error(asError(error, 'Could not create department'));
+    throw new Error(asError(error, 'Could not create SBU'));
   }
 }
 
@@ -504,7 +519,7 @@ export async function updateDepartment(id, body) {
     const { data } = await http.put(`${BASE}/departments/${id}`, body);
     return data;
   } catch (error) {
-    throw new Error(asError(error, 'Could not update department'));
+    throw new Error(asError(error, 'Could not update SBU'));
   }
 }
 
@@ -516,83 +531,26 @@ export async function fetchDeptHeads(dept) {
 }
 
 /**
- * Stream SAP work-centre sync (NDJSON). Calls onEvent for each line.
+ * Sync unique SAP work centres (normal JSON, main1_fixed-style).
  * Payload: { plantCode, fromDate, toDate, partNumber?, isShared?, dept? }
  */
-export async function syncWorkCentersFromSap(payload, { onEvent, signal } = {}) {
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
-  const token = getToken();
+export async function syncWorkCentersFromSap(payload) {
   const body = {
-    from_date: payload.fromDate,
-    to_date: payload.toDate,
     part_number: payload.partNumber || null,
-    is_shared: payload.isShared !== false,
+    is_shared: false,
     dept: payload.dept || '',
   };
-  if (payload.plantCode) {
-    body.plant_code = payload.plantCode;
+  if (payload.fromDate) body.from_date = payload.fromDate;
+  if (payload.toDate) body.to_date = payload.toDate;
+  if (payload.plantCode) body.plant_code = payload.plantCode;
+  try {
+    const { data } = await http.post(`${BASE}/work-centers/sync-from-sap`, body, {
+      timeout: 600_000,
+    });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'SAP sync failed'));
   }
-  const res = await fetch(`${API_BASE}${BASE}/work-centers/sync-from-sap`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (!res.ok) {
-    let detail = '';
-    try {
-      const errJson = await res.json();
-      detail = detailFromPayload(errJson);
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `Sync failed (${res.status})`);
-  }
-  const reader = res.body?.getReader();
-  if (!reader) {
-    throw new Error('Streaming response not supported');
-  }
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let lastEvent = null;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      let evt;
-      try {
-        evt = JSON.parse(trimmed);
-      } catch {
-        continue;
-      }
-      lastEvent = evt;
-      if (typeof onEvent === 'function') onEvent(evt);
-      if (evt.type === 'error') {
-        throw new Error(evt.message || 'SAP sync failed');
-      }
-    }
-  }
-  if (buffer.trim()) {
-    try {
-      const evt = JSON.parse(buffer.trim());
-      lastEvent = evt;
-      if (typeof onEvent === 'function') onEvent(evt);
-      if (evt.type === 'error') {
-        throw new Error(evt.message || 'SAP sync failed');
-      }
-    } catch (e) {
-      if (e.message && !/Unexpected token|JSON/i.test(e.message)) throw e;
-    }
-  }
-  return lastEvent;
 }
 
 export async function fetchSystemHealth() {

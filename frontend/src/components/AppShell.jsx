@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { Badge } from "primereact/badge";
 import { Sidebar } from "primereact/sidebar";
+import { Tooltip } from "primereact/tooltip";
 import { getUser } from "@/lib/auth";
 import { logout } from "@/services/authApi";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -13,6 +14,23 @@ import {
   markNotificationRead,
 } from "@/services/routeCardApi";
 import "./app-shell.scss";
+
+const SIDEBAR_COLLAPSED_KEY = "pmf.rca.sidebarCollapsed";
+
+function readSidebarCollapsed() {
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+    if (stored === "1") return true;
+    if (stored === "0") return false;
+  } catch {
+    /* fall through */
+  }
+  try {
+    return window.matchMedia("(max-width: 860px)").matches;
+  } catch {
+    return false;
+  }
+}
 
 function roleLabel(role) {
   if (role === "admin") return "Admin";
@@ -57,7 +75,7 @@ function navItemsForRole(role) {
       to: "/org",
       end: false,
       icon: "pi pi-sitemap",
-      label: "Org",
+      label: "SBUs",
       id: "org",
     });
     base.push({
@@ -121,8 +139,21 @@ export default function AppShell({ active = "generator", children }) {
   const [notifications, setNotifications] = useState([]);
   const [unread, setUnread] = useState(0);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readSidebarCollapsed());
 
   const mustChangePassword = Boolean(currentUser?.mustChangePassword);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
 
   const loadNotifs = useCallback(async () => {
     try {
@@ -161,8 +192,18 @@ export default function AppShell({ active = "generator", children }) {
   }, [location.pathname, active]);
 
   return (
-    <div className="rca-shell rca-shell--with-sidebar">
-      <aside className="rca-sidebar" aria-label="Main navigation">
+    <div
+      className={`rca-shell rca-shell--with-sidebar${
+        sidebarCollapsed ? " rca-shell--sidebar-collapsed" : ""
+      }`}
+    >
+      {sidebarCollapsed ? (
+        <Tooltip target=".rca-sidebar__link" position="right" showDelay={200} />
+      ) : null}
+      <aside
+        className={`rca-sidebar${sidebarCollapsed ? " rca-sidebar--collapsed" : ""}`}
+        aria-label="Main navigation"
+      >
         <div className="rca-sidebar__brand">
           <span className="rca-sidebar__logo" aria-hidden>
             RC
@@ -179,6 +220,9 @@ export default function AppShell({ active = "generator", children }) {
               key={item.id}
               to={item.to}
               end={item.end}
+              data-pr-tooltip={sidebarCollapsed ? item.label : undefined}
+              data-pr-position="right"
+              aria-label={item.label}
               className={({ isActive }) =>
                 `rca-sidebar__link${isActive || active === item.id ? " is-active" : ""}`
               }
@@ -188,6 +232,21 @@ export default function AppShell({ active = "generator", children }) {
             </NavLink>
           ))}
         </nav>
+        <div className="rca-sidebar__footer">
+          <Button
+            type="button"
+            icon={sidebarCollapsed ? "pi pi-angle-right" : "pi pi-angle-left"}
+            rounded
+            text
+            size="small"
+            className="rca-sidebar__collapse-btn"
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!sidebarCollapsed}
+            tooltip={sidebarCollapsed ? "Expand" : "Collapse"}
+            tooltipOptions={{ position: "right", showDelay: 200 }}
+            onClick={toggleSidebar}
+          />
+        </div>
       </aside>
 
       <div className="rca-main">

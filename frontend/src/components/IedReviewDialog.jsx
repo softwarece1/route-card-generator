@@ -219,6 +219,9 @@ export default function IedReviewDialog({
         size="small"
         paginator
         rows={12}
+        rowsPerPageOptions={[10, 25, 50, 100]}
+        paginatorTemplate="CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
+        currentPageReportTemplate="Showing {first}-{last} of {totalRecords} entries"
         emptyMessage={loading ? "Loading…" : "No operations on this route."}
         dataKey="id"
       >

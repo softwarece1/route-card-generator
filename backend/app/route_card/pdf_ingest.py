@@ -179,6 +179,54 @@ def ocr_image_bytes(data: bytes) -> tuple[str, int, list[str]]:
     return "\n\n".join(chunks), n, warnings
 
 
+# Score OCR text for "looks like an engineering drawing" (orientation picker).
+_OCR_ORIENT_CUES = re.compile(
+    r"\b(NOTE|NOTES|ASSEMBLY|ITEM\s*\d|REVISION|SCALE|SHEET|GENERAL|"
+    r"MATERIAL|DRAWING|FIGURE|DETAIL|QTY|PART|TORQUE|DIMENSION|"
+    r"TITLE|APPROVED|CHECKED|DRAWN|GA\b)\b",
+    re.I,
+)
+
+
+def _score_ocr_orientation(text: str) -> int:
+    """Higher = more likely upright Latin engineering drawing text."""
+    if not text:
+        return 0
+    hits = len(_OCR_ORIENT_CUES.findall(text))
+    letters = sum(1 for c in text if c.isalpha())
+    # Penalize mostly-garbage short blobs
+    return hits * 12 + min(letters // 40, 25)
+
+
+def _ocr_image_auto_orient(img, pytesseract) -> tuple[str, int]:
+    """OCR a page image; try 0/90/180/270° when upright OCR looks weak.
+
+    Many GA exports are portrait pages with landscape content (or vice versa).
+    Tesseract OSD alone is unreliable on dense drawings — score cue keywords.
+    Returns (text, rotation_degrees_ccw).
+    """
+    try:
+        text0 = pytesseract.image_to_string(img) or ""
+    except Exception:
+        text0 = ""
+    score0 = _score_ocr_orientation(text0)
+    # Strong upright hit — skip extra rotations (normal vector/scan GAs)
+    if score0 >= 36:
+        return text0, 0
+
+    best_text, best_score, best_rot = text0, score0, 0
+    for rot in (90, 180, 270):
+        try:
+            im = img.rotate(rot, expand=True)
+            text = pytesseract.image_to_string(im) or ""
+        except Exception:
+            continue
+        score = _score_ocr_orientation(text)
+        if score > best_score:
+            best_text, best_score, best_rot = text, score, rot
+    return best_text, best_rot
+
+
 def ocr_pdf_pages(data: bytes, max_pages: int | None = None) -> tuple[str, int, list[str]]:
     """Render PDF pages with PyMuPDF and OCR with Tesseract (CPU)."""
     warnings: list[str] = []
@@ -203,16 +251,25 @@ def ocr_pdf_pages(data: bytes, max_pages: int | None = None) -> tuple[str, int, 
         if n > limit:
             warnings.append(f"OCR limited to first {limit} of {n} pages (OCR_MAX_PAGES).")
         chunks: list[str] = []
+        rotated_pages: list[int] = []
         for i in range(min(n, limit)):
             page = doc.load_page(i)
             pix = page.get_pixmap(matrix=matrix, alpha=False)
             img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             try:
-                text = pytesseract.image_to_string(img) or ""
+                text, rot = _ocr_image_auto_orient(img, pytesseract)
             except Exception as exc:
                 warnings.append(f"OCR failed on page {i + 1}: {exc}")
-                text = ""
+                text, rot = "", 0
+            if rot:
+                rotated_pages.append(i + 1)
             chunks.append(text)
+        if rotated_pages:
+            warnings.append(
+                "OCR auto-rotated page(s) "
+                + ", ".join(str(p) for p in rotated_pages)
+                + " for readable text (drawing was sideways/upside-down)."
+            )
         return "\n\n".join(chunks), n, warnings
     finally:
         doc.close()

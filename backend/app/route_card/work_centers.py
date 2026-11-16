@@ -1,9 +1,11 @@
-"""Dept-scoped WorkCenter + Machine master and extraction resolver."""
+"""Plant-scoped WorkCenter master and extraction resolver."""
 
 from __future__ import annotations
 
+import csv
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -18,6 +20,14 @@ from app.route_card.op_templates import (
     _is_dept_head,
     _validate_dept_name,
 )
+
+WORK_CENTRES_CSV = Path(__file__).resolve().parent / "data" / "work_centres.csv"
+DUMMY_WC_CODES = {"QUALITY", "ASM", "BOND", "TORQUE", "PCB", "SPECIAL", "CABLE"}
+DUMMY_PLANT_CODES = {
+    "1100", "1200", "1300", "1400", "1500", "1600", "1700", "1800",
+    "1900", "2000", "2100", "2200", "2300", "2400", "2500", "2600",
+    "2700", "2800", "2900", "3000",
+}
 
 VALID_MODES = {"manual", "machine", "hybrid"}
 LINK_LINKED = "linked"
@@ -35,6 +45,33 @@ HEURISTIC_TAG_MAP = {
     "Assembly": "assembly",
     "Cable Prep": "cable",
 }
+
+# Generator heuristic label → seeded WC code (dept wcAliases override these)
+BUILTIN_WC_ALIASES = {
+    "PCB Assembly": "PCB",
+    "Quality": "QUALITY",
+    "Assembly": "ASM",
+    "Bonding": "BOND",
+    "Torque": "TORQUE",
+    "Cable Prep": "CABLE",
+    "Special Assembly": "SPECIAL",
+}
+
+# Fields rewritten by the resolver (manual_override keeps the prior values)
+RESOLVER_LINK_KEYS = (
+    "workCentre",
+    "workCentreName",
+    "workCentreId",
+    "machine",
+    "machineId",
+    "linkStatus",
+    "linkConfidence",
+    "linkReason",
+    "sapCode",
+    "plant",
+    "type",
+    "tool",
+)
 
 DEFAULT_SHARED_SEED = [
     {
@@ -196,51 +233,99 @@ def _can_edit_wc(user: dict, wc: RcWorkCenter) -> bool:
         return True
     if wc.is_shared:
         return False
+    plant = (wc.plant or "").strip()
+    if plant and _is_dept_head(user):
+        user_plant = _plant_for_dept_name(_dept(user))
+        if user_plant and user_plant == plant:
+            return True
     return _can_write_dept(user, wc.dept or "")
+
+
+def _plant_for_dept_name(dept: str) -> str:
+    from app.route_card.models import RcDepartment
+
+    want = (dept or "").strip()
+    if not want:
+        return ""
+    rows = select(
+        d for d in RcDepartment if d.is_active and (d.name == want or d.code == want)
+    )[:1]
+    if not rows:
+        return ""
+    return (rows[0].plant_id or "").strip()
 
 
 @db_session
 def list_work_centers(
     user: dict,
     dept: str | None = None,
+    plant: str | None = None,
     include_shared: bool = True,
     active_only: bool = True,
+    include_machines: bool = False,
 ) -> list[dict]:
     role = (user or {}).get("role") or ""
     user_dept = _dept(user)
-    want = (dept or "").strip()
+    want_dept = (dept or "").strip()
+    want_plant = (plant or "").strip()
+
     if role == "dept_head":
-        want = user_dept
-    elif role == "engineer" and not want:
-        want = user_dept
-    elif role != "admin" and want and want != user_dept:
-        raise HTTPException(403, "Not allowed to list another department")
+        want_dept = user_dept
+    elif role == "engineer" and not want_dept and not want_plant:
+        want_dept = user_dept
+    elif role != "admin" and want_dept and want_dept != user_dept:
+        raise HTTPException(403, "Not allowed to list another SBU")
+
+    if want_dept and not want_plant:
+        want_plant = _plant_for_dept_name(want_dept)
 
     rows = select(w for w in RcWorkCenter)[:]
     out: list[RcWorkCenter] = []
     for w in rows:
         if active_only and not w.is_active:
             continue
+        if want_plant:
+            if (w.plant or "").strip() != want_plant:
+                continue
+            out.append(w)
+            continue
         if w.is_shared:
             if include_shared:
                 out.append(w)
             continue
-        if want:
-            if (w.dept or "") == want:
+        if want_dept:
+            if (w.dept or "") == want_dept:
                 out.append(w)
         elif _is_admin(user):
             out.append(w)
         elif (w.dept or "") == user_dept:
             out.append(w)
-    out.sort(key=lambda w: (0 if w.is_shared else 1, w.sort_order, w.name.lower()))
-    return [wc_dict(w, include_machines=True) for w in out]
+    out.sort(key=lambda w: ((w.plant or ""), w.sort_order, (w.code or "").lower(), w.name.lower()))
+    return [wc_dict(w, include_machines=include_machines) for w in out]
 
 
 @db_session
 def catalog_for_dropdowns(user: dict, dept: str | None = None) -> dict:
-    """Slim catalog for route editor / templates."""
-    items = list_work_centers(user, dept=dept, include_shared=True, active_only=True)
-    return {"items": items, "dept": (dept or _dept(user) or "").strip()}
+    """Slim catalog for route editor / templates — plant-scoped for the SBU."""
+    d = (dept or _dept(user) or "").strip()
+    plant = _plant_for_dept_name(d) if d else ""
+    if plant:
+        items = list_work_centers(
+            user,
+            plant=plant,
+            include_shared=False,
+            active_only=True,
+            include_machines=False,
+        )
+    else:
+        items = list_work_centers(
+            user,
+            dept=d or None,
+            include_shared=True,
+            active_only=True,
+            include_machines=False,
+        )
+    return {"items": items, "dept": d, "plant": plant}
 
 
 @db_session
@@ -248,11 +333,15 @@ def get_work_center(wc_id: int, user: dict) -> dict:
     wc = RcWorkCenter.get(id=wc_id)
     if not wc or not wc.is_active:
         raise HTTPException(404, "Work centre not found")
-    if not wc.is_shared:
+    if not _can_edit_wc(user, wc) and not _is_admin(user):
         role = (user or {}).get("role") or ""
-        if role != "admin" and (wc.dept or "") != _dept(user):
+        plant = (wc.plant or "").strip()
+        user_plant = _plant_for_dept_name(_dept(user)) if role != "admin" else plant
+        if plant and user_plant and plant == user_plant:
+            pass
+        elif not wc.is_shared and (wc.dept or "") != _dept(user) and role != "admin":
             raise HTTPException(403, "Not allowed")
-    return wc_dict(wc, include_machines=True)
+    return wc_dict(wc, include_machines=False)
 
 
 def _parse_mode(mode: str) -> str:
@@ -268,14 +357,22 @@ def upsert_work_center(user: dict, body: dict, wc_id: int | None = None) -> dict
     if is_shared and not _is_admin(user):
         raise HTTPException(403, "Only admin can manage shared work centres")
 
+    plant = (body.get("plant") or "").strip()
+    # Plant-scoped master: empty dept is allowed when plant is set
     if is_shared:
         dept = ""
+    elif plant and not (body.get("dept") or "").strip():
+        dept = ""
+        if not _is_admin(user):
+            user_plant = _plant_for_dept_name(_dept(user))
+            if not user_plant or user_plant != plant:
+                raise HTTPException(403, "Not allowed to edit work centres for this plant")
     else:
         dept = (body.get("dept") or _dept(user) or "").strip()
         if _is_dept_head(user):
             dept = _dept(user)
         if not _can_write_dept(user, dept):
-            raise HTTPException(403, "Not allowed to edit this department")
+            raise HTTPException(403, "Not allowed to edit this SBU")
         if dept:
             _validate_dept_name(dept)
 
@@ -291,8 +388,14 @@ def upsert_work_center(user: dict, body: dict, wc_id: int | None = None) -> dict
         if not _can_edit_wc(user, wc):
             raise HTTPException(403, "Not allowed")
     else:
-        # uniqueness
-        if is_shared:
+        # uniqueness by plant+code (or shared/dept legacy)
+        if plant:
+            hit = select(
+                w
+                for w in RcWorkCenter
+                if (w.plant or "") == plant and w.code == code and w.is_active
+            )[:1]
+        elif is_shared:
             hit = select(
                 w for w in RcWorkCenter if w.is_shared and w.code == code and w.is_active
             )[:1]
@@ -308,9 +411,9 @@ def upsert_work_center(user: dict, body: dict, wc_id: int | None = None) -> dict
             dept=dept,
             code=code,
             name=name,
-            mode=_parse_mode(body.get("mode")),
+            mode=_parse_mode(body.get("mode") or "manual"),
             is_shared=is_shared,
-            plant=body.get("plant") or "",
+            plant=plant,
             sap_code=body.get("sapCode") or body.get("sap_code") or "",
             capability_tags=_as_list(body.get("capabilityTags") or body.get("capability_tags")),
             match_keywords=_as_list(body.get("matchKeywords") or body.get("match_keywords")),
@@ -363,7 +466,7 @@ def upsert_work_center(user: dict, body: dict, wc_id: int | None = None) -> dict
 
     wc.updated_at = datetime.utcnow()
     commit()
-    return wc_dict(wc, include_machines=True)
+    return wc_dict(wc, include_machines=False)
 
 
 @db_session
@@ -548,7 +651,10 @@ def list_machines(user: dict | None = None, active_only: bool = True) -> list[di
 
 def _load_catalog(dept: str) -> list[RcWorkCenter]:
     d = (dept or "").strip()
+    plant = _plant_for_dept_name(d)
     rows = select(w for w in RcWorkCenter if w.is_active)[:]
+    if plant:
+        return [w for w in rows if (w.plant or "").strip() == plant]
     dept_rows = [w for w in rows if (not w.is_shared) and (w.dept or "") == d]
     shared = [w for w in rows if w.is_shared]
     return dept_rows + shared
@@ -559,17 +665,36 @@ def _hint_tags(heuristic_wc: str, instruction: str) -> set[str]:
     hw = (heuristic_wc or "").strip()
     if hw in HEURISTIC_TAG_MAP:
         tags.add(HEURISTIC_TAG_MAP[hw])
+    else:
+        # After alias remap, heuristic may be a code (PCB, QUALITY, …)
+        for label, code in BUILTIN_WC_ALIASES.items():
+            if _norm(hw) == _norm(code) and label in HEURISTIC_TAG_MAP:
+                tags.add(HEURISTIC_TAG_MAP[label])
+                break
     t = (instruction or "").upper()
     if "TORQUE" in t:
         tags.add("torque")
-    if any(k in t for k in ("SOLDER", "PCB", "DRILL", "ROHS")):
+    if any(
+        k in t
+        for k in (
+            "SOLDER",
+            "PCB",
+            "DRILL",
+            "ROHS",
+            "SHORT",
+            "JUMPER",
+            "CONFORMAL",
+            "TRANSFORMER",
+            "BARE BOARD",
+        )
+    ):
         tags.add("pcb")
         tags.add("solder")
-    if any(k in t for k in ("BOND", "GLUE", "PASTE", "PEEL", "MASK", "CLEAN")):
+    if any(k in t for k in ("BOND", "GLUE", "PASTE", "PEEL", "MASK", "CLEAN", "MASKING")):
         tags.add("bonding")
-    if any(k in t for k in ("INSPECT", "VERIFY", "WARPAGE", "WEIGHT")):
+    if any(k in t for k in ("INSPECT", "VERIFY", "WARPAGE", "WEIGHT", "VISUAL")):
         tags.add("inspect")
-    if any(k in t for k in ("CABLE", "CRIMP", "WIRE", "HARNESS")):
+    if any(k in t for k in ("CABLE", "CRIMP", "WIRE", "HARNESS", "ENAMELED", "ENAMEL")):
         tags.add("cable")
     if any(k in t for k in ("HEAT SINK", "SFPDP", "OPTICAL")):
         tags.add("special")
@@ -578,16 +703,50 @@ def _hint_tags(heuristic_wc: str, instruction: str) -> set[str]:
     return tags
 
 
+def _derived_keywords(wc: Any) -> list[str]:
+    """Keywords from match_keywords, or tokens of code/name/sap_code when empty."""
+    stored = [str(k).upper().strip() for k in (getattr(wc, "match_keywords", None) or []) if k]
+    if stored:
+        return stored
+    toks: list[str] = []
+    for src in (
+        getattr(wc, "code", None),
+        getattr(wc, "name", None),
+        getattr(wc, "sap_code", None),
+    ):
+        for part in re.findall(r"[A-Za-z0-9]{2,}", str(src or "")):
+            u = part.upper()
+            if u not in toks and u not in {"WC", "NO", "OF", "THE", "AND", "OR"}:
+                toks.append(u)
+    return toks
+
+
+def _effective_aliases(aliases: dict | None) -> dict[str, str]:
+    """Built-in heuristic→code map; dept/session aliases win on conflict."""
+    out = dict(BUILTIN_WC_ALIASES)
+    for k, v in (aliases or {}).items():
+        key = str(k or "").strip()
+        val = str(v or "").strip()
+        if key and val:
+            out[key] = val
+    return out
+
+
 def _score_wc(wc: RcWorkCenter, heuristic: str, instruction: str, aliases: dict) -> float:
     score = 0.0
-    # 1) alias exact → code
+    aliases = _effective_aliases(aliases)
+    # 1) alias exact → code / name / sap
     alias_target = aliases.get(heuristic or "")
-    if alias_target and _norm(alias_target) in (_norm(wc.code), _norm(wc.name), _norm(wc.sap_code or "")):
+    if alias_target and _norm(alias_target) in (
+        _norm(wc.code),
+        _norm(wc.name),
+        _norm(wc.sap_code or ""),
+    ):
         score += 100.0
-    # 2) keywords
+    # 2) keywords (configured or derived from SAP code/name)
     text_u = (instruction or "").upper()
-    kws = [str(k).upper() for k in (wc.match_keywords or []) if k]
-    hits = sum(1 for k in kws if k and k in text_u)
+    kws = _derived_keywords(wc)
+    hits = sum(1 for k in kws if k and len(k) >= 2 and k in text_u)
     if hits:
         score += 40.0 + min(hits, 5) * 5.0
     # 3) capability tags
@@ -596,13 +755,20 @@ def _score_wc(wc: RcWorkCenter, heuristic: str, instruction: str, aliases: dict)
     overlap = want & have
     if overlap:
         score += 25.0 + 5.0 * len(overlap)
-    # 4) fuzzy name/code vs heuristic
+    # 4) fuzzy name/code vs heuristic (and vs aliased code)
     hn = _norm(heuristic)
-    if hn and hn in (_norm(wc.name), _norm(wc.code), _norm(wc.sap_code or "")):
+    targets = (_norm(wc.name), _norm(wc.code), _norm(wc.sap_code or ""))
+    if hn and hn in targets:
         score += 50.0
     elif hn and (hn in _norm(wc.name) or _norm(wc.name) in hn):
         score += 20.0
-    # prefer dept over shared slightly via sort_order tie-break outside
+    if alias_target:
+        an = _norm(alias_target)
+        if an and an in targets:
+            score += 30.0
+    # Prefer plant (non-shared) rows slightly over shared fallbacks
+    if not getattr(wc, "is_shared", False):
+        score += 3.0
     score += max(0, 10 - (wc.sort_order or 0) * 0.01)
     return score
 
@@ -634,6 +800,27 @@ def _pick_machine(wc: RcWorkCenter, instruction: str) -> tuple[RcMachine | None,
     return None, LINK_PARTIAL
 
 
+def _note_text_bag(note: dict) -> str:
+    return " ".join(
+        str(note.get(k) or "")
+        for k in ("text", "insight", "elaboratedText")
+    )
+
+
+def _instruction_bag(row: dict, note_by_step: dict[int, str]) -> str:
+    op_no = int(row.get("opNo") or 0)
+    step = op_no // 10 if op_no else 0
+    note_bits = note_by_step.get(step) or note_by_step.get(op_no) or ""
+    return " ".join(
+        [
+            str(row.get("instructionText") or ""),
+            str(row.get("insight") or ""),
+            str(row.get("operation") or ""),
+            note_bits,
+        ]
+    )
+
+
 @db_session
 def resolve_operations(
     operations: list[dict],
@@ -642,21 +829,32 @@ def resolve_operations(
     aliases: dict | None = None,
     notes: list | None = None,
 ) -> list[dict]:
-    """Link free-text WC/machine on ops to dept catalog. Mutates copies."""
+    """Link free-text WC/machine on ops to plant/dept catalog. Mutates copies."""
     if not getattr(settings, "WC_RESOLVER_ENABLED", True):
         return operations
 
     d = (dept or "").strip()
     catalog = _load_catalog(d)
-    aliases = aliases or {}
-    note_by_op: dict[int, str] = {}
+    aliases = _effective_aliases(aliases)
+    note_by_step: dict[int, str] = {}
     for n in notes or []:
-        if isinstance(n, dict):
-            note_by_op[int(n.get("stepNo") or 0)] = (
-                (n.get("elaboratedText") or "") + " " + (n.get("text") or "")
-            )
+        if not isinstance(n, dict):
+            continue
+        bag = _note_text_bag(n)
+        try:
+            step = int(n.get("stepNo") or 0)
+        except (TypeError, ValueError):
+            step = 0
+        if step:
+            note_by_step[step] = (note_by_step.get(step) or "") + " " + bag
+        try:
+            label = int(str(n.get("label") or "").strip() or 0)
+        except (TypeError, ValueError):
+            label = 0
+        if label and label != step:
+            note_by_step[label] = (note_by_step.get(label) or "") + " " + bag
 
-    has_dept_catalog = any(not w.is_shared for w in catalog)
+    has_plant_catalog = any(not w.is_shared for w in catalog)
     out: list[dict] = []
     for op in operations or []:
         row = dict(op)
@@ -665,39 +863,32 @@ def resolve_operations(
             continue
 
         heuristic = (row.get("workCentre") or row.get("workCenter") or "").strip()
-        instruction = (
-            (row.get("instructionText") or "")
-            + " "
-            + (row.get("operation") or "")
-            + " "
-            + note_by_op.get(int(row.get("opNo") or 0) // 10, "")
-        )
+        instruction = _instruction_bag(row, note_by_step)
 
         if not catalog:
             row["linkStatus"] = ""
             row["linkConfidence"] = None
-            row["linkReason"] = "No WC master configured"
+            row["linkReason"] = "No WC master configured for this plant/SBU"
             out.append(row)
             continue
 
-        # alias remap first (string)
+        # alias remap first (string label → code)
         if heuristic in aliases:
             heuristic = aliases[heuristic]
             row["workCentre"] = heuristic
 
-        scored = [( _score_wc(w, heuristic, instruction, aliases), w) for w in catalog]
+        scored = [(_score_wc(w, heuristic, instruction, aliases), w) for w in catalog]
         scored.sort(key=lambda x: (-x[0], 0 if not x[1].is_shared else 1, x[1].sort_order))
         best_score, best = scored[0]
         second = scored[1][0] if len(scored) > 1 else 0.0
 
         if best_score < 20.0:
-            if has_dept_catalog:
-                # stop inventing — keep heuristic label, mark unresolved
+            if has_plant_catalog:
                 row["linkStatus"] = LINK_UNRESOLVED
                 row["linkConfidence"] = 0.0
                 row["workCentreId"] = None
                 row["machineId"] = None
-                row["linkReason"] = "No matching work centre in department catalog"
+                row["linkReason"] = "No matching work centre in plant catalog"
             else:
                 row["linkStatus"] = ""
                 row["linkReason"] = "Using heuristic (shared catalog only / weak match)"
@@ -705,13 +896,19 @@ def resolve_operations(
             continue
 
         if second > 0 and abs(best_score - second) < 5.0 and best_score < 80.0:
-            row["linkStatus"] = LINK_UNRESOLVED
-            row["linkConfidence"] = round(min(best_score / 100.0, 0.99), 3)
-            row["workCentreId"] = None
-            row["machineId"] = None
-            row["linkReason"] = "Ambiguous work centre match"
-            out.append(row)
-            continue
+            # Prefer non-shared when scores are nearly tied
+            top = [s for s in scored if abs(s[0] - best_score) < 5.0]
+            plant_hits = [s for s in top if not s[1].is_shared]
+            if len(plant_hits) == 1 and plant_hits[0][0] >= 20.0:
+                best_score, best = plant_hits[0]
+            else:
+                row["linkStatus"] = LINK_UNRESOLVED
+                row["linkConfidence"] = round(min(best_score / 100.0, 0.99), 3)
+                row["workCentreId"] = None
+                row["machineId"] = None
+                row["linkReason"] = "Ambiguous work centre match"
+                out.append(row)
+                continue
 
         # linked
         label = best.name
@@ -734,7 +931,6 @@ def resolve_operations(
                 row["machine"] = ""
                 row["machineId"] = None
             else:
-                # leave prior machine text if partial
                 if mstatus == LINK_PARTIAL:
                     row["machineId"] = None
         row["linkStatus"] = mstatus
@@ -742,6 +938,47 @@ def resolve_operations(
         row["linkReason"] = f"Matched {best.code} ({best.name})"
         out.append(row)
     return out
+
+
+def merge_resolved_preserving_overrides(
+    existing: list[dict],
+    resolved: list[dict],
+) -> tuple[list[dict], dict[str, int]]:
+    """
+    Apply resolver output onto existing ops.
+
+    Rows with linkStatus=manual_override keep WC/machine fields unchanged.
+    Returns (merged_ops, counts) where counts has linked/unresolved/partial/skippedOverrides.
+    """
+    by_no = {int(r.get("opNo") or 0): dict(r) for r in (resolved or []) if r}
+    out: list[dict] = []
+    counts = {"linked": 0, "unresolved": 0, "partial": 0, "skippedOverrides": 0, "other": 0}
+    for op in existing or []:
+        row = dict(op)
+        op_no = int(row.get("opNo") or 0)
+        status = (row.get("linkStatus") or row.get("link_status") or "").strip()
+        if status == LINK_OVERRIDE:
+            counts["skippedOverrides"] += 1
+            out.append(row)
+            continue
+        fresh = by_no.get(op_no)
+        if not fresh:
+            out.append(row)
+            continue
+        for key in RESOLVER_LINK_KEYS:
+            if key in fresh:
+                row[key] = fresh.get(key)
+        st = (row.get("linkStatus") or "").strip()
+        if st == LINK_LINKED:
+            counts["linked"] += 1
+        elif st == LINK_UNRESOLVED:
+            counts["unresolved"] += 1
+        elif st == LINK_PARTIAL:
+            counts["partial"] += 1
+        else:
+            counts["other"] += 1
+        out.append(row)
+    return out, counts
 
 
 def unresolved_wc_messages(operations: list[dict]) -> list[str]:
@@ -816,92 +1053,133 @@ def _seed_machines_for_wc(wc: RcWorkCenter, plant: str) -> int:
 
 
 @db_session
-def seed_default_catalog(dept: str | None = None, plant: str | None = None) -> dict:
-    """Idempotent seed of shared + dept WCs/machines.
+def deactivate_dummy_work_centers() -> dict:
+    """Deactivate seeded Quality/ASM/… centres (empty/dummy plant) and their machines.
 
-    If ``dept`` is omitted, seeds shared catalog plus every active RcDepartment
-    using each department's ``plant_id``.
+    Does not touch real spreadsheet centres that reuse codes like ASM/PCB on a
+    real SAP plant.
     """
-    from app.route_card.models import RcDepartment
+    deactivated = 0
+    machines = 0
+    for wc in select(w for w in RcWorkCenter if w.is_active)[:]:
+        plant = (wc.plant or "").strip()
+        code = (wc.code or "").strip().upper()
+        is_dummy_seed = (
+            wc.is_shared
+            or plant in DUMMY_PLANT_CODES
+            or (code in DUMMY_WC_CODES and plant == "")
+        )
+        if not is_dummy_seed:
+            continue
+        wc.is_active = False
+        wc.updated_at = datetime.utcnow()
+        deactivated += 1
+        for m in wc.machines:
+            if m.is_active:
+                m.is_active = False
+                machines += 1
+    for m in select(x for x in RcMachine if x.is_active)[:]:
+        wc = m.work_center
+        if wc and not wc.is_active:
+            m.is_active = False
+            machines += 1
+    commit()
+    return {"deactivated": deactivated, "machinesDeactivated": machines}
+
+
+@db_session
+def import_work_centres_from_csv(csv_path: Path | None = None) -> dict:
+    """Idempotent upsert of plant-scoped work centres from the end-user CSV."""
+    path = Path(csv_path) if csv_path else WORK_CENTRES_CSV
+    if not path.is_file():
+        return {"created": 0, "updated": 0, "skipped": 0, "path": str(path), "error": "missing"}
 
     created = 0
-    machines = 0
-    # shared
-    for spec in DEFAULT_SHARED_SEED:
-        hit = select(
-            w
-            for w in RcWorkCenter
-            if w.is_shared and w.code == spec["code"]
-        )[:1]
-        if hit:
-            wc = hit[0]
-        else:
-            wc = RcWorkCenter(
-                dept="",
-                code=spec["code"],
-                name=spec["name"],
-                mode=spec["mode"],
-                is_shared=True,
-                plant="",
-                capability_tags=spec["capability_tags"],
-                match_keywords=spec["match_keywords"],
-                sort_order=spec["sort_order"],
-                is_active=True,
-            )
-            created += 1
-        machines += _seed_machines_for_wc(wc, "")
+    updated = 0
+    skipped = 0
+    # Index existing by (plant, code)
+    existing = {
+        ((w.plant or "").strip(), (w.code or "").strip().upper()): w
+        for w in select(w for w in RcWorkCenter)[:]
+    }
 
-    targets: list[tuple[str, str]] = []
-    d = (dept or "").strip()
-    if d:
-        plant_s = (plant or "").strip()
-        if not plant_s:
-            row = select(x for x in RcDepartment if x.is_active and x.name == d)[:1]
-            plant_s = (row[0].plant_id or "").strip() if row else ""
-        targets.append((d, plant_s))
-    else:
-        for row in select(x for x in RcDepartment if x.is_active).order_by(
-            RcDepartment.sort_order
-        )[:]:
-            targets.append((row.name, (row.plant_id or "").strip()))
-
-    for dept_name, plant_s in targets:
-        for spec in DEFAULT_DEPT_SEED:
-            hit = select(
-                w
-                for w in RcWorkCenter
-                if (not w.is_shared) and w.dept == dept_name and w.code == spec["code"]
-            )[:1]
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            plant = str(row.get("plant") or "").strip()
+            code = str(row.get("code") or "").strip().upper()
+            name = str(row.get("name") or "").strip() or code
+            if not plant or not code:
+                skipped += 1
+                continue
+            key = (plant, code)
+            hit = existing.get(key)
             if hit:
-                wc = hit[0]
-                if plant_s and not (wc.plant or "").strip():
-                    wc.plant = plant_s
+                changed = False
+                if (hit.name or "").strip() != name:
+                    hit.name = name
+                    changed = True
+                if not (hit.sap_code or "").strip():
+                    hit.sap_code = code
+                    changed = True
+                if hit.mode != "manual":
+                    hit.mode = "manual"
+                    changed = True
+                if not hit.is_active:
+                    hit.is_active = True
+                    changed = True
+                if hit.is_shared:
+                    hit.is_shared = False
+                    changed = True
+                if changed:
+                    hit.updated_at = datetime.utcnow()
+                    updated += 1
             else:
                 wc = RcWorkCenter(
-                    dept=dept_name,
-                    code=spec["code"],
-                    name=spec["name"],
-                    mode=spec["mode"],
+                    dept="",
+                    code=code,
+                    name=name,
+                    mode="manual",
                     is_shared=False,
-                    plant=plant_s,
-                    capability_tags=spec["capability_tags"],
-                    match_keywords=spec["match_keywords"],
-                    sort_order=spec["sort_order"],
+                    plant=plant,
+                    sap_code=code,
+                    capability_tags=[],
+                    match_keywords=[code],
+                    default_tool="",
+                    sort_order=0,
                     is_active=True,
                 )
+                existing[key] = wc
                 created += 1
-            machines += _seed_machines_for_wc(wc, plant_s)
 
     commit()
     return {
         "created": created,
-        "machinesCreated": machines,
-        "dept": d or "*",
-        "deptCount": len(targets),
+        "updated": updated,
+        "skipped": skipped,
+        "path": str(path),
     }
 
 
-DEFAULT_SEED_PASSWORD = "Adm!n@123bel"
+@db_session
+def seed_default_catalog(dept: str | None = None, plant: str | None = None) -> dict:
+    """Deprecated: replaced by CSV import. Kept as no-op for callers."""
+    return {
+        "created": 0,
+        "machinesCreated": 0,
+        "dept": (dept or "").strip() or "*",
+        "deptCount": 0,
+        "deprecated": True,
+    }
+
+
+# Legacy shared seed password — migrated to Admin@<empId> on startup
+LEGACY_SEED_PASSWORD = "Adm!n@123bel"
+
+
+def seed_password_for_emp(emp_id: str) -> str:
+    """Per-user seed password: Admin@ + 6-digit empId (e.g. Admin@482917)."""
+    return f"Admin@{str(emp_id or '').strip()}"
 
 
 def _dept_name_slug(code: str) -> str:
@@ -930,15 +1208,16 @@ def seed_dept_head_and_ied_users() -> dict:
     """Idempotent demo users: dept-head-{slug} + IED-{slug} per active department.
 
     empIds are random-looking stable 6-digit numbers (edit later in Users UI).
-    Password for all: Adm!n@123bel
+    Password: Admin@<empId> (e.g. Admin@482917).
+    Also migrates IED / dept_head accounts still on the legacy shared password.
     """
     from app.route_card.models import RcDepartment, RcUser
-    from app.security import hash_password
+    from app.security import hash_password, verify_password
 
-    pw_hash = hash_password(DEFAULT_SEED_PASSWORD)
     used = {u.emp_id for u in select(u for u in RcUser)[:]}
     created = 0
     skipped = 0
+    reset = 0
 
     for dept in select(d for d in RcDepartment if d.is_active).order_by(
         RcDepartment.sort_order
@@ -959,15 +1238,27 @@ def seed_dept_head_and_ied_users() -> dict:
                 emp_id=emp_id,
                 name=name,
                 dept=dept.name,
-                password_hash=pw_hash,
+                password_hash=hash_password(seed_password_for_emp(emp_id)),
                 role=role,
                 is_active=True,
                 must_change_password=False,
             )
             created += 1
 
+    # Migrate any IED / dept_head still on the old shared default
+    for u in select(u for u in RcUser if u.role in ("ied", "dept_head") and u.is_active)[:]:
+        if not u.password_hash:
+            continue
+        if not verify_password(LEGACY_SEED_PASSWORD, u.password_hash):
+            continue
+        emp = (u.emp_id or "").strip()
+        if not emp:
+            continue
+        u.password_hash = hash_password(seed_password_for_emp(emp))
+        reset += 1
+
     commit()
-    return {"created": created, "skipped": skipped}
+    return {"created": created, "skipped": skipped, "reset": reset}
 
 
 @db_session
@@ -1033,77 +1324,56 @@ def ensure_sap_work_center(
     *,
     sap_code: str,
     plant: str = "",
-    is_shared: bool = True,
+    is_shared: bool = False,
     dept: str = "",
 ) -> tuple[dict, bool]:
-    """Find or create a work centre from a SAP Arbpl code. Returns (wc_dict, created)."""
+    """Find or create a plant-scoped work centre from a SAP Arbpl code.
+
+    Preserves an existing spreadsheet name. Returns (wc_dict, created).
+    """
     sap = (sap_code or "").strip()
     if not sap:
         raise HTTPException(400, "sap_code required")
 
     plant = (plant or "").strip()
-    want_shared = bool(is_shared)
-    if want_shared and not _is_admin(user):
-        # Dept heads sync into their department instead of shared
-        want_shared = False
-    if want_shared:
-        dept = ""
-    else:
-        dept = (dept or _dept(user) or "").strip()
-        if _is_dept_head(user):
-            dept = _dept(user)
-        if not _can_write_dept(user, dept):
-            raise HTTPException(403, "Not allowed to sync into this department")
-        if dept:
-            _validate_dept_name(dept)
+    if not plant:
+        raise HTTPException(400, "plant is required for SAP work centre upsert")
 
-    # Match existing by sap_code or code within the same shared/dept scope
-    rows = select(w for w in RcWorkCenter if w.is_active)[:]
+    # Plant-scoped master — ignore shared/dept copies
+    code = _sap_code_to_wc_code(sap)
+    rows = select(w for w in RcWorkCenter if (w.plant or "") == plant)[:]
     hit: RcWorkCenter | None = None
     for w in rows:
-        if not (_norm(w.sap_code or "") == _norm(sap) or _norm(w.code) == _norm(sap)):
-            continue
-        if want_shared and w.is_shared:
-            hit = w
-            break
-        if (not want_shared) and (not w.is_shared) and (w.dept or "") == dept:
+        if _norm(w.sap_code or "") == _norm(sap) or _norm(w.code) == _norm(code):
             hit = w
             break
 
     if hit:
         changed = False
-        if plant and not (hit.plant or "").strip():
-            hit.plant = plant
+        if not hit.is_active:
+            hit.is_active = True
             changed = True
         if not (hit.sap_code or "").strip():
             hit.sap_code = sap
             changed = True
+        # Keep spreadsheet / curated name; only fill blank names from SAP
+        if not (hit.name or "").strip():
+            hit.name = sap
+            changed = True
+        if hit.is_shared:
+            hit.is_shared = False
+            changed = True
         if changed:
             hit.updated_at = datetime.utcnow()
             commit()
-        return wc_dict(hit, include_machines=True), False
-
-    code = _sap_code_to_wc_code(sap)
-    # Avoid code collision within scope
-    if want_shared:
-        collision = select(
-            w for w in RcWorkCenter if w.is_shared and w.code == code and w.is_active
-        )[:1]
-    else:
-        collision = select(
-            w
-            for w in RcWorkCenter
-            if (not w.is_shared) and w.dept == dept and w.code == code and w.is_active
-        )[:1]
-    if collision:
-        code = f"{code[:56]}-{_norm(plant or 'P')[:6]}"[:64]
+        return wc_dict(hit, include_machines=False), False
 
     wc = RcWorkCenter(
-        dept=dept,
+        dept=(dept or "").strip(),
         code=code,
         name=sap,
-        mode="hybrid",
-        is_shared=want_shared,
+        mode="manual",
+        is_shared=False,
         plant=plant,
         sap_code=sap,
         capability_tags=[],
@@ -1114,67 +1384,63 @@ def ensure_sap_work_center(
     )
     wc.updated_at = datetime.utcnow()
     commit()
-    return wc_dict(wc, include_machines=True), True
+    return wc_dict(wc, include_machines=False), True
 
 
-def sync_work_centers_from_sap_events(
+def sync_work_centers_from_sap(
     user: dict,
     *,
     plant_code: str,
     from_date: str,
     to_date: str,
     part_number: str | None = None,
-    is_shared: bool = True,
+    is_shared: bool = False,
     dept: str = "",
-):
-    """Yield NDJSON-ready dict events while discovering unique SAP work centres."""
-    import json
+) -> dict[str, Any]:
+    """Discover unique SAP work centres and upsert into the plant master.
+
+    Response shape mirrors main1_fixed.search_unique_work_center, plus upsert counts.
+    On success stamps ``work_center_synced_at`` on the plant.
+    """
+    import logging
 
     from app.config.settings import settings
+    from app.route_card import plants as plants_mod
     from app.route_card import sap_oarc_client as sap
 
-    def _line(obj: dict) -> str:
-        return json.dumps(obj, default=str) + "\n"
+    logger = logging.getLogger("route_card.work_centers")
 
     plant = (plant_code or "").strip()
     if not plant:
-        yield _line({"type": "error", "message": "Plant code is required"})
-        return
+        raise HTTPException(400, "Plant code is required")
     if from_date > to_date:
-        yield _line({"type": "error", "message": "From date cannot be after to date"})
-        return
+        raise HTTPException(400, "From date cannot be after to date")
 
     part = (part_number or "").strip() or None
-    yield _line(
-        {
-            "type": "status",
-            "message": "Fetching production orders from SAP… This may take a while.",
-            "phase": "list",
-        }
-    )
+    criteria = {
+        "plant_code": plant,
+        "from_date": from_date,
+        "to_date": to_date,
+        "part_number": part,
+        "is_shared": False,
+        "dept": (dept or "").strip(),
+    }
 
     try:
         list_result = sap.list_production_orders(plant, from_date, to_date, part)
     except Exception as exc:
-        logger = __import__("logging").getLogger("route_card.work_centers")
         logger.exception("SAP order list failed")
-        yield _line(
-            {
-                "type": "error",
-                "message": f"SAP order list failed ({type(exc).__name__}). Check SAP credentials / gateway.",
-            }
-        )
-        return
+        raise HTTPException(
+            502,
+            f"SAP order list failed ({type(exc).__name__}). Check SAP credentials / gateway.",
+        ) from exc
 
     status = str(list_result.get("status") or "S").upper()
     if status in ("E", "A", "X"):
-        yield _line(
-            {
-                "type": "error",
-                "message": f"SAP list rejected search: {list_result.get('message') or status}",
-            }
+        raise HTTPException(
+            502,
+            f"SAP list rejected search: {list_result.get('message') or status}",
         )
-        return
 
     orders = list(
         dict.fromkeys(
@@ -1185,45 +1451,29 @@ def sync_work_centers_from_sap_events(
     )
     max_orders = int(settings.SAP_MAX_ORDERS or 500)
     if len(orders) > max_orders:
-        yield _line(
-            {
-                "type": "error",
-                "message": f"Search returned {len(orders)} orders; narrow date range (limit {max_orders}).",
-            }
+        raise HTTPException(
+            422,
+            f"Search returned {len(orders)} orders; narrow date range (limit {max_orders}).",
         )
-        return
-
-    yield _line(
-        {
-            "type": "status",
-            "message": f"Found {len(orders)} orders. Scanning operations for unique work centres…",
-            "phase": "scan",
-            "totalOrders": len(orders),
-        }
-    )
 
     seen: set[str] = set()
     created_count = 0
     existing_count = 0
     success_orders = 0
-    failed_orders = 0
+    failures: list[dict[str, str]] = []
 
-    for idx, order in enumerate(orders, start=1):
-        yield _line(
-            {
-                "type": "progress",
-                "orderIndex": idx,
-                "totalOrders": len(orders),
-                "productionOrder": order,
-                "uniqueCount": len(seen),
-                "message": f"Scanning order {idx} of {len(orders)}…",
-            }
-        )
+    for order in orders:
         try:
             detail = sap.detail_production_order(order)
             dstatus = str(detail.get("status") or "S").upper()
             if dstatus in ("E", "A", "X"):
-                failed_orders += 1
+                failures.append(
+                    {
+                        "production_order": order,
+                        "status": dstatus,
+                        "message": str(detail.get("message") or dstatus),
+                    }
+                )
                 continue
             success_orders += 1
             for op in detail.get("operations") or []:
@@ -1236,19 +1486,19 @@ def sync_work_centers_from_sap_events(
                 seen.add(key)
                 op_plant = str(op.get("work_center_plant") or plant or "").strip()
                 try:
-                    item, created = ensure_sap_work_center(
+                    _item, created = ensure_sap_work_center(
                         user,
                         sap_code=center,
-                        plant=op_plant,
-                        is_shared=is_shared,
+                        plant=op_plant or plant,
+                        is_shared=False,
                         dept=dept,
                     )
                 except HTTPException as he:
-                    yield _line(
+                    failures.append(
                         {
-                            "type": "warning",
+                            "production_order": order,
+                            "status": "UPSERT",
                             "message": he.detail if isinstance(he.detail, str) else str(he.detail),
-                            "sapCode": center,
                         }
                     )
                     continue
@@ -1256,32 +1506,41 @@ def sync_work_centers_from_sap_events(
                     created_count += 1
                 else:
                     existing_count += 1
-                yield _line(
-                    {
-                        "type": "work_center",
-                        "created": created,
-                        "item": item,
-                        "uniqueCount": len(seen),
-                        "message": (
-                            f"Added {center}" if created else f"Already present: {center}"
-                        ),
-                    }
-                )
-        except Exception:
-            failed_orders += 1
-            logger = __import__("logging").getLogger("route_card.work_centers")
+        except Exception as exc:
             logger.exception("Failed to fetch production order %r", order)
+            failures.append(
+                {
+                    "production_order": order,
+                    "status": "EXCEPTION",
+                    "message": type(exc).__name__,
+                }
+            )
 
-    yield _line(
-        {
-            "type": "done",
-            "message": "Work-centre sync completed",
-            "totalOrders": len(orders),
-            "successfulOrders": success_orders,
-            "failedOrders": failed_orders,
-            "uniqueCount": len(seen),
-            "createdCount": created_count,
-            "existingCount": existing_count,
-            "workCenters": sorted(seen),
-        }
-    )
+    # Stamp last sync only when the SAP walk completed (partial OK if we got data)
+    synced_at = None
+    try:
+        plants_mod.mark_work_center_synced(plant)
+        synced_at = plants_mod.get_work_center_synced_at(plant)
+    except Exception:
+        logger.exception("Failed to stamp work_center_synced_at for plant %s", plant)
+
+    return {
+        "message": (
+            "Work-centre sync completed"
+            if not failures
+            else "Work-centre sync partially completed; inspect failed_orders"
+        ),
+        "status": "S" if not failures else "P",
+        "criteria": criteria,
+        "total_orders": len(orders),
+        "successful_orders": success_orders,
+        "failed_orders_count": len(failures),
+        "failed_orders": failures,
+        "count": len(seen),
+        "work_centers": sorted(seen),
+        "created_count": created_count,
+        "existing_count": existing_count,
+        "workCenterSyncedAt": (
+            synced_at.isoformat() + "Z" if synced_at else None
+        ),
+    }

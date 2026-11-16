@@ -4,13 +4,13 @@ import { Button } from "primereact/button";
 import { Column } from "primereact/column";
 import { DataTable } from "primereact/datatable";
 import { Dialog } from "primereact/dialog";
+import { confirmDialog } from "primereact/confirmdialog";
 import SafeInputText from "@/components/SafeInputText";
 import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { Message } from "primereact/message";
 import { ProgressBar } from "primereact/progressbar";
 import { TabPanel, TabView } from "primereact/tabview";
 import { Tag } from "primereact/tag";
-import { Tooltip } from "primereact/tooltip";
 import { Dropdown } from "primereact/dropdown";
 import { toast } from "@/lib/toast";
 import { getVlmPageIndexes } from "@/lib/vlmPrefs";
@@ -39,6 +39,7 @@ import {
   isCanceledError,
   learnFormatTemplate,
   recallIedReview,
+  relinkSessionWorkCentres,
   resolveReviewFlag,
   saveRouteDraft,
   shareRouteToIed,
@@ -56,9 +57,14 @@ import AppShell from "@/components/AppShell";
 import PageHeader from "@/components/PageHeader";
 import {
   insertTemplateSteps,
+  mergeSelectedRouteOps,
   renumberRouteOps,
+  squashConsecutiveSameWcRouteOps,
   templateStepToRouteOp,
 } from "@/lib/pmfOrderPrefill";
+import { annotateItemMentions, formatItemChip } from "@/lib/itemLabels";
+import { normalizeInstructionCase } from "@/lib/instructionCase";
+import InstructionClickEdit from "@/components/InstructionClickEdit";
 import "@fontsource/rubik/400.css";
 import "@fontsource/rubik/500.css";
 import "@fontsource/rubik/600.css";
@@ -72,7 +78,7 @@ const UPLOAD_SLOTS = [
   {
     role: "drawing",
     title: "Drawing (GA)",
-    hint: "PDF / TIFF · multiple GAs OK (Max 10 MB each)",
+    hint: "PDF / TIFF · select several files at once (Max 10 MB each)",
     accept: ".pdf,.tif,.tiff",
     required: true,
     icon: "pi-file",
@@ -98,70 +104,6 @@ const UPLOAD_SLOTS = [
   },
 ];
 
-/** End-user banner text only — hide OCR / drawing-mind internals. */
-function toUserFacingWarnings(list) {
-  const warnings = Array.isArray(list) ? list : [];
-  const technical =
-    /tesseract|drawing\s*mind|local_vlm|\bocr\b|balloon|cpu\)|gpu|spatial|pdfplumber|pymupdf|pypdf|low-confidence|note order|item balloon/i;
-  let plIssue = false;
-  let wlIssue = false;
-  const out = [];
-  for (const raw of warnings) {
-    const w = String(raw || "").trim();
-    if (!w) continue;
-    const low = w.toLowerCase();
-    if (technical.test(w)) continue;
-    if (low.includes("wire list not provided") || low.includes("continuity checklist skipped")) continue;
-    if (low.includes("parts list not provided")) {
-      plIssue = true;
-      continue;
-    }
-    if (low.includes("parts list") && (low.includes("plain text") || low.includes("parsed as") || low.includes("tsv"))) {
-      continue;
-    }
-    if (low.includes("wire list") && (low.includes("plain text") || low.includes("parsed as") || low.includes("tsv"))) {
-      continue;
-    }
-    if (
-      low.includes("parts list") &&
-      ["no item", "could not", "failed", "expected columns", "little/no text", "not match", "no item rows"].some(
-        (k) => low.includes(k)
-      )
-    ) {
-      plIssue = true;
-      continue;
-    }
-    if (low.includes("could not open as excel") || low.includes("openpyxl") || low.includes("xlrd is not installed")) {
-      plIssue = true;
-      continue;
-    }
-    if (
-      low.includes("wire list") &&
-      ["could not", "failed", "few/no", "little/no", "prefer a clean", "unsupported"].some((k) => low.includes(k))
-    ) {
-      wlIssue = true;
-      continue;
-    }
-    if (low.includes("wire list part number") && low.includes("differs")) {
-      out.push("Wire List part number does not match the drawing. Please verify the files.");
-      continue;
-    }
-    if (w.length > 180) continue;
-    out.push(w);
-  }
-  if (plIssue) {
-    out.unshift(
-      "Parts List could not be read or does not match the expected format. Please upload a valid PDF or Excel Parts List."
-    );
-  }
-  if (wlIssue) {
-    out.push(
-      "Wire List could not be read or does not match the expected format. Please upload a valid PDF or Excel Wire List."
-    );
-  }
-  return [...new Set(out)];
-}
-
 const EMPTY_OPERATION = {
   operation: "",
   workCentre: "",
@@ -179,24 +121,6 @@ const EMPTY_OPERATION = {
   machineId: null,
   linkStatus: "manual_override",
 };
-
-function linkStatusSeverity(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "linked") return "success";
-  if (s === "partial") return "warning";
-  if (s === "unresolved") return "danger";
-  if (s === "manual_override") return "info";
-  return "secondary";
-}
-
-function linkStatusLabel(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "linked") return "Linked";
-  if (s === "partial") return "Needs machine";
-  if (s === "unresolved") return "Needs WC";
-  if (s === "manual_override") return "Manual";
-  return "";
-}
 
 const ANALYSIS_LABELS = {
   ocr: "Text extraction",
@@ -243,34 +167,38 @@ function nextOpNumber(rows) {
   return Math.floor(Math.max(...nums) / 10) * 10 + 10;
 }
 
-function OpItemsList({ itemsUsed, fallback, itemLookup = {} }) {
+function OpItemsList({ itemsUsed, fallback, itemLookup = {}, mentionedNos = null }) {
   const rows = (Array.isArray(itemsUsed) ? itemsUsed : []).filter((i) => i?.itemNo != null);
-  if (rows.length === 0) {
-    return fallback ? <div className="rca-op__features">{fallback}</div> : null;
+  const mentioned = mentionedNos instanceof Set ? mentionedNos : null;
+  const leftover = mentioned
+    ? rows.filter((i) => !mentioned.has(String(i.itemNo)) && !mentioned.has(Number(i.itemNo)))
+    : rows;
+  if (leftover.length === 0) {
+    return fallback && rows.length === 0 ? <div className="rca-op__features">{fallback}</div> : null;
   }
   return (
     <div className="rca-op__items">
-      {rows.map((item, idx) => {
-        const hit = itemLookup[String(item.itemNo)] || {};
-        const name = item.description || hit.description || "";
-        const partNo = item.partNumber || hit.partNumber || "";
-        const tip =
-          [name, partNo].filter(Boolean).join(" · ") ||
-          `Item #${item.itemNo} (upload Parts List for name)`;
-        return (
-          <span key={`${item.itemNo}-${idx}`}>
-            <span className="rca-op__item" data-pr-tooltip={tip} data-pr-position="top">
-              <span className="rca-op__item-no">#{item.itemNo}</span>
-              {item.qty != null && item.qty !== "" ? (
-                <span className="rca-op__item-qty"> ×{item.qty}</span>
-              ) : null}
-            </span>
-            {idx < rows.length - 1 ? ", " : null}
+      {leftover.map((item, idx) => (
+        <span key={`${item.itemNo}-${idx}`}>
+          <span className="rca-op__item">
+            <span className="rca-op__item-no">{formatItemChip(item, itemLookup)}</span>
           </span>
-        );
-      })}
+          {idx < leftover.length - 1 ? ", " : null}
+        </span>
+      ))}
     </div>
   );
+}
+
+function collectMentionedItemNos(text) {
+  const set = new Set();
+  const re = /(?:ITEMS?|ITMS?|IT\.?)\s*(?:NO\.?|NOS\.?|NUMBER|#)?\s*-?\s*(\d{1,3})\b/gi;
+  let m;
+  while ((m = re.exec(String(text || "")))) {
+    set.add(m[1]);
+    set.add(Number(m[1]));
+  }
+  return set;
 }
 
 function DrawingPreview({ url, fileType }) {
@@ -350,7 +278,6 @@ export default function RouteCardGenerationAlt() {
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzed, setAnalyzed] = useState(false);
   const [taskProgress, setTaskProgress] = useState({});
-  const [warnings, setWarnings] = useState([]);
   const [drawingInfo, setDrawingInfo] = useState({});
   const [bomItems, setBomItems] = useState([]);
   const [featureCounts, setFeatureCounts] = useState([]);
@@ -358,6 +285,7 @@ export default function RouteCardGenerationAlt() {
   const [intelReqs, setIntelReqs] = useState([]);
   const [suggestedOps, setSuggestedOps] = useState([]);
   const [routeOps, setRouteOps] = useState([]);
+  const [selectedRouteOps, setSelectedRouteOps] = useState([]);
   const [inspectionChars, setInspectionChars] = useState([]);
   const [revisions, setRevisions] = useState([]);
   const [partsListSummary, setPartsListSummary] = useState(null);
@@ -369,6 +297,14 @@ export default function RouteCardGenerationAlt() {
   const [editRow, setEditRow] = useState(null);
   const [editIsNew, setEditIsNew] = useState(false);
   const [uploadingRole, setUploadingRole] = useState(null);
+  const [uploadBatch, setUploadBatch] = useState(null);
+  const [instrDialog, setInstrDialog] = useState({
+    visible: false,
+    opKey: null,
+    title: "",
+    draft: "",
+    itemsUsed: [],
+  });
   const [savingFormat, setSavingFormat] = useState(null);
   const [analysisPayload, setAnalysisPayload] = useState(null);
   const [oarcPreviewOpen, setOarcPreviewOpen] = useState(false);
@@ -415,7 +351,10 @@ export default function RouteCardGenerationAlt() {
     setAnalysisPayload(payload);
     setRouteCardId(payload.id ?? null);
     if (payload.drawing?.id) setDrawingId(payload.drawing.id);
-    if (payload.sessionId) setSessionId(payload.sessionId);
+    if (payload.sessionId) {
+      sessionIdRef.current = payload.sessionId;
+      setSessionId(payload.sessionId);
+    }
     setDrawingInfo(payload.drawingInfo || {});
     setBomItems(payload.bomItems || []);
     setFeatureCounts(payload.featureCounts || []);
@@ -423,11 +362,11 @@ export default function RouteCardGenerationAlt() {
     setIntelReqs(payload.intelligenceRequirements || []);
     setSuggestedOps(payload.suggestedOperations || []);
     setRouteOps(payload.routeOperations || []);
+    setSelectedRouteOps([]);
     setInspectionChars(payload.inspectionChars || []);
     setRevisions(payload.revisions || []);
     setWireListSummary(payload.wireList || null);
     setPartsListSummary(payload.partsList || null);
-    setWarnings(toUserFacingWarnings(payload.warnings || payload.drawing?.warnings || []));
     setExtractedNotes(payload.notes || []);
     setMindInfo({
       ...(payload.mind || {}),
@@ -484,8 +423,8 @@ export default function RouteCardGenerationAlt() {
   const wcDropdownOptions = useMemo(
     () =>
       (wcCatalog || []).map((w) => ({
-        label: `${w.code} — ${w.name}${w.isShared ? " (shared)" : ""}`,
-        value: w.id,
+        label: w.code && w.name && w.code !== w.name ? `${w.code} · ${w.name}` : w.code || w.name,
+        value: Number(w.id),
         raw: w,
       })),
     [wcCatalog]
@@ -517,8 +456,10 @@ export default function RouteCardGenerationAlt() {
   }, [partsListSummary, bomItems]);
 
   const ensureSession = async () => {
-    if (sessionId) return sessionId;
+    // Ref, not state: a multi-file batch must reuse the session created by the first file.
+    if (sessionIdRef.current) return sessionIdRef.current;
     const s = await createSession();
+    sessionIdRef.current = s.id;
     setSessionId(s.id);
     return s.id;
   };
@@ -584,12 +525,12 @@ export default function RouteCardGenerationAlt() {
     setDocs({ drawing: null, drawings: [], wirelist: null, partslist: null });
     setDrawingId(null);
     setRouteCardId(null);
+    sessionIdRef.current = null;
     setSessionId(null);
     setZoom(1);
     setAnalyzing(false);
     setAnalyzed(false);
     setTaskProgress({});
-    setWarnings([]);
     setDrawingInfo({});
     setBomItems([]);
     setFeatureCounts([]);
@@ -653,15 +594,16 @@ export default function RouteCardGenerationAlt() {
     if (drawingIds?.length) setDrawingId(drawingIds[drawingIds.length - 1]);
   };
 
-  const applySlotFile = async (role, file) => {
-    if (!file) return;
+  const applySlotFile = async (role, file, options = {}) => {
+    const { quiet = false, manageBusy = true, preview = true } = options;
+    if (!file) return "skip";
     clearSlotError(role);
     const slot = UPLOAD_SLOTS.find((s) => s.role === role);
     const slotTitle = slot?.title || role;
     if (role === "drawing" && isDuplicateDrawingName(file.name)) {
       triggerSlotError(role, `Duplicate file: “${file.name}” is already uploaded. Please choose a different file.`);
       toast.warn(`${slotTitle}: “${file.name}” is already uploaded. Choose a different file.`);
-      return;
+      return "skip";
     }
     const ext = `.${(file.name.split(".").pop() || "").toLowerCase()}`;
     const allowed = (slot?.accept || "")
@@ -676,26 +618,26 @@ export default function RouteCardGenerationAlt() {
         `${slotTitle}: “${file.name}” is not an allowed type (${ext || "unknown"}). ` +
           `Please upload: ${allowed.join(", ")}.`
       );
-      return;
+      return "skip";
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       const errorMsg = "File exceeds the 10 MB maximum upload limit.";
       triggerSlotError(role, errorMsg);
       toast.error(`${slotTitle}: file exceeds 10 MB limit`);
-      return;
+      return "skip";
     }
-    setUploadingRole(role);
-    toast.info(`Uploading ${slotTitle}…`);
+    if (manageBusy) setUploadingRole(role);
+    if (!quiet) toast.info(`Uploading ${slotTitle}…`);
     try {
       const sid = await ensureSession();
       const meta = await uploadSessionDocument(sid, role, file);
       clearSlotError(role);
       syncDocsFromSession(meta.documents || [], meta.drawingIds || (meta.drawingId ? [meta.drawingId] : []));
+      const fileType = meta.document?.file_type || file.name.split(".").pop()?.toUpperCase();
       if (meta.drawingId) {
         setDrawingId(meta.drawingId);
-        if (role === "drawing") {
-          const type = meta.document?.file_type || file.name.split(".").pop()?.toUpperCase();
-          await loadPreview(meta.drawingId, type);
+        if (role === "drawing" && preview) {
+          await loadPreview(meta.drawingId, fileType);
         }
       }
       setAnalyzed(false);
@@ -705,7 +647,7 @@ export default function RouteCardGenerationAlt() {
       setReviewStatus("ready");
       setRouteOps([]);
       setRouteCardId(null);
-      toast.success(`${slotTitle} uploaded.`);
+      if (!quiet) toast.success(`${slotTitle} uploaded.`);
       const uploadWarns = [
         ...(meta.warnings || []),
         ...(meta.document?.warnings || []),
@@ -713,13 +655,15 @@ export default function RouteCardGenerationAlt() {
       for (const w of [...new Set(uploadWarns)]) {
         toast.warn(w);
       }
+      return { status: "ok", drawingId: meta.drawingId || null, fileType };
     } catch (error) {
       const detail = error?.response?.data?.detail;
       const errMsg = typeof detail === "string" ? detail : error.message || "Upload failed";
       triggerSlotError(role, errMsg);
       toast.error(errMsg);
+      return "fail";
     } finally {
-      setUploadingRole(null);
+      if (manageBusy) setUploadingRole(null);
     }
   };
 
@@ -744,10 +688,39 @@ export default function RouteCardGenerationAlt() {
       files.push(f);
     }
     if (!files.length) return;
-    for (const f of files) {
-      // Sequential so session state stays consistent
-      // eslint-disable-next-line no-await-in-loop
-      await applySlotFile(role, f);
+    if (files.length === 1) {
+      await applySlotFile(role, files[0]);
+      return;
+    }
+
+    setUploadingRole(role);
+    let ok = 0;
+    let lastPreview = null;
+    try {
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        setUploadBatch({ role, current: i + 1, total: files.length, name: file.name });
+        // Sequential so each GA lands on the same session before the next starts.
+        // eslint-disable-next-line no-await-in-loop
+        const result = await applySlotFile(role, file, { quiet: true, manageBusy: false, preview: false });
+        if (result?.status === "ok") {
+          ok += 1;
+          if (result.drawingId) lastPreview = result;
+        }
+      }
+      if (lastPreview?.drawingId) {
+        await loadPreview(lastPreview.drawingId, lastPreview.fileType);
+      }
+    } finally {
+      setUploadingRole(null);
+      setUploadBatch(null);
+    }
+    if (ok > 0) {
+      toast.success(
+        ok === files.length
+          ? `Uploaded ${ok} GA drawings.`
+          : `Uploaded ${ok} of ${files.length} GA drawings.`
+      );
     }
   };
 
@@ -806,7 +779,6 @@ export default function RouteCardGenerationAlt() {
     setAnalyzed(false);
     setRouteOps([]);
     setRouteCardId(null);
-    setWarnings([]);
     setAnalysisPayload(null);
     setResultTab(0);
   };
@@ -895,6 +867,41 @@ export default function RouteCardGenerationAlt() {
     setEditVisible(true);
   };
 
+  const openSuggestedInstruction = (op) => {
+    const key = String(op.id || op.opNo);
+    setInstrDialog({
+      visible: true,
+      opKey: key,
+      title: `OP ${op.opNo} — ${op.operation || "Operation"}`,
+      draft: normalizeInstructionCase(op.instructionText || op.reason || ""),
+      itemsUsed: op.itemsUsed || [],
+    });
+  };
+
+  const saveSuggestedInstruction = async () => {
+    const key = instrDialog.opKey;
+    const draft = instrDialog.draft ?? "";
+    if (!key) {
+      setInstrDialog({ visible: false, opKey: null, title: "", draft: "", itemsUsed: [] });
+      return;
+    }
+    setSuggestedOps((prev) =>
+      (prev || []).map((op) =>
+        String(op.id || op.opNo) === key ? { ...op, instructionText: draft, reason: draft } : op
+      )
+    );
+    const nextRoute = (routeOps || []).map((op) =>
+      String(op.id || op.opNo) === key ? { ...op, instructionText: draft, reason: draft } : op
+    );
+    setInstrDialog({ visible: false, opKey: null, title: "", draft: "", itemsUsed: [] });
+    if (routeCardId && nextRoute.some((op) => String(op.id || op.opNo) === key)) {
+      await persistOps(nextRoute);
+    } else {
+      setRouteOps(nextRoute);
+    }
+    toast.success("Instruction saved.");
+  };
+
   const saveEdit = async () => {
     if (!editRow?.operation) {
       toast.warn("Operation name is required.");
@@ -918,6 +925,88 @@ export default function RouteCardGenerationAlt() {
   const removeOp = async (row) => {
     await persistOps(routeOps.filter((r) => String(r.id) !== String(row.id)));
     toast.info(`Removed OP ${row.opNo}.`);
+  };
+
+  const relinkWorkCentres = async () => {
+    const sid = sessionIdRef.current || sessionId;
+    if (!sid) {
+      toast.warn("Open or analyze a session first.");
+      return;
+    }
+    if (!routeOps?.length) {
+      toast.warn("No route operations to re-link.");
+      return;
+    }
+    try {
+      const payload = await relinkSessionWorkCentres(sid);
+      applyPayload(payload);
+      const c = payload?.relink?.counts || {};
+      const linked = c.linked ?? 0;
+      const unresolved = c.unresolved ?? 0;
+      const kept = c.skippedOverrides ?? 0;
+      toast.success(
+        `Re-linked work centres — linked ${linked} · unresolved ${unresolved} · kept overrides ${kept}`,
+      );
+    } catch (error) {
+      toast.error(error.message || "Re-link failed");
+    }
+  };
+
+  const sameWcMergePreview = useMemo(
+    () => squashConsecutiveSameWcRouteOps(routeOps),
+    [routeOps],
+  );
+  const canMergeSameWc =
+    sameWcMergePreview.beforeCount > sameWcMergePreview.afterCount &&
+    sameWcMergePreview.mergedGroups > 0;
+
+  const mergeSameWcOps = () => {
+    const preview = squashConsecutiveSameWcRouteOps(routeOps);
+    if (preview.beforeCount <= preview.afterCount) {
+      toast.info("No consecutive operations share the same work centre.");
+      return;
+    }
+    const removed = preview.beforeCount - preview.afterCount;
+    confirmDialog({
+      header: "Merge same WC",
+      message: `Combine ${preview.mergedGroups} group(s) of consecutive same-WC ops? ${preview.beforeCount} → ${preview.afterCount} (merge ${removed}).`,
+      icon: "pi pi-objects-column",
+      className: "p-confirm-dialog-sm",
+      acceptLabel: "Merge",
+      rejectLabel: "Cancel",
+      acceptClassName: "p-button-sm",
+      rejectClassName: "p-button-sm p-button-outlined",
+      accept: async () => {
+        setSelectedRouteOps([]);
+        await persistOps(preview.rows);
+        toast.success(
+          `Merged to ${preview.afterCount} operation(s) (${preview.mergedGroups} WC group(s)).`,
+        );
+      },
+    });
+  };
+
+  const mergeSelectedOps = () => {
+    const result = mergeSelectedRouteOps(routeOps, selectedRouteOps);
+    if (!result.ok) {
+      toast.warn(result.error || "Cannot merge selection.");
+      return;
+    }
+    confirmDialog({
+      header: "Merge selected",
+      message: `Merge ${result.mergedCount} selected operations into one? Instructions and items are combined; work centre is taken from the first selected op.`,
+      icon: "pi pi-compress",
+      className: "p-confirm-dialog-sm",
+      acceptLabel: "Merge",
+      rejectLabel: "Cancel",
+      acceptClassName: "p-button-sm",
+      rejectClassName: "p-button-sm p-button-outlined",
+      accept: async () => {
+        setSelectedRouteOps([]);
+        await persistOps(result.rows);
+        toast.success(`Merged ${result.mergedCount} operations into one.`);
+      },
+    });
   };
 
   const addFromTemplate = async (tpl) => {
@@ -1107,6 +1196,7 @@ export default function RouteCardGenerationAlt() {
           getSession(id),
           fetchMyExtractionDetail(id),
         ]);
+        sessionIdRef.current = id;
         setSessionId(id);
         syncDocsFromSession(
           sess.documents || [],
@@ -1231,9 +1321,9 @@ export default function RouteCardGenerationAlt() {
           multiple={Boolean(slot.multiple)}
           hidden
           onChange={(e) => {
-            const files = e.target.files;
-            if (files?.length && !uploadingRole) applySlotFiles(slot.role, files);
+            const files = Array.from(e.target.files || []);
             e.target.value = "";
+            if (files.length && !uploadingRole) applySlotFiles(slot.role, files);
           }}
         />
       ))}
@@ -1310,10 +1400,6 @@ export default function RouteCardGenerationAlt() {
               </>
             }
           />
-          {warnings.length > 0 && (
-            <Message className="mb-3 w-full" severity="warn" text={warnings.join(" ")} />
-          )}
-
           <section className="rca-card" id="rca-sec-upload">
             <SectionHead
               title="Upload Documents"
@@ -1373,7 +1459,7 @@ export default function RouteCardGenerationAlt() {
                               <p>{multi ? "Drag & drop one or more GAs here or" : "Drag & drop file here or"}</p>
                               <Button
                                 type="button"
-                                label="Browse File"
+                                label={multi ? "Browse files" : "Browse file"}
                                 icon="pi pi-folder-open"
                                 outlined
                                 size="small"
@@ -1434,12 +1520,13 @@ export default function RouteCardGenerationAlt() {
                           })}
                           <Button
                             type="button"
-                            label="Add another GA"
+                            label="Add GAs"
                             icon="pi pi-plus"
                             outlined
                             size="small"
                             className="mt-2"
                             disabled={uploading}
+                            title="Select one or more GA files"
                             onClick={() => fileInputRefs.current[slot.role]?.click()}
                           />
                         </div>
@@ -1500,8 +1587,16 @@ export default function RouteCardGenerationAlt() {
                       {uploading ? (
                         <div className="rca-slot__overlay" aria-live="polite">
                           <i className="pi pi-spin pi-spinner" />
-                          <span>Uploading…</span>
-                          <span className="rca-slot__upload-hint">Please wait while the file is uploaded</span>
+                          <span>
+                            {uploadBatch?.role === slot.role && uploadBatch.total > 1
+                              ? `Uploading ${uploadBatch.current} of ${uploadBatch.total}`
+                              : "Uploading…"}
+                          </span>
+                          <span className="rca-slot__upload-hint">
+                            {uploadBatch?.role === slot.role
+                              ? uploadBatch.name
+                              : "Please wait while the file is uploaded"}
+                          </span>
                         </div>
                       ) : null}
                     </div>
@@ -1519,7 +1614,11 @@ export default function RouteCardGenerationAlt() {
               <Message
                 className="mt-3 w-full"
                 severity="info"
-                text={`Uploading ${UPLOAD_SLOTS.find((s) => s.role === uploadingRole)?.title || "file"}… Please wait.`}
+                text={
+                  uploadBatch?.total > 1
+                    ? `Uploading GA ${uploadBatch.current} of ${uploadBatch.total}: ${uploadBatch.name}`
+                    : `Uploading ${UPLOAD_SLOTS.find((s) => s.role === uploadingRole)?.title || "file"}… Please wait.`
+                }
               />
             ) : null}
             {!canAnalyze && !uploadingRole && (
@@ -1627,23 +1726,26 @@ export default function RouteCardGenerationAlt() {
                           )}
                           {extractedNotes?.length > 0 && (
                             <div className="rca-notes">
-                              <h4 className="mb-2">Elaborated instructions</h4>
+                              <h4 className="mb-2">Drawing notes (verbatim)</h4>
                               {extractedNotes.map((n, idx) => (
                                 <div className="rca-note" key={`${n.stepNo}-${idx}`}>
                                   <div className="rca-note__head">
                                     <strong>Step {n.stepNo}</strong>
-                                    {n.elaboratedText ? (
-                                      <Tag value="Elaborated" severity="success" />
+                                    {n.needsReview ? (
+                                      <Tag value="Needs review" severity="warning" />
+                                    ) : null}
+                                    {n.insight ? (
+                                      <Tag value="Insight" severity="info" />
                                     ) : null}
                                     {n.sourceFilename ? (
                                       <Tag value={n.sourceFilename} severity="secondary" />
                                     ) : null}
                                   </div>
                                   <p className="rca-note__text">
-                                    {n.elaboratedText || n.text || "—"}
+                                    {annotateItemMentions(n.text || "—", plItemLookup)}
                                   </p>
-                                  {n.elaboratedText && n.text && n.elaboratedText !== n.text ? (
-                                    <p className="rca-note__source">Source: {n.text}</p>
+                                  {n.insight ? (
+                                    <p className="rca-note__source">Insight: {n.insight}</p>
                                   ) : null}
                                 </div>
                               ))}
@@ -1684,8 +1786,8 @@ export default function RouteCardGenerationAlt() {
                         size="small"
                         paginator
                         rows={10}
-                        pageLinkSize={Math.max(1, Math.ceil((bomItems.length || 0) / 10))}
-                        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport"
+                        rowsPerPageOptions={[10, 25, 50, 100]}
+                        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
                         currentPageReportTemplate="{first}-{last} of {totalRecords}"
                         emptyMessage="No BOM items extracted."
                       >
@@ -1747,8 +1849,16 @@ export default function RouteCardGenerationAlt() {
                     <>
                       <p className="rca-section-note">Sequence generated from the drawing NOTES blocks.</p>
                       <div className="rca-ops">
-                        <Tooltip target=".rca-op__item" position="top" showDelay={150} />
-                        {(suggestedOps || []).map((op) => (
+                        {(suggestedOps || []).map((op) => {
+                          const rawInstr = op.instructionText || op.reason || "";
+                          const annotated = annotateItemMentions(rawInstr, plItemLookup);
+                          const preview = annotated
+                            ? annotated.length > 120
+                              ? `${annotated.slice(0, 117)}…`
+                              : annotated
+                            : "—";
+                          const mentioned = collectMentionedItemNos(rawInstr);
+                          return (
                           <article className="rca-op" key={op.id || op.opNo}>
                             <div className="rca-op__top">
                               <div className="rca-op__no">OP {op.opNo}</div>
@@ -1758,30 +1868,33 @@ export default function RouteCardGenerationAlt() {
                               />
                             </div>
                             <h4>{op.operation}</h4>
-                            <p className="rca-op__instr">
+                            <div className="rca-op__instr-row">
                               {op.elaborated ? (
-                                <Tag value="Elaborated" severity="success" className="mr-2" />
+                                <Tag value="Elaborated" severity="success" className="mr-1" />
                               ) : null}
-                              {op.instructionText || op.reason || "—"}
-                            </p>
+                              <p className="rca-op__instr" title={annotated || undefined}>
+                                {preview}
+                              </p>
+                              <Button
+                                type="button"
+                                icon={rawInstr.trim() ? "pi pi-file-edit" : "pi pi-align-left"}
+                                className={`rca-op__instr-btn${rawInstr.trim() ? " rca-op__instr-btn--filled" : ""}`}
+                                rounded
+                                text
+                                size="small"
+                                aria-label={rawInstr.trim() ? "Edit instruction" : "Add instruction"}
+                                tooltip={rawInstr.trim() ? "Edit instruction" : "Add instruction"}
+                                tooltipOptions={{ position: "top" }}
+                                onClick={() => openSuggestedInstruction(op)}
+                              />
+                            </div>
                             <OpItemsList
                               itemsUsed={op.itemsUsed}
                               fallback={op.items}
                               itemLookup={plItemLookup}
+                              mentionedNos={mentioned}
                             />
                             <dl className="rca-op__meta">
-                              {op.linkStatus ? (
-                                <div>
-                                  <dt>Link</dt>
-                                  <dd>
-                                    <Tag
-                                      value={linkStatusLabel(op.linkStatus)}
-                                      severity={linkStatusSeverity(op.linkStatus)}
-                                      title={op.linkReason || ""}
-                                    />
-                                  </dd>
-                                </div>
-                              ) : null}
                               {op.workCentre ? (
                                 <div>
                                   <dt>Work centre</dt>
@@ -1820,13 +1933,14 @@ export default function RouteCardGenerationAlt() {
                               ) : null}
                             </dl>
                           </article>
-                        ))}
+                          );
+                        })}
                       </div>
                       {(wcCatalog?.length > 0 || machines?.length > 0) && (
                         <div className="mt-3">
-                          <h3 className="rca-subhead">Department work centres</h3>
+                          <h3 className="rca-subhead">SBU work centres</h3>
                           <p className="rca-section-note">
-                            Ops are matched to your department catalogue (keywords / capability tags).
+                            Ops are matched to your SBU catalogue (keywords / capability tags).
                             Unresolved links show as review flags — edit the route card to pick a WC.
                           </p>
                           <div className="rca-machines">
@@ -1856,7 +1970,36 @@ export default function RouteCardGenerationAlt() {
                     <Message severity="info" text="Route operations appear after analysis." className="w-full" />
                   ) : (
                     <>
-                      <div className="flex justify-content-end gap-2 mb-2">
+                      <div className="flex justify-content-end gap-2 mb-2 flex-wrap">
+                        
+                        <Button
+                          type="button"
+                          label="Merge same WC"
+                          icon="pi pi-objects-column"
+                          outlined
+                          size="small"
+                          disabled={opsReadOnly || iedFieldsOnly || !canMergeSameWc}
+                          onClick={mergeSameWcOps}
+                          tooltip={
+                            canMergeSameWc
+                              ? `Merge consecutive same-WC ops (${sameWcMergePreview.beforeCount} → ${sameWcMergePreview.afterCount})`
+                              : "No consecutive operations share the same work centre"
+                          }
+                          tooltipOptions={{ position: "top" }}
+                        />
+                        <Button
+                          type="button"
+                          label="Merge selected"
+                          icon="pi pi-compress"
+                          outlined
+                          size="small"
+                          disabled={
+                            opsReadOnly || iedFieldsOnly || (selectedRouteOps?.length || 0) < 2
+                          }
+                          onClick={mergeSelectedOps}
+                          tooltip="Merge consecutive selected ops into one (any WC)"
+                          tooltipOptions={{ position: "top" }}
+                        />
                         <Button
                           type="button"
                           label="Add from template"
@@ -1882,29 +2025,26 @@ export default function RouteCardGenerationAlt() {
                         size="small"
                         paginator
                         rows={10}
-                        pageLinkSize={Math.max(1, Math.ceil((routeOps.length || 0) / 10))}
-                        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport"
+                        rowsPerPageOptions={[10, 25, 50, 100]}
+                        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
                         currentPageReportTemplate="{first}-{last} of {totalRecords}"
-                        emptyMessage="No operations."
+                        emptyMessage="No operations. Select consecutive rows to merge."
+                        dataKey="id"
+                        {...(opsReadOnly || iedFieldsOnly
+                          ? {}
+                          : {
+                              selection: selectedRouteOps,
+                              onSelectionChange: (e) => setSelectedRouteOps(e.value || []),
+                              selectionMode: "checkbox",
+                            })}
                       >
+                        {opsReadOnly || iedFieldsOnly ? null : (
+                          <Column selectionMode="multiple" headerStyle={{ width: "2.5rem" }} />
+                        )}
                         <Column field="opNo" header="Op No." style={{ width: "5rem" }} />
                         <Column field="operation" header="Operation" />
                         <Column field="workCentre" header="Work centre" />
                         <Column field="machine" header="Machine" />
-                        <Column
-                          header="Link"
-                          style={{ width: "7rem" }}
-                          body={(row) =>
-                            row.linkStatus ? (
-                              <Tag
-                                value={linkStatusLabel(row.linkStatus)}
-                                severity={linkStatusSeverity(row.linkStatus)}
-                              />
-                            ) : (
-                              "—"
-                            )
-                          }
-                        />
                         <Column
                           header=""
                           style={{ width: "7rem" }}
@@ -1949,8 +2089,8 @@ export default function RouteCardGenerationAlt() {
                       size="small"
                       paginator
                       rows={10}
-                      pageLinkSize={Math.max(1, Math.ceil((inspectionChars.length || 0) / 10))}
-                      paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport"
+                      rowsPerPageOptions={[10, 25, 50, 100]}
+                      paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
                       currentPageReportTemplate="{first}-{last} of {totalRecords}"
                       emptyMessage="No inspection rows."
                     >
@@ -2062,7 +2202,15 @@ export default function RouteCardGenerationAlt() {
                   {itemLinkReport?.rows?.length > 0 && (
                     <div className="mb-3">
                       <h4 style={{ marginBottom: "0.5rem" }}>PL ↔ GA items</h4>
-                      <DataTable value={itemLinkReport.rows} size="small" paginator rows={8}>
+                      <DataTable
+                        value={itemLinkReport.rows}
+                        size="small"
+                        paginator
+                        rows={10}
+                        rowsPerPageOptions={[10, 25, 50, 100]}
+                        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
+                        currentPageReportTemplate="{first}-{last} of {totalRecords}"
+                      >
                         <Column field="itemNo" header="Item" style={{ width: 70 }} />
                         <Column field="description" header="Description" />
                         <Column field="status" header="Status" style={{ width: 100 }} />
@@ -2225,6 +2373,60 @@ export default function RouteCardGenerationAlt() {
       </Dialog>
 
       <Dialog
+        header={instrDialog.title || "Operation instruction"}
+        visible={instrDialog.visible}
+        onHide={() =>
+          setInstrDialog({ visible: false, opKey: null, title: "", draft: "", itemsUsed: [] })
+        }
+        className="oarc-instr-dialog rca-instr-dialog"
+        style={{ width: "min(92vw, 28rem)" }}
+        footer={
+          <div className="oarc-instr-dialog__footer">
+            <Button
+              type="button"
+              label="Cancel"
+              outlined
+              size="small"
+              onClick={() =>
+                setInstrDialog({ visible: false, opKey: null, title: "", draft: "", itemsUsed: [] })
+              }
+            />
+            <Button
+              type="button"
+              label="Save"
+              icon="pi pi-check"
+              size="small"
+              onClick={saveSuggestedInstruction}
+            />
+          </div>
+        }
+      >
+        <p className="oarc-instr-dialog__hint">
+          Operator instructions. Click the text to edit. Item names from the Parts List appear in
+          preview only — they are not written into the saved text.
+        </p>
+        <InstructionClickEdit
+          value={instrDialog.draft}
+          onChange={(e) => setInstrDialog((s) => ({ ...s, draft: e.target.value }))}
+          itemLookup={plItemLookup}
+          resetKey={`${instrDialog.visible}:${instrDialog.opKey || ""}`}
+          rows={6}
+        />
+        {(instrDialog.itemsUsed || []).length > 0 ? (
+          <div className="oarc-instr-dialog__meta" aria-label="Items from Parts List">
+            <span className="oarc-instr-dialog__meta-label">Items:</span>
+            <div className="oarc-instr-dialog__chips">
+              {(instrDialog.itemsUsed || []).map((item, idx) => (
+                <span key={`${item.itemNo}-${idx}`} className="oarc-instr-chip oarc-instr-chip--item">
+                  {formatItemChip(item, plItemLookup)}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </Dialog>
+
+      <Dialog
         header={
           editIsNew
             ? `Add operation (OP ${editRow?.opNo ?? ""})`
@@ -2265,17 +2467,29 @@ export default function RouteCardGenerationAlt() {
               {wcDropdownOptions.length > 0 ? (
                 <Dropdown
                   inputId="rca-workCentre"
-                  value={editRow.workCentreId ?? null}
+                  className="w-full rca-edit-dropdown"
+                  panelClassName="rca-edit-dropdown-panel"
+                  appendTo={typeof document !== "undefined" ? document.body : null}
+                  value={
+                    editRow.workCentreId != null && editRow.workCentreId !== ""
+                      ? Number(editRow.workCentreId)
+                      : null
+                  }
                   options={wcDropdownOptions}
+                  optionLabel="label"
+                  optionValue="value"
                   placeholder="Select work centre"
                   showClear
-                  filter
+                  filter={wcDropdownOptions.length > 8}
+                  filterPlaceholder="Search…"
+                  scrollHeight="12rem"
                   disabled={opsReadOnly}
                   onChange={(e) => {
-                    const wc = (wcCatalog || []).find((w) => w.id === e.value);
+                    const id = e.value != null && e.value !== "" ? Number(e.value) : null;
+                    const wc = (wcCatalog || []).find((w) => Number(w.id) === id);
                     setEditRow((r) => ({
                       ...r,
-                      workCentreId: e.value ?? null,
+                      workCentreId: id,
                       workCentre: wc ? wc.code || wc.name : "",
                       workCentreName: wc?.name || "",
                       machineId: null,
@@ -2306,16 +2520,30 @@ export default function RouteCardGenerationAlt() {
               {machineOptionsForEdit.length > 0 ? (
                 <Dropdown
                   inputId="rca-machine"
-                  value={editRow.machineId ?? null}
-                  options={machineOptionsForEdit}
+                  className="w-full rca-edit-dropdown"
+                  panelClassName="rca-edit-dropdown-panel"
+                  appendTo={typeof document !== "undefined" ? document.body : null}
+                  value={
+                    editRow.machineId != null && editRow.machineId !== ""
+                      ? Number(editRow.machineId)
+                      : null
+                  }
+                  options={machineOptionsForEdit.map((o) => ({
+                    ...o,
+                    value: Number(o.value),
+                  }))}
+                  optionLabel="label"
+                  optionValue="value"
                   placeholder="Select machine"
                   showClear
+                  scrollHeight="10rem"
                   disabled={opsReadOnly}
                   onChange={(e) => {
-                    const m = machineOptionsForEdit.find((o) => o.value === e.value)?.raw;
+                    const id = e.value != null && e.value !== "" ? Number(e.value) : null;
+                    const m = machineOptionsForEdit.find((o) => Number(o.value) === id)?.raw;
                     setEditRow((r) => ({
                       ...r,
-                      machineId: e.value ?? null,
+                      machineId: id,
                       machine: m?.name || "",
                       linkStatus: "manual_override",
                     }));

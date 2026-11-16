@@ -6,6 +6,8 @@
  * document title becomes the suggested "Save as PDF" filename.
  */
 
+import { normalizeInstructionCase } from "@/lib/instructionCase";
+
 function s(v) {
   return v == null ? "" : String(v).trim();
 }
@@ -272,7 +274,7 @@ function signatureGrid() {
 const BULLET_RE = /^\s*(?:[\u2022\u00B7\u25CF\u25AA\u2023\u2043]|[-*]|\.(?=\s{2,}))\s*/;
 
 function formatLongText(raw) {
-  const lines = s(raw)
+  const lines = normalizeInstructionCase(s(raw))
     .split(/\r?\n/)
     .map((l) => l.trimEnd())
     // Reference-only meta must never print on OARC

@@ -1,0 +1,46 @@
+.instr-click-edit {
+  width: 100%;
+}
+
+.instr-click-edit__preview {
+  margin: 0;
+  min-height: 7.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--pmf-border-strong);
+  background: var(--pmf-page-bg);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--pmf-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+  outline: none;
+
+  &:hover:not(.instr-click-edit__preview--disabled) {
+    border-color: var(--pmf-accent-border);
+  }
+
+  &:focus-visible {
+    border-color: var(--pmf-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--pmf-accent) 25%, transparent);
+  }
+}
+
+.instr-click-edit__preview--empty {
+  color: var(--pmf-text-faint);
+  font-style: italic;
+}
+
+.instr-click-edit__preview--disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.instr-click-edit__textarea.p-inputtextarea,
+.instr-click-edit .p-inputtextarea {
+  min-height: 7.5rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  padding: 0.45rem 0.6rem;
+}

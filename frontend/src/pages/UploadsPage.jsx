@@ -509,7 +509,7 @@ export default function UploadsPage() {
               dataKey="id"
               paginator
               rows={10}
-              rowsPerPageOptions={[10, 25, 50]}
+              rowsPerPageOptions={[10, 25, 50, 100]}
               pageLinkSize={5}
               paginatorTemplate="CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
               currentPageReportTemplate="Showing {first}-{last} of {totalRecords} files"

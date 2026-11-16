@@ -1,8 +1,57 @@
+.rc-users__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+}
+
+.rc-users__search {
+  width: 15.5rem;
+  max-width: 100%;
+
+  .p-inputtext {
+    height: 2.25rem;
+    min-height: 2.25rem;
+    font-size: 0.84rem;
+    padding: 0.35rem 0.6rem 0.35rem 2.15rem;
+  }
+}
+
+.rc-users__filter {
+  min-width: 10.5rem;
+  height: 2.25rem;
+
+  &.p-dropdown {
+    align-items: center;
+    font-size: 0.84rem;
+  }
+
+  &--role {
+    min-width: 8.5rem;
+  }
+}
+
 .rc-users__table {
   background: var(--pmf-surface);
   border: 1px solid var(--pmf-border);
   border-radius: 0.75rem;
   overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .rc-users__toolbar {
+    justify-content: stretch;
+  }
+
+  .rc-users__search {
+    flex: 1 1 12rem;
+  }
+
+  .rc-users__filter {
+    flex: 1 1 8rem;
+  }
 }
 
 .rc-users__actions {

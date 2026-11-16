@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-from app.route_card.extractor import break_instruction_points
 
 
 def _work_centre(text: str, torque: list[str] | None = None) -> str:
@@ -123,8 +122,9 @@ def generate_route(extraction: dict) -> dict:
     op_no = 10
     for note in notes:
         text = note.get("text") or ""
-        elaborated = (note.get("elaboratedText") or "").strip()
-        instruction_src = elaborated or text
+        # Shop instruction is always the drawing wording — never rewritten or case-normalized.
+        insight = (note.get("insight") or "").strip()
+        instruction_src = str(text or "").strip()
         torque = note.get("torque") or []
         items = note.get("items") or []
         refs = list(note.get("standards") or []) + list(note.get("references") or [])
@@ -161,12 +161,14 @@ def generate_route(extraction: dict) -> dict:
                 "setup": "1",
                 "time": "",
                 "inspection": _inspection_for_step(text, torque),
-                "instructionText": break_instruction_points(instruction_src),
+                "instructionText": instruction_src,
+                "insight": insight,
                 "status": "Planned",
                 "type": wc,
-                "reason": break_instruction_points(instruction_src)[:240],
+                "reason": instruction_src[:240],
                 "features": [f"ITM-{i}" for i in items],
-                "elaborated": bool(elaborated),
+                "elaborated": bool(insight),
+                "needsReview": bool(note.get("needsReview")),
                 "sourceDrawingId": note.get("sourceDrawingId"),
                 "placement": note.get("placement") or [],
                 "viewRefs": note.get("viewRefs") or [],

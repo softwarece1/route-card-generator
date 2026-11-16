@@ -10,15 +10,17 @@ import SafeInputText from "@/components/SafeInputText";
 import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { Message } from "primereact/message";
 import { TabPanel, TabView } from "primereact/tabview";
-import { Tooltip } from "primereact/tooltip";
 import { confirmDialog } from "primereact/confirmdialog";
 import { toast } from "@/lib/toast";
+import { formatItemChip } from "@/lib/itemLabels";
+import { normalizeInstructionCase } from "@/lib/instructionCase";
 import {
   buildOarcJson,
   emptyOperation,
   emptyRawMaterial,
   insertTemplateSteps,
   mapPayloadToOrderPrefill,
+  mergeSelectedOarcOps,
   oarcOpsToRouteOperations,
   parseItemsLabel,
   renumberOarcOps,
@@ -35,6 +37,7 @@ import {
   fetchWorkCenterCatalog,
   updateRouteCard,
 } from "@/services/routeCardApi";
+import InstructionClickEdit from "@/components/InstructionClickEdit";
 import OpTemplatePickerDialog from "@/components/OpTemplatePickerDialog";
 import ExcelPreviewDialog from "@/components/ExcelPreviewDialog";
 import RouteRemarksPanel from "@/components/RouteRemarksPanel";
@@ -57,6 +60,7 @@ export default function OarcPreviewDialog({
 }) {
   const [header, setHeader] = useState(null);
   const [operations, setOperations] = useState([]);
+  const [selectedOps, setSelectedOps] = useState([]);
   const [rawMaterials, setRawMaterials] = useState([]);
   const [tab, setTab] = useState(0);
   const [instr, setInstr] = useState({
@@ -161,6 +165,7 @@ export default function OarcPreviewDialog({
       total_operations: mapped.operations.length || 0,
     });
     setOperations(mapped.operations);
+    setSelectedOps([]);
     setRawMaterials(mapped.rawMaterials);
 
     const dwg = docs.drawing;
@@ -268,11 +273,37 @@ export default function OarcPreviewDialog({
       acceptClassName: "p-button-sm",
       rejectClassName: "p-button-sm p-button-outlined",
       accept: () => {
+        setSelectedOps([]);
         setOperations(preview.rows);
         setH("total_operations", preview.rows.length);
         toast.success(
           `Merged to ${preview.afterCount} operation(s) (${preview.mergedGroups} WC group(s)).`,
         );
+      },
+    });
+  };
+
+  const mergeSelectedOps = () => {
+    const result = mergeSelectedOarcOps(operations, selectedOps);
+    if (!result.ok) {
+      toast.warn(result.error || "Cannot merge selection.");
+      return;
+    }
+    confirmDialog({
+      header: "Merge selected",
+      message: `Merge ${result.mergedCount} selected operations into one? Long text and items are combined; work centre is taken from the first selected op.`,
+      icon: "pi pi-compress",
+      className: "p-confirm-dialog-sm",
+      acceptLabel: "Merge",
+      rejectLabel: "Cancel",
+      acceptClassName: "p-button-sm",
+      rejectClassName: "p-button-sm p-button-outlined",
+      accept: () => {
+        setSelectedOps([]);
+        setOperations(result.rows);
+        setH("total_operations", result.rows.length);
+        if (isIedMode) setDirty(true);
+        toast.success(`Merged ${result.mergedCount} operations into one.`);
       },
     });
   };
@@ -319,7 +350,7 @@ export default function OarcPreviewDialog({
       visible: true,
       rowId: row._rowId,
       title: `OP ${row["Oprn No"]} — ${row.Operation || "Operation"}`,
-      draft: stripMetaFromLongText(row.LongText || ""),
+      draft: normalizeInstructionCase(stripMetaFromLongText(row.LongText || "")),
       itemsUsed: used,
       reference: row._reference || "",
       torqueSpec: row._torqueSpec || "",
@@ -706,6 +737,17 @@ export default function OarcPreviewDialog({
                         />
                         <Button
                           type="button"
+                          label="Merge selected"
+                          icon="pi pi-compress"
+                          size="small"
+                          outlined
+                          disabled={(selectedOps?.length || 0) < 2}
+                          tooltip="Merge consecutive selected ops into one (any WC)"
+                          tooltipOptions={{ position: "top" }}
+                          onClick={mergeSelectedOps}
+                        />
+                        <Button
+                          type="button"
                           label="Add from template"
                           icon="pi pi-list"
                           size="small"
@@ -741,6 +783,13 @@ export default function OarcPreviewDialog({
                             }
                           : undefined
                       }
+                      {...(canEditStandards
+                        ? {
+                            selection: selectedOps,
+                            onSelectionChange: (e) => setSelectedOps(e.value || []),
+                            selectionMode: "checkbox",
+                          }
+                        : {})}
                       emptyMessage={
                         <div className="om-create-order-empty">
                           <p>No operations added yet.</p>
@@ -750,6 +799,9 @@ export default function OarcPreviewDialog({
                         </div>
                       }
                     >
+                      {canEditStandards ? (
+                        <Column selectionMode="multiple" headerStyle={{ width: "2.5rem" }} />
+                      ) : null}
                       {canEditStandards ? (
                         <Column rowReorder style={{ width: "3rem", minWidth: "3rem" }} />
                       ) : null}
@@ -1262,38 +1314,30 @@ export default function OarcPreviewDialog({
           </div>
         }
       >
-        <p className="oarc-instr-dialog__hint">Operator instructions (printed on OARC).</p>
-        <SafeInputTextarea profile="multiline"
+        <p className="oarc-instr-dialog__hint">
+          Operator instructions (printed on OARC). Click the text to edit. Item names from the Parts
+          List appear in preview only — they are not written into the saved text.
+        </p>
+        <InstructionClickEdit
           value={instr.draft}
           onChange={(e) => setInstr((s) => ({ ...s, draft: e.target.value }))}
+          itemLookup={itemLookup}
+          resetKey={`${instr.visible}:${instr.rowId || ""}`}
           rows={6}
-          className="w-full oarc-instr-dialog__textarea"
-          autoResize
+          disabled={!canEditStandards}
         />
         {(instr.itemsUsed?.length > 0 || instr.reference || instr.torqueSpec) && (
           <div className="oarc-instr-dialog__meta" aria-label="Reference only — not printed">
-            <Tooltip target=".oarc-instr-chip--item" position="top" showDelay={120} />
             <span className="oarc-instr-dialog__meta-label">Ref:</span>
             <div className="oarc-instr-dialog__chips">
-              {(instr.itemsUsed || []).map((item, idx) => {
-                const hit = itemLookup[String(item.itemNo)] || {};
-                const name = item.description || hit.description || hit.designation || "";
-                const partNo = item.partNumber || hit.partNumber || hit.part_number || "";
-                const tip =
-                  [name, partNo].filter(Boolean).join(" · ") ||
-                  `Item #${item.itemNo} (upload Parts List for name)`;
-                return (
-                  <span
-                    key={`${item.itemNo}-${idx}`}
-                    className="oarc-instr-chip oarc-instr-chip--item"
-                    data-pr-tooltip={tip}
-                    data-pr-position="top"
-                  >
-                    #{item.itemNo}
-                    {item.qty != null && item.qty !== "" ? `×${item.qty}` : ""}
-                  </span>
-                );
-              })}
+              {(instr.itemsUsed || []).map((item, idx) => (
+                <span
+                  key={`${item.itemNo}-${idx}`}
+                  className="oarc-instr-chip oarc-instr-chip--item"
+                >
+                  {formatItemChip(item, itemLookup)}
+                </span>
+              ))}
               {instr.reference ? (
                 <span className="oarc-instr-chip oarc-instr-chip--ref" title={instr.reference}>
                   Ref: {instr.reference}

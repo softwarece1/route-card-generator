@@ -425,12 +425,22 @@ def _sniff_upload_warnings(role: str, data: bytes, filename: str, ext: str) -> l
                 text = (ingest_pdf(data, want_tables=False).text or "")[:8000]
             except Exception:
                 text = ""
+            # Also scan line-reversed text — OCR often flips 180°-rotated sheets
+            rev = "\n".join("".join(reversed(line)) for line in (text or "").splitlines())
+            blob = f"{text}\n{rev}"
             cues = re.search(
-                r"\b(NOTE|NOTES|GA\b|ASSEMBLY|ITEM\s*\d|AS\s+SHOWN|REVISION|SCALE|SHEET)\b",
-                text,
+                r"\b(NOTE|NOTES|GA\b|ASSEMBLY|DRAWING|ITEM\s*\d|AS\s+SHOWN|"
+                r"REVISION|SCALE|SHEET|GENERAL\s+ASSEMBLY|TITLE\s*BLOCK|"
+                r"BILL\s+OF\s+MATERIAL|MATERIAL|DETAIL|FIGURE|FIG\.?)\b",
+                blob,
                 re.I,
             )
-            name_cue = re.search(r"\b(ga|drawing|dwg|assy|assembly)\b", name, re.I)
+            # Underscore/hyphen filenames: night_vision_GA.pdf, foo_dwg.pdf
+            name_cue = re.search(
+                r"(?:^|[^a-z0-9])(ga|drawing|dwg|assy|assembly)(?:[^a-z0-9]|$)",
+                name,
+                re.I,
+            )
             if not cues and not name_cue:
                 warnings.append(
                     "This file may not be a GA / engineering drawing "
@@ -762,7 +772,12 @@ def build_payload(
                 or mind_info.get("pcbLinks")
                 or mind_info.get("viewRefs")
                 or any(
-                    isinstance(n, dict) and n.get("elaboratedText")
+                    isinstance(n, dict)
+                    and (
+                        n.get("elaboratedText")
+                        or n.get("insight")
+                        or (n.get("mindEngine") or "").startswith("local_vlm")
+                    )
                     for n in notes
                 )
             )
@@ -878,6 +893,8 @@ def op_to_out(o: RcOperation) -> dict:
         "machineId": o.machine_id,
         "linkStatus": o.link_status or "",
         "linkConfidence": o.link_confidence,
+        "linkReason": "",
+        "workCentreName": "",
     }
 
 
@@ -1774,6 +1791,94 @@ def delete_session_document(
 
 
 @db_session
+def relink_session_work_centres(session_id: int, user: dict | None = None) -> dict:
+    """
+    Re-run plant-scoped WC resolver on the session route card.
+
+    Uses the **session owner's** SBU plant. Preserves manual_override rows.
+    """
+    from app.route_card.work_centers import (
+        merge_resolved_preserving_overrides,
+        unresolved_wc_messages,
+    )
+    from app.route_card.workflow import resolve_route_operations
+
+    session = RcSession.get(id=session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    _assert_session_access(session, user, write=True)
+
+    drawings = list(sorted(session.drawings, key=lambda x: x.id))
+    if not drawings:
+        raise HTTPException(400, "No drawings in session")
+    primary = drawings[-1]
+    card = primary.route_cards.select().order_by(desc(RcRouteCard.created_at)).first()
+    if not card or not list(card.operations):
+        raise HTTPException(400, "Generate route operations before re-linking work centres")
+
+    status = (card.status or "draft").strip().lower()
+    if status == "approved" and not _is_admin(user):
+        raise HTTPException(400, "Approved route cards cannot be re-linked")
+
+    owner_dept = (session.user.dept or "").strip() if session.user else ""
+    if not owner_dept and user:
+        owner_dept = (user.get("dept") or "").strip()
+
+    existing_ops = [op_to_out(o) for o in sorted(card.operations, key=lambda x: x.op_no)]
+    # Prefer latest merged extraction notes (verbatim + insight)
+    extraction = primary.extractions.select().order_by(desc(RcExtraction.created_at)).first()
+    notes = list((extraction.notes or []) if extraction else [])
+
+    try:
+        resolved = resolve_route_operations(
+            existing_ops,
+            dept=owner_dept,
+            notes=notes,
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Work centre resolver failed: {exc}") from exc
+
+    merged, counts = merge_resolved_preserving_overrides(existing_ops, resolved)
+
+    insp = [
+        {
+            "dimension": c.characteristic,
+            "nominal": c.nominal,
+            "tolerance": c.tolerance,
+            "method": c.method,
+            "frequency": c.frequency,
+            "criticality": c.criticality,
+        }
+        for c in card.inspection_chars
+    ]
+    persist_route(
+        primary,
+        {"operations": merged, "inspection": insp},
+        card,
+    )
+    commit()
+
+    warnings = unresolved_wc_messages(merged)
+    payload = build_payload(
+        primary,
+        extraction,
+        card,
+        documents=_session_docs(session),
+        extra_warnings=warnings,
+    )
+    # Prefer freshly merged ops (includes linkReason) over DB round-trip blanks
+    payload["suggestedOperations"] = merged
+    payload["routeOperations"] = merged
+    payload["relink"] = {
+        "dept": owner_dept,
+        "plant": (merged[0].get("plant") if merged else "") or "",
+        "counts": counts,
+        "warnings": warnings,
+    }
+    return payload
+
+
+@db_session
 def analyze_session(
     session_id: int,
     user: dict | None = None,
@@ -2126,20 +2231,22 @@ def _analyze_session_body(
 
         # Always run WC resolver (templates path may have already resolved)
         try:
+            from app.route_card.work_centers import unresolved_wc_messages
             from app.route_card.workflow import resolve_route_operations
 
-            dept_r = ""
-            if user:
+            # Prefer session owner's SBU so plant catalog matches the drawing owner
+            dept_r = (session.user.dept or "").strip() if session.user else ""
+            if not dept_r and user:
                 dept_r = (user.get("dept") or "").strip()
-            elif session.user:
-                dept_r = (session.user.dept or "").strip()
             generated["operations"] = resolve_route_operations(
                 generated.get("operations") or [],
                 dept=dept_r,
                 notes=parsed.get("notes") or [],
             )
-        except Exception:
-            pass
+            for msg in unresolved_wc_messages(generated.get("operations") or []):
+                extra_warnings.append(msg)
+        except Exception as exc:
+            extra_warnings.append(f"Work centre resolver failed: {exc}")
 
         if wire_list:
             ga_pn = re.sub(
@@ -2165,20 +2272,22 @@ def _analyze_session_body(
                 "inspection", []
             )
             try:
+                from app.route_card.work_centers import unresolved_wc_messages
                 from app.route_card.workflow import resolve_route_operations
 
-                dept_w = ""
-                if user:
+                dept_w = (session.user.dept or "").strip() if session.user else ""
+                if not dept_w and user:
                     dept_w = (user.get("dept") or "").strip()
-                elif session.user:
-                    dept_w = (session.user.dept or "").strip()
                 generated["operations"] = resolve_route_operations(
                     generated.get("operations") or [],
                     dept=dept_w,
                     notes=parsed.get("notes") or [],
                 )
-            except Exception:
-                pass
+                for msg in unresolved_wc_messages(generated.get("operations") or []):
+                    if msg not in extra_warnings:
+                        extra_warnings.append(msg)
+            except Exception as exc:
+                extra_warnings.append(f"Work centre resolver failed: {exc}")
 
         if parts_list:
             generated["operations"] = enrich_ops_items(generated["operations"], parts_list)
@@ -2272,6 +2381,11 @@ def _analyze_session_body(
         )
         payload["reviewFlags"] = review_flags
         payload["itemLinkReport"] = item_link
+        # Keep resolver linkReason / workCentreName (not persisted on RcOperation)
+        resolved_ops = generated.get("operations") or []
+        if resolved_ops:
+            payload["suggestedOperations"] = resolved_ops
+            payload["routeOperations"] = resolved_ops
         return payload
     except AnalysisCancelled:
         raise

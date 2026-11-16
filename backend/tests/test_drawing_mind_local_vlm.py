@@ -1,4 +1,4 @@
-"""Local VLM drawing-mind tests (mocked Ollama).
+"""Local VLM drawing-mind tests (mocked vLLM / OCR).
 
 Run from backend/:
   python -m pytest tests/test_drawing_mind_local_vlm.py -q
@@ -27,27 +27,45 @@ from app.route_card.drawing_mind.local_vlm import (
     _normalize_step,
     _parse_vlm_json,
     _vlm_notes_usable,
+    align_model_to_ocr,
+    insight_is_safe,
+    reconcile_ocr_with_model,
+    split_ocr_note_lines,
+    strip_leading_step_number,
+    token_gate,
+    tokens_are_ocr_confusable,
 )
 from app.route_card.drawing_mind.ollama_client import OllamaError, _clean_assistant_content
+from app.route_card.route_generator import generate_route
+
+
+OCR_BARE = (
+    "FOR BARE BOARD VER 02, SHORT X53.2 TO P2.C19 & X54.2 TO P2.C16 "
+    "USING COPPER ENAMELED WIRE P/N-485100709086"
+)
+BAD_MODEL = (
+    "FOR BASE BOARD VER C2, SHORT X3.2 TO P2.C19 & X54.2 TO P2.C18 "
+    "USING COPPER ENABLE WIRE P/N-4650150700088"
+)
 
 
 def test_parse_vlm_json_plain_and_fenced():
-    plain = '{"instructionBlockTitle": "NOTES", "steps": [], "warnings": []}'
-    assert _parse_vlm_json(plain)["instructionBlockTitle"] == "NOTES"
+    plain = '{"blocks": [], "warnings": []}'
+    assert _parse_vlm_json(plain)["blocks"] == []
 
-    fenced = 'Here you go:\n```json\n{"steps": [{"step": "1", "text": "DRILL 3mm HOLES"}]}\n```\n'
+    fenced = 'Here you go:\n```json\n{"blocks": [{"title": "NOTE I", "lines": ["1. DRILL 3mm HOLES"]}]}\n```\n'
     data = _parse_vlm_json(fenced)
-    assert data["steps"][0]["text"].startswith("DRILL")
+    assert "DRILL" in data["blocks"][0]["lines"][0]
 
 
 def test_clean_assistant_strips_thinking():
     raw = (
         "<think>I should return JSON only.</think>\n"
-        '{"instructionBlockTitle": "NOTES", "steps": [], "warnings": []}'
+        '{"blocks": [], "warnings": []}'
     )
     cleaned = _clean_assistant_content(raw)
     assert "<think>" not in cleaned
-    assert _parse_vlm_json(cleaned)["instructionBlockTitle"] == "NOTES"
+    assert _parse_vlm_json(cleaned)["blocks"] == []
 
 
 def test_normalize_step_as_shown_forces_elaboration_flag():
@@ -58,8 +76,6 @@ def test_normalize_step_as_shown_forces_elaboration_flag():
             "items": [2, 3],
             "needsVisualElaboration": False,
             "viewUsed": "side view",
-            "elaboratedText": "Paste item 2 above item 3 on DC OUT face, 5 mm from edges.",
-            "confidence": 0.8,
             "placement": [
                 {
                     "itemNo": 2,
@@ -77,7 +93,8 @@ def test_normalize_step_as_shown_forces_elaboration_flag():
     )
     assert step is not None
     assert step["needsVisualElaboration"] is True
-    assert "DC OUT" in step["elaboratedText"]
+    assert step["text"].startswith("STICK ITEM")
+    assert step["elaboratedText"] == ""
     assert step["items"] == [2, 3]
     assert step["mindEngine"] == "local_vlm"
     assert step["placement"][0]["surface"].startswith("DC OUT")
@@ -111,7 +128,6 @@ def test_weak_elaboration_and_compose():
     )
     assert "DC OUT" in composed
     assert "5" in composed
-    assert "item 2" in composed.lower() or "Item 2" in composed
     assert "stick" in composed.lower()
     assert "glue" in composed.lower() or "adhesive" in composed.lower()
 
@@ -131,26 +147,167 @@ def test_vlm_notes_usable():
     assert _vlm_notes_usable([{"text": "ASSEMBLE ITEM NO. 5 TO BRACKET"}])
 
 
-def test_merge_elaboration_onto_ocr():
+def test_merge_insight_onto_ocr():
     ocr = [
         {
             "stepNo": 1,
             "text": "STICK ITEM 2 & 3 AS SHOWN",
             "items": [2, 3],
-            "elaboratedText": "",
+            "insight": "",
         }
     ]
     vlm = [
         {
             "text": "STICK ITEM 2 & 3 AS SHOWN on the face",
-            "elaboratedText": "Paste item 2 on top of item 3 on DC OUT.",
+            "insight": "Links to ITEM 2 and ITEM 3 as written.",
             "mindConfidence": 0.75,
-            "needsVisualElaboration": True,
         }
     ]
     merged = _merge_elaboration_onto_ocr(ocr, vlm)
-    assert "DC OUT" in (merged[0].get("elaboratedText") or "")
+    assert "ITEM 2" in (merged[0].get("insight") or "")
     assert merged[0].get("mindEngine") == "local_vlm"
+
+
+def test_token_gate_rejects_bare_board_corruption():
+    ok, conflict = token_gate(OCR_BARE, BAD_MODEL)
+    assert ok is False
+    assert conflict is not None
+
+
+def test_token_gate_rejects_dropped_r66():
+    ocr = "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R66, TP1, TP2, TP3 & TP4"
+    model = "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R86, TP1, TP2, TP3 & TP4"
+    ok, conflict = token_gate(ocr, model)
+    assert ok is False
+    assert conflict in {"R66", "R86"}
+
+
+def test_token_gate_rejects_dropped_b1_to_b8():
+    ocr = "DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERTS OF THE TRANSFORMERS B1 TO B8."
+    model = "DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERT FOR THE MOUNTING OF THE TRANSFORMERS"
+    ok, conflict = token_gate(ocr, model)
+    assert ok is False
+    assert conflict is not None
+
+
+def test_align_keeps_ocr_and_flags_review():
+    ocr_lines = [{"title": "NOTE I", "label": "10", "text": OCR_BARE}]
+    model_lines = [{"title": "NOTE I", "label": "10", "text": BAD_MODEL}]
+    notes = align_model_to_ocr(ocr_lines, model_lines)
+    assert len(notes) == 1
+    # Invented BASE/C2/wrong P/N must not replace OCR.
+    assert "BARE BOARD VER 02" in notes[0]["text"]
+    assert "485100709086" in notes[0]["text"]
+    assert "BASE BOARD" not in notes[0]["text"]
+    assert notes[0]["needsReview"] is True
+    assert notes[0].get("gateConflict")
+
+
+def test_confusable_xi_x1():
+    assert tokens_are_ocr_confusable("XI", "X1")
+    text, needs, conflict = reconcile_ocr_with_model(
+        "SHORT THE PIN NO 1 AND 2 OF Xi TO X30 USING ITEM NO-50.",
+        "SHORT THE PIN NO 1 AND 2 OF X1 TO X30 USING ITEM NO-50.",
+    )
+    assert conflict is None
+    assert needs is True
+    assert "X1" in text
+    assert "Xi" not in text and "XI" not in text.upper().replace("X1", "")
+
+
+def test_confusable_5si_to_50():
+    text, needs, conflict = reconcile_ocr_with_model(
+        "SHORT PIN 2 AND 3 USING ITEM NO-5SI",
+        "SHORT PIN 2 AND 3 USING ITEM NO-50",
+    )
+    assert conflict is None
+    assert needs is True
+    assert "50" in text
+    assert "5SI" not in text.upper()
+
+
+def test_confusable_tps_to_tp3():
+    text, needs, conflict = reconcile_ocr_with_model(
+        "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R66, TP1, TP2, TPS & TP4.",
+        "DO NOT MOUNT ITEM R1, R14, R27, R40, R53, R66, TP1, TP2, TP3 & TP4.",
+    )
+    assert conflict is None
+    assert needs is True
+    assert "TP3" in text
+    assert "TPS" not in text.upper()
+
+
+def test_strip_leading_step_number():
+    assert strip_leading_step_number("1. HELLO WORLD", "1") == "HELLO WORLD"
+    assert strip_leading_step_number("HELLO WORLD", "1") == "HELLO WORLD"
+
+
+def test_insight_rejects_new_part_number():
+    note = "SHORT PIN 1 AND 2 OF X30 USING ITEM NO-50"
+    assert insight_is_safe(note, "Uses ITEM 50 as written on the note.") is True
+    assert insight_is_safe(note, "Use P/N-485100709086 copper wire.") is False
+
+
+def test_split_ocr_note_lines_numbered():
+    ocr = (
+        "NOTE I\n"
+        "1. THE FOLLOWING ARE LEAD-FREE COMPONENTS: U1-U12, FL1, FL2\n"
+        "2. DRILL 3mm HOLES FOR TRANSFORMERS B1 TO B8.\n"
+        "NOTE II\n"
+        "1. P1, P2 & P3 CONNECTORS\n"
+    )
+    lines = split_ocr_note_lines(ocr)
+    assert len(lines) >= 3
+    assert "U1" in lines[0]["text"] or "FL1" in lines[0]["text"]
+    assert any("B1" in (l["text"] or "") for l in lines)
+
+
+def test_generate_route_uses_verbatim_not_insight():
+    extraction = {
+        "notes": [
+            {
+                "sheet": 1,
+                "stepNo": 1,
+                "text": OCR_BARE,
+                "insight": "Mentions P/N already printed on the note.",
+                "items": [],
+                "elaboratedText": "Rewritten shop English that must NOT become the instruction.",
+            }
+        ],
+        "bom_items": [],
+        "title_block": {},
+        "drawing_type": "assembly",
+    }
+    route = generate_route(extraction)
+    ops = [o for o in (route.get("operations") or []) if o.get("opNo") == 10]
+    assert len(ops) == 1
+    assert ops[0].get("instructionText") == OCR_BARE
+    assert "Rewritten shop English" not in (ops[0].get("instructionText") or "")
+    assert "Mentions P/N" in (ops[0].get("insight") or "")
+
+
+def test_weight_guard_rejects_masking_tape():
+    from app.route_card.extractor import parse_drawing_text
+
+    text = (
+        "TITLE AK630 DRVR U1\n"
+        "NUMBER 112360195216AA\n"
+        "MASKING TAPE (545501000341) BEFORE CONFORMAL COATING\n"
+        "WEIGHT H MASKING TAPE (545501000341)\n"
+    )
+    parsed = parse_drawing_text(text, "112360195216AA - GA.pdf", 1)
+    title = parsed.get("title_block") or {}
+    assert not title.get("weight")
+
+
+def test_weight_guard_accepts_numeric_mass():
+    from app.route_card.extractor import parse_drawing_text
+
+    text = "TITLE DEMO\nWEIGHT: 1.25 kg\nNUMBER 123\n"
+    parsed = parse_drawing_text(text, "demo.pdf", 1)
+    title = parsed.get("title_block") or {}
+    assert "1.25" in (title.get("weight") or "")
+    assert "kg" in (title.get("weight") or "").lower()
 
 
 def test_factory_returns_local_vlm():
@@ -159,7 +316,7 @@ def test_factory_returns_local_vlm():
     assert type(mind).__name__ == "LocalVlmMind"
 
 
-def test_local_vlm_falls_back_when_ollama_down():
+def test_local_vlm_falls_back_when_server_down():
     ga = {
         "notes": [
             {
@@ -184,28 +341,38 @@ def test_local_vlm_falls_back_when_ollama_down():
             source_filename="demo.pdf",
         )
     assert result.engine == "local_vlm_fallback_cpu"
-    assert any("Ollama not reachable" in w for w in result.warnings)
+    assert any("vision server not reachable" in w for w in result.warnings)
     assert result.notes
     assert result.notes[0]["text"].startswith("CLEAN")
 
 
-def test_local_vlm_uses_vision_steps_when_usable():
+def test_local_vlm_uses_verbatim_ocr_when_usable():
     ga = {
         "notes": [{"sheet": 1, "stepNo": 1, "text": "weak ocr", "items": []}],
         "raw_text": "",
         "title_block": {},
     }
-    fake_pages = [{"page": 1, "mime": "image/jpeg", "b64": "aaa", "width": 100, "height": 100}]
+    fake_bands = [
+        {
+            "page": 1,
+            "mime": "image/jpeg",
+            "b64": "aaa",
+            "width": 100,
+            "height": 100,
+            "raw": b"jpeg",
+        }
+    ]
+    ocr_blob = (
+        "NOTE I\n"
+        "1. DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERTS OF THE TRANSFORMERS B1 TO B8.\n"
+    )
     vlm_payload = {
-        "instructionBlockTitle": "ASSEMBLY INSTRUCTIONS",
-        "steps": [
+        "blocks": [
             {
-                "step": "1",
-                "text": "ASSEMBLE CONNECTOR TO HOUSING AS SHOWN",
-                "items": [8],
-                "needsVisualElaboration": True,
-                "elaboratedText": "Assemble connector item 8 onto the housing boss as shown in Detail A.",
-                "confidence": 0.82,
+                "title": "NOTE I",
+                "lines": [
+                    "1. DRILL 3mm HOLES ON THE PCB FOR THE 4-40 UNC INSERTS OF THE TRANSFORMERS B1 TO B8."
+                ],
             }
         ],
         "warnings": [],
@@ -215,12 +382,20 @@ def test_local_vlm_uses_vision_steps_when_usable():
     with (
         patch("app.route_card.drawing_mind.local_vlm.ollama_reachable", return_value=True),
         patch(
-            "app.route_card.drawing_mind.local_vlm.render_pdf_pages",
-            return_value=fake_pages,
+            "app.route_card.drawing_mind.local_vlm.render_note_bands",
+            return_value=fake_bands,
+        ),
+        patch(
+            "app.route_card.drawing_mind.local_vlm.ocr_image_raw",
+            return_value=ocr_blob,
         ),
         patch(
             "app.route_card.drawing_mind.local_vlm.chat_vision",
             return_value=json.dumps(vlm_payload),
+        ),
+        patch(
+            "app.route_card.drawing_mind.local_vlm.chat_text",
+            return_value=json.dumps({"text": "", "insight": "", "warnings": []}),
         ),
     ):
         result = mind.understand(
@@ -231,10 +406,11 @@ def test_local_vlm_uses_vision_steps_when_usable():
         )
 
     assert result.engine == "local_vlm"
-    assert len(result.notes) == 1
-    assert "CONNECTOR" in result.notes[0]["text"].upper()
-    assert "Detail A" in (result.notes[0].get("elaboratedText") or "")
+    assert len(result.notes) >= 1
+    assert "B1" in result.notes[0]["text"].upper()
+    assert result.notes[0].get("elaboratedText") == ""
     assert result.notes[0].get("mindEngine") == "local_vlm"
+    assert result.notes[0].get("needsReview") is False
 
 
 def test_chat_vision_error_path_falls_back_partial():
@@ -250,13 +426,26 @@ def test_chat_vision_error_path_falls_back_partial():
         "raw_text": "TORQUE ALL FASTENERS AS PER PS982",
         "title_block": {},
     }
-    fake_pages = [{"page": 1, "mime": "image/jpeg", "b64": "bbb", "width": 80, "height": 80}]
+    fake_bands = [
+        {
+            "page": 1,
+            "mime": "image/jpeg",
+            "b64": "bbb",
+            "width": 80,
+            "height": 80,
+            "raw": b"jpeg",
+        }
+    ]
     mind = LocalVlmMind()
     with (
         patch("app.route_card.drawing_mind.local_vlm.ollama_reachable", return_value=True),
         patch(
-            "app.route_card.drawing_mind.local_vlm.render_pdf_pages",
-            return_value=fake_pages,
+            "app.route_card.drawing_mind.local_vlm.render_note_bands",
+            return_value=fake_bands,
+        ),
+        patch(
+            "app.route_card.drawing_mind.local_vlm.ocr_image_raw",
+            return_value="",
         ),
         patch(
             "app.route_card.drawing_mind.local_vlm.chat_vision",
@@ -280,10 +469,23 @@ def _run():
     test_weak_elaboration_and_compose()
     test_normalize_placement_drops_vague_surface()
     test_vlm_notes_usable()
-    test_merge_elaboration_onto_ocr()
+    test_merge_insight_onto_ocr()
+    test_token_gate_rejects_bare_board_corruption()
+    test_token_gate_rejects_dropped_r66()
+    test_token_gate_rejects_dropped_b1_to_b8()
+    test_align_keeps_ocr_and_flags_review()
+    test_confusable_xi_x1()
+    test_confusable_5si_to_50()
+    test_confusable_tps_to_tp3()
+    test_strip_leading_step_number()
+    test_insight_rejects_new_part_number()
+    test_split_ocr_note_lines_numbered()
+    test_generate_route_uses_verbatim_not_insight()
+    test_weight_guard_rejects_masking_tape()
+    test_weight_guard_accepts_numeric_mass()
     test_factory_returns_local_vlm()
-    test_local_vlm_falls_back_when_ollama_down()
-    test_local_vlm_uses_vision_steps_when_usable()
+    test_local_vlm_falls_back_when_server_down()
+    test_local_vlm_uses_verbatim_ocr_when_usable()
     test_chat_vision_error_path_falls_back_partial()
     print("test_drawing_mind_local_vlm: OK")
 

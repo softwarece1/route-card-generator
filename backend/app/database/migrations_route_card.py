@@ -481,11 +481,21 @@ def run_migrations():
             WHERE is_shared = TRUE AND is_active = TRUE;
             """
         )
+        # Legacy uniqueness was (dept, code); plant-scoped masters need (plant, code)
+        cursor.execute("DROP INDEX IF EXISTS route_card.ux_work_centers_dept_code;")
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_work_centers_plant_code
+            ON route_card.work_centers (plant, code)
+            WHERE is_active = TRUE AND COALESCE(plant, '') <> '';
+            """
+        )
         cursor.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS ux_work_centers_dept_code
             ON route_card.work_centers (dept, code)
-            WHERE is_shared = FALSE AND is_active = TRUE;
+            WHERE is_shared = FALSE AND is_active = TRUE
+              AND COALESCE(plant, '') = '';
             """
         )
         cursor.execute(
@@ -647,59 +657,98 @@ def run_migrations():
             """
         )
 
-        # Seed / upsert BEL department master (safe to re-run; BG excluded)
-        # Tuple: code, name, sort_order, plant_id
-        bel_departments = [
-            ("MR", "MR", 10, "1100"),
-            ("MS", "MS", 20, "1200"),
-            ("ARMS_AMMO", "Arms & Ammunition", 30, "1300"),
-            ("NS1", "NS1", 40, "1400"),
-            ("NS2", "NS2", 50, "1500"),
-            ("ADSN", "ADSN", 60, "1600"),
-            ("MCE_NCS", "MCE/NCS", 70, "1700"),
-            ("NWCS", "NWCS", 80, "1800"),
-            ("SC", "SC", 90, "1900"),
-            ("US", "US", 100, "2000"),
-            ("HLS", "HLS", 110, "2100"),
-            ("EW_A", "EW&A", 120, "2200"),
-            ("SEEKERS", "Seekers (RF & IR)", 130, "2300"),
-            ("EM", "EM", 140, "2400"),
-            ("COMPONENTS", "Components", 150, "2500"),
-            ("SOFTWARE", "Software", 160, "2600"),
-            ("AF", "A&F", 170, "2700"),
-            ("ES", "ES", 180, "2800"),
-            ("CSG", "CSG", 190, "2900"),
-            ("CUSTOMER", "Customer", 200, "3000"),
+        cursor.execute(
+            """
+            ALTER TABLE route_card.plants
+            ADD COLUMN IF NOT EXISTS work_center_synced_at
+                TIMESTAMP WITHOUT TIME ZONE NULL;
+            """
+        )
+
+        # Real SAP plant / WERKS codes from end-user work-centres list
+        sap_plant_codes = [
+            "1110", "1111", "1114", "1115", "1120", "1130", "1131", "1132",
+            "1140", "1141", "1142", "1143", "1150", "1151", "1152", "1153",
+            "1154", "1155", "1156", "1157", "1160", "1161", "1170", "1171",
+            "1172", "1173", "1174", "1175", "1176", "1178", "1180", "1181",
+            "1182", "1183", "1184", "1186", "1190", "1191", "1210", "1310",
+            "1320", "1330", "1340", "1350", "1360", "1410", "1411", "1510",
+            "1610", "1710",
         ]
-        # Plants master (one row per WERKS; name mirrors primary department)
-        for code, name, sort_order, plant_id in bel_departments:
+        dummy_plant_codes = [
+            "1100", "1200", "1300", "1400", "1500", "1600", "1700", "1800",
+            "1900", "2000", "2100", "2200", "2300", "2400", "2500", "2600",
+            "2700", "2800", "2900", "3000",
+        ]
+
+        for idx, plant_code in enumerate(sap_plant_codes, start=1):
             cursor.execute(
                 """
                 INSERT INTO route_card.plants (code, name, description, is_active, sort_order)
                 VALUES (%s, %s, %s, TRUE, %s)
                 ON CONFLICT (code) DO UPDATE
-                SET name = EXCLUDED.name,
-                    description = EXCLUDED.description,
-                    is_active = TRUE,
+                SET is_active = TRUE,
                     sort_order = EXCLUDED.sort_order;
                 """,
-                (plant_id, name, f"Plant for {name}", sort_order),
+                (plant_code, plant_code, "", idx * 10),
             )
-        print("upserted BEL route_card.plants master")
-        bel_codes = [c for c, _, _, _ in bel_departments]
-        for code, name, sort_order, plant_id in bel_departments:
+
+        # Remove legacy dummy SBU plant codes (1100–3000)
+        cursor.execute(
+            """
+            DELETE FROM route_card.plants
+            WHERE code = ANY(%s);
+            """,
+            (dummy_plant_codes,),
+        )
+        print("upserted SAP route_card.plants master; removed dummy plant codes")
+
+        # Seed / upsert BEL SBU master (safe to re-run; BG excluded)
+        # plant_id left blank until SBU → plant mapping is provided
+        bel_departments = [
+            ("MR", "MR", 10),
+            ("MS", "MS", 20),
+            ("ARMS_AMMO", "Arms & Ammunition", 30),
+            ("NS1", "NS1", 40),
+            ("NS2", "NS2", 50),
+            ("ADSN", "ADSN", 60),
+            ("MCE_NCS", "MCE/NCS", 70),
+            ("NWCS", "NWCS", 80),
+            ("SC", "SC", 90),
+            ("US", "US", 100),
+            ("HLS", "HLS", 110),
+            ("EW_A", "EW&A", 120),
+            ("SEEKERS", "Seekers (RF & IR)", 130),
+            ("EM", "EM", 140),
+            ("COMPONENTS", "Components", 150),
+            ("SOFTWARE", "Software", 160),
+            ("AF", "A&F", 170),
+            ("ES", "ES", 180),
+            ("CSG", "CSG", 190),
+            ("CUSTOMER", "Customer", 200),
+        ]
+        bel_codes = [c for c, _, _ in bel_departments]
+        for code, name, sort_order in bel_departments:
             cursor.execute(
                 """
                 INSERT INTO route_card.departments (code, name, plant_id, is_active, sort_order)
-                VALUES (%s, %s, %s, TRUE, %s)
+                VALUES (%s, %s, '', TRUE, %s)
                 ON CONFLICT (code) DO UPDATE
                 SET name = EXCLUDED.name,
-                    plant_id = EXCLUDED.plant_id,
                     is_active = TRUE,
                     sort_order = EXCLUDED.sort_order;
                 """,
-                (code, name, plant_id, sort_order),
+                (code, name, sort_order),
             )
+        # Clear dummy plant codes from SBUs (do not invent replacements)
+        cursor.execute(
+            """
+            UPDATE route_card.departments
+            SET plant_id = ''
+            WHERE plant_id = ANY(%s);
+            """,
+            (dummy_plant_codes,),
+        )
         # Hide any previously seeded non-BEL rows
         cursor.execute(
             """
@@ -709,7 +758,7 @@ def run_migrations():
             """,
             (bel_codes,),
         )
-        print("upserted BEL route_card.departments master (with plant_id)")
+        print("upserted BEL route_card.departments (SBU) master; cleared dummy plant_id")
 
         # Seed default admin if no users exist
         cursor.execute("SELECT COUNT(*) FROM route_card.users;")

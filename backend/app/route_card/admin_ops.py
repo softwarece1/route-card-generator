@@ -39,19 +39,9 @@ def health_extended() -> dict:
     else:
         pg_err = None
 
-    ollama_ok = False
-    ollama_err = None
-    try:
-        import httpx
+    from app.route_card.drawing_mind.ollama_client import vlm_status
 
-        base = (settings.OLLAMA_BASE_URL or "http://127.0.0.1:11434").rstrip("/")
-        with httpx.Client(timeout=3.0, trust_env=False) as client:
-            r = client.get(f"{base}/api/tags")
-            ollama_ok = r.status_code == 200
-            if not ollama_ok:
-                ollama_err = f"HTTP {r.status_code}"
-    except Exception as exc:
-        ollama_err = str(exc)[:200]
+    ollama_ok, ollama_err = vlm_status(timeout=3.0)
 
     root = get_local_upload_root()
     disk = {}

@@ -161,7 +161,7 @@ PDF bytes
   → PyMuPDF text (title block, etc.)
   → if no NOTES found: Tesseract OCR merged in (graphic NOTE I / NOTE II)
   → spatial word boxes (PyMuPDF dict / Tesseract image_to_data)
-  → Drawing mind (CPU spatial; later local_vlm) elaborates AS SHOWN notes
+  → Drawing mind (local vLLM Gemma, or CPU spatial) elaborates AS SHOWN notes
   → pdfplumber tables (Parts List / Wire List)
   → multi-GA merge + cross-ref resolver
   → field parsers → keyword route generator (prefers elaboratedText)
@@ -174,10 +174,12 @@ Best results still come from **standard BEL-style** GA / PL / WL exports. Layout
 Elaborates placement notes like *STICK ITEM 2 & 3 AS SHOWN* into surface + offset instructions when dimension/balloon text is OCR-readable.
 
 ```env
-DRAWING_MIND_ENGINE=cpu_spatial
-DRAWING_MIND_SPATIAL_DPI=200
-DRAWING_MIND_MAX_PAGES=12
+DRAWING_MIND_ENGINE=local_vlm
+OLLAMA_BASE_URL=http://172.195.132.152:8010
+OLLAMA_VLM_MODEL=google/gemma-4-E4B-it
 ```
+
+`OLLAMA_*` is the existing setting name. The value is an OpenAI-compatible vLLM server (`GET /v1/models`, `POST /v1/chat/completions`), model `google/gemma-4-E4B-it`, context 8192. Set `DRAWING_MIND_ENGINE=cpu_spatial` to skip the vision server.
 
 Sessions accept **multiple GA uploads** of the same part family; missing referenced GAs are warned. Internal pointers (`FIGURE 1`, `SHEET 2`, `TABLE 1`/`TABEL 1`, `DETAIL B`, interconnection / tooling matrix) are resolved across uploaded sheets using cues like *as per / as indicated / as shown / provided in / refer / see*. See [`backend/docs/DRAWING_MIND.md`](backend/docs/DRAWING_MIND.md).
 
@@ -225,7 +227,7 @@ If this PC is shared by other departments and shuts down on a schedule (e.g. 6�
 
 1. Ensure `backend\.venv` exists and dependencies are installed, and `frontend\node_modules` exists (`npm install`).
 2. Ensure **PostgreSQL** Windows service Startup type is **Automatic**.
-3. If you use `DRAWING_MIND_ENGINE=local_vlm`, confirm the **Ollama** Windows service is **Automatic**.
+3. If you use `DRAWING_MIND_ENGINE=local_vlm`, confirm the vLLM server at `OLLAMA_BASE_URL` is up (`GET /v1/models` returns `google/gemma-4-E4B-it`).
 4. Open **elevated** PowerShell:
 
 ```powershell

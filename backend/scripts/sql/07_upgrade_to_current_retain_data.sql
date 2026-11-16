@@ -208,8 +208,21 @@ CREATE TABLE IF NOT EXISTS route_card.inspection_chars (
 );
 
 -- =====================================================================
--- 3) Departments + BEL master (upsert; keep custom rows deactivated)
+-- 3) Plants (SAP WERKS) + Departments / BEL master
 -- =====================================================================
+CREATE TABLE IF NOT EXISTS route_card.plants (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(32) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE route_card.plants
+    ADD COLUMN IF NOT EXISTS work_center_synced_at TIMESTAMP WITHOUT TIME ZONE NULL;
+
 CREATE TABLE IF NOT EXISTS route_card.departments (
     id SERIAL PRIMARY KEY,
     code VARCHAR(64) NOT NULL UNIQUE,
@@ -222,32 +235,40 @@ CREATE TABLE IF NOT EXISTS route_card.departments (
 ALTER TABLE route_card.departments
     ADD COLUMN IF NOT EXISTS plant_id VARCHAR(32) NOT NULL DEFAULT '';
 
+-- SBU master: plant_id left blank until SBU → SAP plant mapping is set
 INSERT INTO route_card.departments (code, name, plant_id, is_active, sort_order) VALUES
-    ('MR',          'MR',                    '1100', TRUE, 10),
-    ('MS',          'MS',                    '1200', TRUE, 20),
-    ('ARMS_AMMO',   'Arms & Ammunition',     '1300', TRUE, 30),
-    ('NS1',         'NS1',                   '1400', TRUE, 40),
-    ('NS2',         'NS2',                   '1500', TRUE, 50),
-    ('ADSN',        'ADSN',                  '1600', TRUE, 60),
-    ('MCE_NCS',     'MCE/NCS',               '1700', TRUE, 70),
-    ('NWCS',        'NWCS',                  '1800', TRUE, 80),
-    ('SC',          'SC',                    '1900', TRUE, 90),
-    ('US',          'US',                    '2000', TRUE, 100),
-    ('HLS',         'HLS',                   '2100', TRUE, 110),
-    ('EW_A',        'EW&A',                  '2200', TRUE, 120),
-    ('SEEKERS',     'Seekers (RF & IR)',     '2300', TRUE, 130),
-    ('EM',          'EM',                    '2400', TRUE, 140),
-    ('COMPONENTS',  'Components',            '2500', TRUE, 150),
-    ('SOFTWARE',    'Software',              '2600', TRUE, 160),
-    ('AF',          'A&F',                   '2700', TRUE, 170),
-    ('ES',          'ES',                    '2800', TRUE, 180),
-    ('CSG',         'CSG',                   '2900', TRUE, 190),
-    ('CUSTOMER',    'Customer',              '3000', TRUE, 200)
+    ('MR',          'MR',                    '', TRUE, 10),
+    ('MS',          'MS',                    '', TRUE, 20),
+    ('ARMS_AMMO',   'Arms & Ammunition',     '', TRUE, 30),
+    ('NS1',         'NS1',                   '', TRUE, 40),
+    ('NS2',         'NS2',                   '', TRUE, 50),
+    ('ADSN',        'ADSN',                  '', TRUE, 60),
+    ('MCE_NCS',     'MCE/NCS',               '', TRUE, 70),
+    ('NWCS',        'NWCS',                  '', TRUE, 80),
+    ('SC',          'SC',                    '', TRUE, 90),
+    ('US',          'US',                    '', TRUE, 100),
+    ('HLS',         'HLS',                   '', TRUE, 110),
+    ('EW_A',        'EW&A',                  '', TRUE, 120),
+    ('SEEKERS',     'Seekers (RF & IR)',     '', TRUE, 130),
+    ('EM',          'EM',                    '', TRUE, 140),
+    ('COMPONENTS',  'Components',            '', TRUE, 150),
+    ('SOFTWARE',    'Software',              '', TRUE, 160),
+    ('AF',          'A&F',                   '', TRUE, 170),
+    ('ES',          'ES',                    '', TRUE, 180),
+    ('CSG',         'CSG',                   '', TRUE, 190),
+    ('CUSTOMER',    'Customer',              '', TRUE, 200)
 ON CONFLICT (code) DO UPDATE
 SET name = EXCLUDED.name,
-    plant_id = EXCLUDED.plant_id,
     is_active = TRUE,
     sort_order = EXCLUDED.sort_order;
+
+UPDATE route_card.departments
+SET plant_id = ''
+WHERE plant_id IN (
+    '1100', '1200', '1300', '1400', '1500', '1600', '1700', '1800',
+    '1900', '2000', '2100', '2200', '2300', '2400', '2500', '2600',
+    '2700', '2800', '2900', '3000'
+);
 
 UPDATE route_card.departments
 SET is_active = FALSE
@@ -431,9 +452,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_work_centers_shared_code
     ON route_card.work_centers (code)
     WHERE is_shared = TRUE AND is_active = TRUE;
 
+DROP INDEX IF EXISTS route_card.ux_work_centers_dept_code;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_work_centers_plant_code
+    ON route_card.work_centers (plant, code)
+    WHERE is_active = TRUE AND COALESCE(plant, '') <> '';
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_work_centers_dept_code
     ON route_card.work_centers (dept, code)
-    WHERE is_shared = FALSE AND is_active = TRUE;
+    WHERE is_shared = FALSE AND is_active = TRUE
+      AND COALESCE(plant, '') = '';
 
 CREATE TABLE IF NOT EXISTS route_card.machines (
     id SERIAL PRIMARY KEY,

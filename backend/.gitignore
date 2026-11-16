@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 uploads/
+exports/
 data/auth_rsa_private.pem
 *.egg-info/
 .pytest_cache/

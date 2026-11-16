@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-30T10:09:22+00:00",
+  "updatedAt": "2026-11-12T10:45:18+00:00",
   "templates": [
     {
       "id": "bel-ga-default",
@@ -97,11 +97,11 @@
         "noteHeaderCountMin": 0
       },
       "stats": {
-        "useCount": 65,
+        "useCount": 72,
         "learnCount": 0
       },
       "createdAt": "2026-09-24T06:42:40+00:00",
-      "updatedAt": "2026-10-30T10:09:15+00:00"
+      "updatedAt": "2026-11-12T10:45:06+00:00"
     },
     {
       "id": "bel-wl-default",
@@ -223,13 +223,13 @@
         ]
       },
       "stats": {
-        "useCount": 50,
+        "useCount": 54,
         "learnCount": 1
       },
       "sourceSessionId": 94,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-24T06:45:12+00:00",
-      "updatedAt": "2026-10-13T05:03:32+00:00"
+      "updatedAt": "2026-11-03T10:40:24+00:00"
     },
     {
       "id": "learned-pl-14a3a701cd",
@@ -296,13 +296,13 @@
         ]
       },
       "stats": {
-        "useCount": 32,
+        "useCount": 33,
         "learnCount": 1
       },
       "sourceSessionId": 94,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-24T06:45:14+00:00",
-      "updatedAt": "2026-10-24T04:27:48+00:00"
+      "updatedAt": "2026-11-02T07:55:23+00:00"
     },
     {
       "id": "learned-ga-f5ed4e252b",
@@ -803,13 +803,13 @@
         ]
       },
       "stats": {
-        "useCount": 13,
+        "useCount": 17,
         "learnCount": 1
       },
       "sourceSessionId": 275,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-28T11:18:11+00:00",
-      "updatedAt": "2026-10-30T10:09:22+00:00"
+      "updatedAt": "2026-11-12T10:45:18+00:00"
     },
     {
       "id": "learned-ga-b80d291367",
@@ -900,13 +900,13 @@
         ]
       },
       "stats": {
-        "useCount": 8,
+        "useCount": 10,
         "learnCount": 1
       },
       "sourceSessionId": 9,
       "notes": "Saved after engineer review",
       "createdAt": "2026-10-13T06:25:44+00:00",
-      "updatedAt": "2026-10-30T07:46:26+00:00"
+      "updatedAt": "2026-11-02T08:12:51+00:00"
     }
   ]
 }

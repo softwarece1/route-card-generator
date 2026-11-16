@@ -10,6 +10,7 @@ from app.route_card.op_templates import _dept, _is_admin
 
 
 def plant_dict(p: RcPlant) -> dict:
+    synced = getattr(p, "work_center_synced_at", None)
     return {
         "id": p.id,
         "code": p.code,
@@ -17,6 +18,7 @@ def plant_dict(p: RcPlant) -> dict:
         "description": p.description or "",
         "isActive": bool(p.is_active),
         "sortOrder": p.sort_order,
+        "workCenterSyncedAt": synced.isoformat() + "Z" if synced else None,
         "label": f"{p.code} — {p.name}",
         "value": p.code,
     }
@@ -61,40 +63,79 @@ def plant_id_for_dept(dept: str) -> str:
 
 @db_session
 def resolve_sync_plant_code(user: dict, requested: str | None = None) -> str:
-    """Admin may pick any plant; others always use their department plant_id."""
-    if _is_admin(user):
-        code = (requested or "").strip()
-        if not code:
-            raise HTTPException(400, "Plant is required")
+    """Admin / dept_head may sync a requested plant; otherwise use SBU plant_id."""
+    code = (requested or "").strip()
+    if code:
+        if not (_is_admin(user) or _dept(user)):
+            raise HTTPException(403, "Not allowed to sync this plant")
+        # Dept heads may sync their own SBU plant or an explicitly opened plant
         hit = select(p for p in RcPlant if p.is_active and p.code == code)[:1]
         if not hit:
             return code
         return hit[0].code
 
+    if _is_admin(user):
+        raise HTTPException(400, "Plant is required")
+
     plant = _plant_id_for_dept(_dept(user))
     if not plant:
         raise HTTPException(
             400,
-            "No plant_id configured for your department. Ask an admin to set it on the department.",
+            "No plant code configured for your SBU. Ask an admin to set it on the SBU.",
         )
     return plant
 
 
 @db_session
+def mark_work_center_synced(plant_code: str):
+    """Stamp last successful work-centre SAP sync on the plant row."""
+    from datetime import datetime
+
+    code = (plant_code or "").strip()
+    if not code:
+        return
+    hit = select(p for p in RcPlant if p.code == code)[:1]
+    if not hit:
+        return
+    hit[0].work_center_synced_at = datetime.utcnow()
+    commit()
+
+
+@db_session
+def get_work_center_synced_at(plant_code: str):
+    code = (plant_code or "").strip()
+    if not code:
+        return None
+    hit = select(p for p in RcPlant if p.code == code)[:1]
+    if not hit:
+        return None
+    return hit[0].work_center_synced_at
+
+
+@db_session
 def upsert_plant(body: dict, plant_id: int | None = None) -> dict:
+    from app.route_card.models import RcMachine, RcWorkCenter
+
     code = (body.get("code") or "").strip()
     name = (body.get("name") or "").strip()
     if not code or not name:
         raise HTTPException(400, "code and name are required")
+    old_code = ""
     if plant_id:
         p = RcPlant.get(id=plant_id)
         if not p:
             raise HTTPException(404, "Plant not found")
+        old_code = (p.code or "").strip()
+        if code != old_code:
+            clash = RcPlant.get(code=code)
+            if clash and clash.id != p.id:
+                raise HTTPException(400, f"Plant code '{code}' already exists")
     else:
         existing = RcPlant.get(code=code)
         if existing and existing.is_active:
             raise HTTPException(400, f"Plant code '{code}' already exists")
         p = existing or RcPlant(code=code, name=name)
+        old_code = (p.code or "").strip() if existing else ""
     p.code = code
     p.name = name
     if "description" in body:
@@ -105,5 +146,15 @@ def upsert_plant(body: dict, plant_id: int | None = None) -> dict:
         p.is_active = bool(body["isActive"])
     else:
         p.is_active = True
+
+    # Departments / WCs / machines store WERKS as plain plant code — keep in sync
+    if old_code and old_code != code:
+        for d in select(d for d in RcDepartment if d.plant_id == old_code)[:]:
+            d.plant_id = code
+        for w in select(w for w in RcWorkCenter if w.plant == old_code)[:]:
+            w.plant = code
+        for m in select(m for m in RcMachine if m.plant == old_code)[:]:
+            m.plant = code
+
     commit()
     return plant_dict(p)

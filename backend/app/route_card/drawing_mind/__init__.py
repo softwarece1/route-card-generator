@@ -1,4 +1,4 @@
-"""Pluggable drawing mind — CPU spatial or local VLM (Ollama)."""
+"""Pluggable drawing mind — CPU spatial or local VLM (verbatim note transcription)."""
 
 from __future__ import annotations
 

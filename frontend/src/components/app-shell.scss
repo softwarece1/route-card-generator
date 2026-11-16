@@ -127,9 +127,29 @@ $rca-sidebar-collapsed: 3.6rem;
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  padding: 0.75rem 0.6rem 1rem;
+  padding: 0.75rem 0.6rem 0.5rem;
   flex: 1;
   overflow-y: auto;
+}
+
+.rca-sidebar__footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.45rem 0.55rem 0.65rem;
+  border-top: 1px solid var(--rca-chrome-edge);
+}
+
+.rca-sidebar__collapse-btn.p-button {
+  width: 1.85rem;
+  height: 1.85rem;
+  color: var(--pmf-text-muted) !important;
+
+  &:enabled:hover {
+    background: var(--pmf-surface) !important;
+    color: var(--rca-accent-strong) !important;
+  }
 }
 
 .rca-sidebar__section {
@@ -195,6 +215,7 @@ $rca-sidebar-collapsed: 3.6rem;
   flex-direction: column;
   background: var(--rca-main-bg);
   box-sizing: border-box;
+  transition: margin-left 0.18s ease;
 }
 
 /* Uploads: lock page to viewport; folder tree + table scroll inside */
@@ -287,10 +308,12 @@ $rca-sidebar-collapsed: 3.6rem;
   left: var(--rca-sidebar-width, #{$rca-sidebar-width});
 }
 
-@media (max-width: 860px) {
-  .rca-shell--with-sidebar {
-    --rca-sidebar-width: #{$rca-sidebar-collapsed};
-  }
+.rca-sidebar {
+  transition: width 0.18s ease;
+}
+
+.rca-shell--sidebar-collapsed.rca-shell--with-sidebar {
+  --rca-sidebar-width: #{$rca-sidebar-collapsed};
 
   .rca-sidebar__brand-copy,
   .rca-sidebar__link span,
@@ -306,5 +329,10 @@ $rca-sidebar-collapsed: 3.6rem;
   .rca-sidebar__link {
     justify-content: center;
     padding: 0.65rem;
+  }
+
+  .rca-sidebar__footer {
+    justify-content: center;
+    padding: 0.45rem 0.25rem 0.65rem;
   }
 }

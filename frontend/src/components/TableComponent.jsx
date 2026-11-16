@@ -60,6 +60,8 @@ export function TableActions({ children }) {
  *   primary?: (row) => node, secondary?: (row) => node,
  * }
  */
+const DEFAULT_ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
+
 export default function TableComponent({
   value = [],
   columns = [],
@@ -67,7 +69,7 @@ export default function TableComponent({
   dataKey = "id",
   paginator = true,
   rows = 10,
-  rowsPerPageOptions,
+  rowsPerPageOptions = DEFAULT_ROWS_PER_PAGE_OPTIONS,
   pageLinkSize,
   emptyMessage = "No records found.",
   className = "",
@@ -118,12 +120,14 @@ export default function TableComponent({
     return undefined;
   };
 
-  const totalRows = Array.isArray(value) ? value.length : 0;
   const pageSize = Number(rows) > 0 ? Number(rows) : 10;
-  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  // Show every page link (Prime default is 5, which hid pages 6–7 for 63 rows)
-  const resolvedPageLinkSize =
-    pageLinkSize != null ? pageLinkSize : Math.max(totalPages, 5);
+  // Cap visible page buttons so the footer stays aligned (Prime default: 5)
+  const resolvedPageLinkSize = pageLinkSize != null ? pageLinkSize : 5;
+  const showRowsDropdown =
+    paginator && Array.isArray(rowsPerPageOptions) && rowsPerPageOptions.length > 0;
+  const defaultPaginatorTemplate = showRowsDropdown
+    ? "CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
+    : "CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink";
 
   return (
     <div className={`rc-table ${className}`.trim()}>
@@ -133,13 +137,13 @@ export default function TableComponent({
         dataKey={dataKey}
         paginator={paginator}
         rows={pageSize}
-        rowsPerPageOptions={rowsPerPageOptions}
+        rowsPerPageOptions={showRowsDropdown ? rowsPerPageOptions : undefined}
         pageLinkSize={resolvedPageLinkSize}
         emptyMessage={emptyMessage}
         size={size === "normal" ? undefined : size}
         sortMode={sortMode}
         className="rc-table__dt"
-        paginatorTemplate="CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink"
+        paginatorTemplate={defaultPaginatorTemplate}
         currentPageReportTemplate="Showing {first}-{last} of {totalRecords} entries"
         {...rest}
       >

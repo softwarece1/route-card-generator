@@ -46,19 +46,24 @@ class Settings(BaseSettings):
     OCR_DPI: int = 200
     OCR_MAX_PAGES: int = 12
 
-    # Drawing mind: cpu_spatial | local_vlm (Ollama vision)
+    # Drawing mind: cpu_spatial | local_vlm (on-prem vLLM vision)
     DRAWING_MIND_ENGINE: str = "cpu_spatial"
     DRAWING_MIND_SPATIAL_DPI: int = 200
     DRAWING_MIND_MAX_PAGES: int = 12
 
-    # Local VLM via Ollama (Qwen3-VL / Qwen2.5-VL etc.) — used when DRAWING_MIND_ENGINE=local_vlm
-    # Ensure `ollama serve` is running and the vision model is created before enabling.
-    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
-    OLLAMA_VLM_MODEL: str = "qwen3.8-27b-vl:latest"
+    # Local VLM via an OpenAI-compatible vLLM server — used when DRAWING_MIND_ENGINE=local_vlm.
+    # Names stay OLLAMA_* so existing env files keep working.
+    # Server exposes GET /v1/models and POST /v1/chat/completions. Context window is 8192.
+    OLLAMA_BASE_URL: str = "http://172.195.132.152:8010"
+    OLLAMA_VLM_MODEL: str = "google/gemma-4-E4B-it"
     OLLAMA_TIMEOUT_SEC: float = 900.0
+    OLLAMA_VLM_MAX_TOKENS: int = 2048
     OLLAMA_VLM_DPI: int = 160
     OLLAMA_VLM_MAX_PAGES: int = 6
     OLLAMA_VLM_MAX_IMAGE_EDGE: int = 1600
+    # High-res NOTE-band crop (verbatim transcription)
+    OLLAMA_VLM_NOTE_DPI: int = 360
+    OLLAMA_VLM_NOTE_MAX_EDGE: int = 2800
 
     # Adaptive format templates (JSON on disk — no external LLM)
     # Empty = backend/data/format_templates.json

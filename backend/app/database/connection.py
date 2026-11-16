@@ -38,22 +38,29 @@ def connect_to_db():
 
     db.generate_mapping(create_tables=True)
 
-    # Idempotent demo catalog + dept_head/IED users (needs mapping)
+    # Idempotent plant WC import + dept_head/IED users (needs mapping)
     try:
         from app.route_card.work_centers import (
-            seed_default_catalog,
+            deactivate_dummy_work_centers,
+            import_work_centres_from_csv,
             seed_dept_head_and_ied_users,
         )
 
-        wc_res = seed_default_catalog()
+        dummy_res = deactivate_dummy_work_centers()
         print(
-            f"seeded work centres/machines: created={wc_res.get('created')} "
-            f"machines={wc_res.get('machinesCreated')} depts={wc_res.get('deptCount')}"
+            f"deactivated dummy work centres: wc={dummy_res.get('deactivated')} "
+            f"machines={dummy_res.get('machinesDeactivated')}"
+        )
+        wc_res = import_work_centres_from_csv()
+        print(
+            f"imported work centres from CSV: created={wc_res.get('created')} "
+            f"updated={wc_res.get('updated')} skipped={wc_res.get('skipped')}"
         )
         user_res = seed_dept_head_and_ied_users()
         print(
             f"seeded dept_head/IED users: created={user_res.get('created')} "
-            f"skipped={user_res.get('skipped')}"
+            f"skipped={user_res.get('skipped')} "
+            f"reset={user_res.get('reset')}"
         )
     except Exception as exc:
         print(f"warning: catalog/user seed skipped: {exc}")

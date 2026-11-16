@@ -97,7 +97,7 @@ export default function SystemPage() {
                   </span>
                 </div>
                 <div className={`rc-system__metric ${health.ollama?.ok ? "is-ok" : "is-bad"}`}>
-                  <span className="label">Ollama</span>
+                  <span className="label">vLLM</span>
                   <span className="value">
                     {health.ollama?.ok ? "ok" : health.ollama?.error || "unreachable"}
                   </span>

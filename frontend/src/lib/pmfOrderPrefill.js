@@ -396,22 +396,7 @@ export function squashConsecutiveSameWc(ops) {
     const prevKey = prev ? wcKey(prev) : "";
 
     if (prev && key && key === prevKey) {
-      const names = [str(prev.Operation), str(op.Operation)].filter(Boolean);
-      prev.Operation = names.join("; ");
-      const texts = [str(prev.LongText), str(op.LongText)].filter(Boolean);
-      prev.LongText = texts.join("\n\n");
-      prev["Setup Time"] = num(prev["Setup Time"], 0) + num(op["Setup Time"], 0);
-      prev["Per Pc Time"] = num(prev["Per Pc Time"], 0) + num(op["Per Pc Time"], 0);
-      prev._itemsUsed = mergeItemsUsed(prev._itemsUsed, op._itemsUsed);
-      prev._itemsLabel = [str(prev._itemsLabel), str(op._itemsLabel)].filter(Boolean).join(", ");
-      prev._reference = [str(prev._reference), str(op._reference)].filter(Boolean).join("; ");
-      prev._torqueSpec = [str(prev._torqueSpec), str(op._torqueSpec)].filter(Boolean).join("; ");
-      prev.generates_output_serial =
-        Boolean(prev.generates_output_serial) || Boolean(op.generates_output_serial);
-      prev.requires_input_material =
-        Boolean(prev.requires_input_material) || Boolean(op.requires_input_material);
-      prev.manual_operation =
-        prev.manual_operation !== false || op.manual_operation !== false;
+      foldOarcOpInto(prev, op);
       if (!groupOpen) {
         mergedGroups += 1;
         groupOpen = true;
@@ -428,6 +413,202 @@ export function squashConsecutiveSameWc(ops) {
     mergedGroups,
     beforeCount: src.length,
     afterCount: rows.length,
+  };
+}
+
+function routeWcKey(op) {
+  return str(op?.workCentre || op?.workCenter || op?.type).toLowerCase();
+}
+
+function isFinalInspectionOp(op) {
+  return str(op?.operation).toLowerCase() === "final inspection";
+}
+
+function foldRouteOpInto(prev, op) {
+  const names = [str(prev.operation), str(op.operation)].filter(Boolean);
+  prev.operation = names.join("; ");
+  const texts = [str(prev.instructionText || prev.reason), str(op.instructionText || op.reason)].filter(
+    Boolean,
+  );
+  prev.instructionText = texts.join("\n\n");
+  prev.reason = (prev.instructionText || "").slice(0, 240);
+  prev.itemsUsed = mergeItemsUsed(prev.itemsUsed, op.itemsUsed);
+  prev.items = [str(prev.items), str(op.items)].filter(Boolean).join(", ");
+  prev.torqueSpec = [str(prev.torqueSpec), str(op.torqueSpec)].filter(Boolean).join("; ");
+  prev.reference = [str(prev.reference), str(op.reference)].filter(Boolean).join("; ");
+  prev.tool = [str(prev.tool), str(op.tool)].filter(Boolean).join(" / ");
+  prev.inspection = [str(prev.inspection), str(op.inspection)].filter(Boolean).join("; ");
+  const feats = [...asList(prev.features), ...asList(op.features)];
+  prev.features = [...new Set(feats)];
+  prev.elaborated = Boolean(prev.elaborated) || Boolean(op.elaborated);
+  prev.needsReview = Boolean(prev.needsReview) || Boolean(op.needsReview);
+  if (str(op.insight)) {
+    prev.insight = [str(prev.insight), str(op.insight)].filter(Boolean).join("\n");
+  }
+  return prev;
+}
+
+function foldOarcOpInto(prev, op) {
+  const names = [str(prev.Operation), str(op.Operation)].filter(Boolean);
+  prev.Operation = names.join("; ");
+  const texts = [str(prev.LongText), str(op.LongText)].filter(Boolean);
+  prev.LongText = texts.join("\n\n");
+  prev["Setup Time"] = num(prev["Setup Time"], 0) + num(op["Setup Time"], 0);
+  prev["Per Pc Time"] = num(prev["Per Pc Time"], 0) + num(op["Per Pc Time"], 0);
+  prev._itemsUsed = mergeItemsUsed(prev._itemsUsed, op._itemsUsed);
+  prev._itemsLabel = [str(prev._itemsLabel), str(op._itemsLabel)].filter(Boolean).join(", ");
+  prev._reference = [str(prev._reference), str(op._reference)].filter(Boolean).join("; ");
+  prev._torqueSpec = [str(prev._torqueSpec), str(op._torqueSpec)].filter(Boolean).join("; ");
+  prev.generates_output_serial =
+    Boolean(prev.generates_output_serial) || Boolean(op.generates_output_serial);
+  prev.requires_input_material =
+    Boolean(prev.requires_input_material) || Boolean(op.requires_input_material);
+  prev.manual_operation = prev.manual_operation !== false || op.manual_operation !== false;
+  return prev;
+}
+
+/**
+ * Merge user-selected OARC ops into one (must be contiguous by Oprn No order).
+ */
+export function mergeSelectedOarcOps(ops, selected) {
+  const src = asList(ops).map((r) => ({ ...r }));
+  const selKeys = new Set(
+    asList(selected)
+      .map((r) => str(r?._rowId || r?.id || r?.["Oprn No"]))
+      .filter(Boolean),
+  );
+  if (selKeys.size < 2) {
+    return { ok: false, error: "Select at least two operations to merge.", rows: src };
+  }
+  const ordered = [...src].sort((a, b) => num(a["Oprn No"], 0) - num(b["Oprn No"], 0));
+  const indexes = [];
+  ordered.forEach((op, i) => {
+    const key = str(op?._rowId || op?.id || op?.["Oprn No"]);
+    if (selKeys.has(key)) indexes.push(i);
+  });
+  if (indexes.length < 2) {
+    return { ok: false, error: "Could not resolve selected operations.", rows: src };
+  }
+  for (let i = 1; i < indexes.length; i += 1) {
+    if (indexes[i] !== indexes[i - 1] + 1) {
+      return {
+        ok: false,
+        error: "Selected operations must be consecutive in the route order.",
+        rows: src,
+      };
+    }
+  }
+  const start = indexes[0];
+  const end = indexes[indexes.length - 1];
+  const head = { ...ordered[start] };
+  for (let i = start + 1; i <= end; i += 1) {
+    foldOarcOpInto(head, ordered[i]);
+  }
+  const next = [...ordered.slice(0, start), head, ...ordered.slice(end + 1)];
+  return {
+    ok: true,
+    error: null,
+    rows: renumberOarcOps(next),
+    mergedCount: indexes.length,
+  };
+}
+
+/** Merge consecutive route ops that share the same non-empty work centre. */
+export function squashConsecutiveSameWcRouteOps(ops) {
+  const src = asList(ops);
+  if (src.length < 2) {
+    return {
+      rows: renumberRouteOps(src.map((r) => ({ ...r }))),
+      mergedGroups: 0,
+      beforeCount: src.length,
+      afterCount: src.length,
+    };
+  }
+
+  const out = [];
+  let mergedGroups = 0;
+  let groupOpen = false;
+
+  for (const op of src) {
+    const key = routeWcKey(op);
+    const prev = out[out.length - 1];
+    const prevKey = prev ? routeWcKey(prev) : "";
+    const canFold =
+      prev &&
+      key &&
+      key === prevKey &&
+      !isFinalInspectionOp(op) &&
+      !isFinalInspectionOp(prev);
+
+    if (canFold) {
+      foldRouteOpInto(prev, op);
+      if (!groupOpen) {
+        mergedGroups += 1;
+        groupOpen = true;
+      }
+    } else {
+      groupOpen = false;
+      out.push({ ...op });
+    }
+  }
+
+  const rows = renumberRouteOps(out);
+  return {
+    rows,
+    mergedGroups,
+    beforeCount: src.length,
+    afterCount: rows.length,
+  };
+}
+
+function opRowKey(op) {
+  return String(op?.id ?? op?.opNo ?? "");
+}
+
+/**
+ * Merge user-selected route ops into one (must be a contiguous block by opNo order).
+ * Keeps the first selected op's WC / machine; marks manual_override.
+ */
+export function mergeSelectedRouteOps(ops, selected) {
+  const src = asList(ops).map((r) => ({ ...r }));
+  const selKeys = new Set(asList(selected).map(opRowKey).filter(Boolean));
+  if (selKeys.size < 2) {
+    return { ok: false, error: "Select at least two operations to merge.", rows: src };
+  }
+
+  const ordered = [...src].sort((a, b) => num(a.opNo, 0) - num(b.opNo, 0));
+  const indexes = [];
+  ordered.forEach((op, i) => {
+    if (selKeys.has(opRowKey(op))) indexes.push(i);
+  });
+  if (indexes.length < 2) {
+    return { ok: false, error: "Could not resolve selected operations.", rows: src };
+  }
+  for (let i = 1; i < indexes.length; i += 1) {
+    if (indexes[i] !== indexes[i - 1] + 1) {
+      return {
+        ok: false,
+        error: "Selected operations must be consecutive in the route order.",
+        rows: src,
+      };
+    }
+  }
+
+  const start = indexes[0];
+  const end = indexes[indexes.length - 1];
+  const head = { ...ordered[start] };
+  for (let i = start + 1; i <= end; i += 1) {
+    foldRouteOpInto(head, ordered[i]);
+  }
+  head.linkStatus = "manual_override";
+  head.type = head.workCentreName || head.workCentre || head.type;
+
+  const next = [...ordered.slice(0, start), head, ...ordered.slice(end + 1)];
+  return {
+    ok: true,
+    error: null,
+    rows: renumberRouteOps(next),
+    mergedCount: indexes.length,
   };
 }
 

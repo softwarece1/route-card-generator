@@ -142,6 +142,60 @@ def test_item_order_from_note():
     assert _item_order_from_note("STICK ITEM 3 AND 2 AS SHOWN", [2, 3]) == [3, 2]
 
 
+def test_as_shown_without_measured_offsets_keeps_source():
+    """Adhesive AS SHOWN with balloons but no size marks must not invent 5 mm gaps."""
+    note_text = "STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE."
+    ga = {
+        "raw_text": note_text + "\nALL DIMENSIONS ARE IN MM\nDC OUT",
+        "title_block": {"unit": "mm"},
+        "notes": [
+            {
+                "sheet": 1,
+                "stepNo": 1,
+                "text": note_text,
+                "items": [2, 3],
+                "torque": [],
+                "connectors": [],
+                "standards": [],
+                "references": [],
+            }
+        ],
+        "bom_items": [],
+    }
+    pages = [
+        {
+            "page": 1,
+            "width": 800,
+            "height": 500,
+            "words": [
+                {"text": "DC", "x0": 420, "y0": 180, "x1": 450, "y1": 200},
+                {"text": "OUT", "x0": 455, "y0": 180, "x1": 500, "y1": 200},
+                {"text": "2", "x0": 80, "y0": 90, "x1": 95, "y1": 110},
+                {"text": "3", "x0": 80, "y0": 170, "x1": 95, "y1": 190},
+                {"text": "MM", "x0": 705, "y0": 420, "x1": 735, "y1": 435},
+            ],
+        }
+    ]
+    mind = CpuSpatialMind()
+    result = mind.understand(
+        pdf_bytes=None,
+        ga_extraction=ga,
+        spatial_pages=pages,
+        source_drawing_id=1,
+        source_filename="no-offsets.pdf",
+    )
+    note = result.notes[0]
+    elaborated = (note.get("elaboratedText") or "")
+    low = elaborated.lower()
+    assert "5 mm from the top" not in low
+    assert "5 mm gap from the top" not in low
+    assert "from the left" not in low
+    assert "5.0" not in elaborated
+    # Keep source wording when nothing was measured
+    assert note_text.upper() in elaborated.upper() or elaborated.upper() == note_text.upper()
+    assert any("could not resolve placement offsets" in w.lower() for w in result.warnings)
+
+
 def test_as_shown_without_spatial_warns():
     ga = {
         "raw_text": "STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE. ALL DIMENSIONS ARE IN MM",
@@ -167,9 +221,10 @@ def test_as_shown_without_spatial_warns():
         source_drawing_id=1,
         source_filename="test.pdf",
     )
-    assert any("spatial" in w.lower() or "balloon" in w.lower() or "infer" in w.lower() or "verify" in w.lower() for w in result.warnings) or result.notes[
-        0
-    ].get("elaboratedText")
+    assert any(
+        "spatial" in w.lower() or "balloon" in w.lower() or "offset" in w.lower() or "verify" in w.lower()
+        for w in result.warnings
+    ) or result.notes[0].get("elaboratedText")
 
 
 def test_multi_ga_cross_ref_missing():

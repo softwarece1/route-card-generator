@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "primereact/button";
 import { Checkbox } from "primereact/checkbox";
 import { Dialog } from "primereact/dialog";
-import { Dropdown } from "primereact/dropdown";
 import { IconField } from "primereact/iconfield";
 import { InputIcon } from "primereact/inputicon";
 import { InputText } from "primereact/inputtext";
@@ -16,23 +15,12 @@ import { getUser } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import {
   createDepartment,
-  createPlant,
   fetchOrgDepartments,
-  fetchPlants,
   updateDepartment,
-  updatePlant,
 } from "@/services/routeCardApi";
 import "./org-structure.scss";
 
-const emptyPlant = () => ({
-  code: "",
-  name: "",
-  description: "",
-  sortOrder: 0,
-  isActive: true,
-});
-
-const emptyDept = () => ({
+const emptySbu = () => ({
   code: "",
   name: "",
   plantId: "",
@@ -44,38 +32,26 @@ export default function OrgStructurePage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
 
-  const [tab, setTab] = useState(0);
-  const [plants, setPlants] = useState([]);
-  const [departments, setDepartments] = useState([]);
+  const [sbus, setSbus] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [dialogError, setDialogError] = useState("");
+  const [search, setSearch] = useState("");
 
-  const [plantOpen, setPlantOpen] = useState(false);
-  const [plantEditId, setPlantEditId] = useState(null);
-  const [plantForm, setPlantForm] = useState(emptyPlant());
-
-  const [deptOpen, setDeptOpen] = useState(false);
-  const [deptEditId, setDeptEditId] = useState(null);
-  const [deptForm, setDeptForm] = useState(emptyDept());
-  const [plantSearch, setPlantSearch] = useState("");
-  const [deptSearch, setDeptSearch] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState(emptySbu());
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [p, d] = await Promise.all([
-        fetchPlants({ activeOnly: false }),
-        fetchOrgDepartments({ activeOnly: false }),
-      ]);
-      setPlants(p || []);
-      setDepartments(d || []);
+      const rows = await fetchOrgDepartments({ activeOnly: false });
+      setSbus(rows || []);
     } catch (err) {
-      setPlants([]);
-      setDepartments([]);
-      setError(err.message || "Could not load org structure");
+      setSbus([]);
+      setError(err.message || "Could not load SBUs");
     } finally {
       setLoading(false);
     }
@@ -85,104 +61,25 @@ export default function OrgStructurePage() {
     if (isAdmin) load();
   }, [isAdmin, load]);
 
-  const plantOptions = useMemo(
-    () =>
-      (plants || [])
-        .filter((p) => p.isActive)
-        .map((p) => ({
-          label: `${p.code} — ${p.name}`,
-          value: p.code,
-        })),
-    [plants],
-  );
-
-  const plantNameByCode = useMemo(() => {
-    const m = new Map();
-    for (const p of plants) m.set(p.code, p.name);
-    return m;
-  }, [plants]);
-
-  const filteredPlants = useMemo(() => {
-    const q = plantSearch.trim().toLowerCase();
-    if (!q) return plants;
-    return plants.filter((p) => {
-      const blob = `${p.code || ""} ${p.name || ""} ${p.description || ""}`.toLowerCase();
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return sbus;
+    return sbus.filter((d) => {
+      const blob = `${d.code || ""} ${d.name || ""} ${d.plantId || ""}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [plants, plantSearch]);
+  }, [sbus, search]);
 
-  const filteredDepartments = useMemo(() => {
-    const q = deptSearch.trim().toLowerCase();
-    if (!q) return departments;
-    return departments.filter((d) => {
-      const plantName = plantNameByCode.get(d.plantId) || "";
-      const blob = `${d.code || ""} ${d.name || ""} ${d.plantId || ""} ${plantName}`.toLowerCase();
-      return blob.includes(q);
-    });
-  }, [departments, deptSearch, plantNameByCode]);
-
-  const openCreatePlant = () => {
-    setPlantEditId(null);
-    setPlantForm(emptyPlant());
+  const openCreate = () => {
+    setEditId(null);
+    setForm(emptySbu());
     setDialogError("");
-    setPlantOpen(true);
+    setDialogOpen(true);
   };
 
-  const openEditPlant = (row) => {
-    setPlantEditId(row.id);
-    setPlantForm({
-      code: row.code || "",
-      name: row.name || "",
-      description: row.description || "",
-      sortOrder: row.sortOrder ?? 0,
-      isActive: row.isActive !== false,
-    });
-    setDialogError("");
-    setPlantOpen(true);
-  };
-
-  const savePlant = async () => {
-    const code = plantForm.code.trim();
-    const name = plantForm.name.trim();
-    if (!code || !name) {
-      setDialogError("Code and name are required");
-      return;
-    }
-    setSaving(true);
-    setDialogError("");
-    try {
-      const body = {
-        code,
-        name,
-        description: plantForm.description.trim(),
-        sortOrder: Number(plantForm.sortOrder) || 0,
-        isActive: Boolean(plantForm.isActive),
-      };
-      if (plantEditId) await updatePlant(plantEditId, body);
-      else await createPlant(body);
-      setPlantOpen(false);
-      toast.success(plantEditId ? "Plant updated" : "Plant created");
-      await load();
-    } catch (err) {
-      setDialogError(err.message || "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const openCreateDept = () => {
-    setDeptEditId(null);
-    setDeptForm({
-      ...emptyDept(),
-      plantId: plantOptions[0]?.value || "",
-    });
-    setDialogError("");
-    setDeptOpen(true);
-  };
-
-  const openEditDept = (row) => {
-    setDeptEditId(row.id);
-    setDeptForm({
+  const openEdit = (row) => {
+    setEditId(row.id);
+    setForm({
       code: row.code || "",
       name: row.name || "",
       plantId: row.plantId || "",
@@ -190,18 +87,14 @@ export default function OrgStructurePage() {
       isActive: row.isActive !== false,
     });
     setDialogError("");
-    setDeptOpen(true);
+    setDialogOpen(true);
   };
 
-  const saveDept = async () => {
-    const code = deptForm.code.trim();
-    const name = deptForm.name.trim();
+  const save = async () => {
+    const code = form.code.trim();
+    const name = form.name.trim();
     if (!code || !name) {
       setDialogError("Code and name are required");
-      return;
-    }
-    if (!deptForm.plantId) {
-      setDialogError("Select a plant");
       return;
     }
     setSaving(true);
@@ -210,14 +103,14 @@ export default function OrgStructurePage() {
       const body = {
         code,
         name,
-        plantId: deptForm.plantId,
-        sortOrder: Number(deptForm.sortOrder) || 0,
-        isActive: Boolean(deptForm.isActive),
+        plantId: (form.plantId || "").trim(),
+        sortOrder: Number(form.sortOrder) || 0,
+        isActive: Boolean(form.isActive),
       };
-      if (deptEditId) await updateDepartment(deptEditId, body);
+      if (editId) await updateDepartment(editId, body);
       else await createDepartment(body);
-      setDeptOpen(false);
-      toast.success(deptEditId ? "Department updated" : "Department created");
+      setDialogOpen(false);
+      toast.success(editId ? "SBU updated" : "SBU created");
       await load();
     } catch (err) {
       setDialogError(err.message || "Save failed");
@@ -234,8 +127,8 @@ export default function OrgStructurePage() {
     <AppShell active="org">
       <div className="rc-org">
         <PageHeader
-          title="Plants & departments"
-          subtitle="Admin master data — plants (WERKS) and departments under each plant."
+          title="SBUs"
+          subtitle="One plant code (WERKS) per SBU — used for work centres and SAP sync."
           icon="pi pi-sitemap"
           actions={
             <Button
@@ -252,189 +145,83 @@ export default function OrgStructurePage() {
 
         <div className="rc-org__shell">
           <div className="rc-org__tabs-row">
-            <div className="rc-org__tabs" role="tablist">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 0}
-                className={`rc-org__tab${tab === 0 ? " is-active" : ""}`}
-                onClick={() => setTab(0)}
-              >
-                Plants
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 1}
-                className={`rc-org__tab${tab === 1 ? " is-active" : ""}`}
-                onClick={() => setTab(1)}
-              >
-                Departments
-              </button>
-            </div>
+            <div className="rc-org__pane-title">SBUs</div>
             <div className="rc-org__tabs-tools">
-              {tab === 0 ? (
-                <>
-                  <IconField iconPosition="left" className="rc-org__search">
-                    <InputIcon className="pi pi-search" />
-                    <InputText
-                      placeholder="Search plant"
-                      value={plantSearch}
-                      onChange={(e) => setPlantSearch(e.target.value)}
-                    />
-                  </IconField>
-                  <Button
-                    type="button"
-                    label="Add plant"
-                    icon="pi pi-plus"
-                    size="small"
-                    onClick={openCreatePlant}
-                  />
-                </>
-              ) : (
-                <>
-                  <IconField iconPosition="left" className="rc-org__search">
-                    <InputIcon className="pi pi-search" />
-                    <InputText
-                      placeholder="Search department"
-                      value={deptSearch}
-                      onChange={(e) => setDeptSearch(e.target.value)}
-                    />
-                  </IconField>
-                  <Button
-                    type="button"
-                    label="Add department"
-                    icon="pi pi-plus"
-                    size="small"
-                    onClick={openCreateDept}
-                    disabled={plantOptions.length === 0}
-                  />
-                </>
-              )}
+              <IconField iconPosition="left" className="rc-org__search">
+                <InputIcon className="pi pi-search" />
+                <InputText
+                  placeholder="Search SBU…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </IconField>
+              <Button
+                type="button"
+                label="Add SBU"
+                icon="pi pi-plus"
+                size="small"
+                onClick={openCreate}
+              />
             </div>
           </div>
 
           <div className="rc-org__panel">
-            {tab === 0 ? (
-              <TableComponent
-                value={filteredPlants}
-                loading={loading}
-                dataKey="id"
-                paginator
-                rows={15}
-                emptyMessage={plantSearch.trim() ? "No plants match your search." : "No plants yet."}
-                columns={[
-                  { type: "index", header: "#", style: { width: "3rem" } },
-                  { field: "code", header: "Code", sortable: true, style: { width: "7rem" } },
-                  { field: "name", header: "Name", sortable: true },
-                  {
-                    field: "description",
-                    header: "Description",
-                    body: (row) => row.description || "—",
-                  },
-                  {
-                    header: "Active",
-                    style: { width: "6rem" },
-                    body: (row) => (
-                      <TableStatusBadge
-                        value={row.isActive ? "Yes" : "No"}
-                        tone={row.isActive ? "success" : "neutral"}
+            <TableComponent
+              value={filtered}
+              loading={loading}
+              dataKey="id"
+              paginator
+              rows={15}
+              emptyMessage={search.trim() ? "No SBUs match your search." : "No SBUs yet."}
+              columns={[
+                { type: "index", header: "#", style: { width: "3rem" } },
+                { field: "code", header: "Code", sortable: true, style: { width: "8rem" } },
+                { field: "name", header: "Name", sortable: true },
+                {
+                  field: "plantId",
+                  header: "Plant ID",
+                  sortable: true,
+                  style: { width: "8rem" },
+                  body: (row) => row.plantId || "—",
+                },
+                {
+                  header: "Active",
+                  style: { width: "6rem" },
+                  body: (row) => (
+                    <TableStatusBadge
+                      value={row.isActive ? "Yes" : "No"}
+                      tone={row.isActive ? "success" : "neutral"}
+                    />
+                  ),
+                },
+                {
+                  header: "Actions",
+                  style: { width: "5rem" },
+                  body: (row) => (
+                    <TableActions>
+                      <Button
+                        type="button"
+                        icon="pi pi-pencil"
+                        rounded
+                        text
+                        size="small"
+                        aria-label="Edit"
+                        onClick={() => openEdit(row)}
                       />
-                    ),
-                  },
-                  {
-                    header: "Actions",
-                    style: { width: "5rem" },
-                    body: (row) => (
-                      <TableActions>
-                        <Button
-                          type="button"
-                          icon="pi pi-pencil"
-                          rounded
-                          text
-                          size="small"
-                          aria-label="Edit"
-                          onClick={() => openEditPlant(row)}
-                        />
-                      </TableActions>
-                    ),
-                  },
-                ]}
-              />
-            ) : (
-              <>
-                {plantOptions.length === 0 ? (
-                  <Message
-                    severity="warn"
-                    className="w-full mb-2"
-                    text="Create at least one active plant before adding departments."
-                  />
-                ) : null}
-                <TableComponent
-                  value={filteredDepartments}
-                  loading={loading}
-                  dataKey="id"
-                  paginator
-                  rows={15}
-                  emptyMessage={
-                    deptSearch.trim()
-                      ? "No departments match your search."
-                      : "No departments yet."
-                  }
-                  columns={[
-                    { type: "index", header: "#", style: { width: "3rem" } },
-                    { field: "code", header: "Code", sortable: true, style: { width: "8rem" } },
-                    { field: "name", header: "Name", sortable: true },
-                    {
-                      header: "Plant",
-                      sortable: true,
-                      field: "plantId",
-                      style: { width: "12rem" },
-                      body: (row) => {
-                        const label = plantNameByCode.get(row.plantId);
-                        return label ? `${row.plantId} — ${label}` : row.plantId || "—";
-                      },
-                    },
-                    {
-                      header: "Active",
-                      style: { width: "6rem" },
-                      body: (row) => (
-                        <TableStatusBadge
-                          value={row.isActive ? "Yes" : "No"}
-                          tone={row.isActive ? "success" : "neutral"}
-                        />
-                      ),
-                    },
-                    {
-                      header: "Actions",
-                      style: { width: "5rem" },
-                      body: (row) => (
-                        <TableActions>
-                          <Button
-                            type="button"
-                            icon="pi pi-pencil"
-                            rounded
-                            text
-                            size="small"
-                            aria-label="Edit"
-                            onClick={() => openEditDept(row)}
-                          />
-                        </TableActions>
-                      ),
-                    },
-                  ]}
-                />
-              </>
-            )}
+                    </TableActions>
+                  ),
+                },
+              ]}
+            />
           </div>
         </div>
 
         <Dialog
-          header={plantEditId ? "Edit plant" : "Add plant"}
-          visible={plantOpen}
+          header={editId ? "Edit SBU" : "Add SBU"}
+          visible={dialogOpen}
           style={{ width: "min(26rem, 94vw)" }}
           modal
-          onHide={() => !saving && setPlantOpen(false)}
+          onHide={() => !saving && setDialogOpen(false)}
           footer={
             <div className="flex gap-2 justify-content-end">
               <Button
@@ -443,108 +230,14 @@ export default function OrgStructurePage() {
                 size="small"
                 outlined
                 disabled={saving}
-                onClick={() => setPlantOpen(false)}
+                onClick={() => setDialogOpen(false)}
               />
               <Button
                 type="button"
                 label="Save"
                 size="small"
                 loading={saving}
-                onClick={savePlant}
-              />
-            </div>
-          }
-        >
-          {dialogError ? (
-            <Message severity="error" text={dialogError} className="w-full mb-2" />
-          ) : null}
-          <div className="flex flex-column gap-2" style={{ fontSize: "0.85rem" }}>
-            <label>
-              Code (WERKS)
-              <SafeInputText
-                profile="text"
-                value={plantForm.code}
-                onChange={(e) =>
-                  setPlantForm((f) => ({ ...f, code: e.target.value.trim() }))
-                }
-                disabled={saving || Boolean(plantEditId)}
-                className="w-full"
-                placeholder="e.g. 1100"
-              />
-            </label>
-            <label>
-              Name
-              <SafeInputText
-                profile="label"
-                value={plantForm.name}
-                onChange={(e) => setPlantForm((f) => ({ ...f, name: e.target.value }))}
-                disabled={saving}
-                className="w-full"
-              />
-            </label>
-            <label>
-              Description
-              <SafeInputText
-                profile="text"
-                value={plantForm.description}
-                onChange={(e) =>
-                  setPlantForm((f) => ({ ...f, description: e.target.value }))
-                }
-                disabled={saving}
-                className="w-full"
-              />
-            </label>
-            <label>
-              Sort order
-              <SafeInputText
-                profile="text"
-                value={String(plantForm.sortOrder ?? 0)}
-                onChange={(e) =>
-                  setPlantForm((f) => ({
-                    ...f,
-                    sortOrder: e.target.value.replace(/\D/g, "").slice(0, 6) || "0",
-                  }))
-                }
-                disabled={saving}
-                className="w-full"
-              />
-            </label>
-            <label className="flex align-items-center gap-2">
-              <Checkbox
-                inputId="plantActive"
-                checked={Boolean(plantForm.isActive)}
-                onChange={(e) =>
-                  setPlantForm((f) => ({ ...f, isActive: Boolean(e.checked) }))
-                }
-                disabled={saving}
-              />
-              <span>Active</span>
-            </label>
-          </div>
-        </Dialog>
-
-        <Dialog
-          header={deptEditId ? "Edit department" : "Add department"}
-          visible={deptOpen}
-          style={{ width: "min(26rem, 94vw)" }}
-          modal
-          onHide={() => !saving && setDeptOpen(false)}
-          footer={
-            <div className="flex gap-2 justify-content-end">
-              <Button
-                type="button"
-                label="Cancel"
-                size="small"
-                outlined
-                disabled={saving}
-                onClick={() => setDeptOpen(false)}
-              />
-              <Button
-                type="button"
-                label="Save"
-                size="small"
-                loading={saving}
-                onClick={saveDept}
+                onClick={save}
               />
             </div>
           }
@@ -557,14 +250,14 @@ export default function OrgStructurePage() {
               Code
               <SafeInputText
                 profile="text"
-                value={deptForm.code}
+                value={form.code}
                 onChange={(e) =>
-                  setDeptForm((f) => ({
+                  setForm((f) => ({
                     ...f,
                     code: e.target.value.toUpperCase().replace(/\s+/g, "_"),
                   }))
                 }
-                disabled={saving || Boolean(deptEditId)}
+                disabled={saving || Boolean(editId)}
                 className="w-full"
                 placeholder="e.g. MR"
               />
@@ -573,30 +266,32 @@ export default function OrgStructurePage() {
               Name
               <SafeInputText
                 profile="label"
-                value={deptForm.name}
-                onChange={(e) => setDeptForm((f) => ({ ...f, name: e.target.value }))}
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 disabled={saving}
                 className="w-full"
               />
             </label>
             <label>
-              Plant
-              <Dropdown
-                value={deptForm.plantId || null}
-                options={plantOptions}
-                onChange={(e) => setDeptForm((f) => ({ ...f, plantId: e.value || "" }))}
-                placeholder="Select plant"
+              Plant ID
+              <SafeInputText
+                profile="text"
+                value={form.plantId}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, plantId: e.target.value.trim() }))
+                }
                 disabled={saving}
                 className="w-full"
+                placeholder="e.g. 1110"
               />
             </label>
             <label>
               Sort order
               <SafeInputText
                 profile="text"
-                value={String(deptForm.sortOrder ?? 0)}
+                value={String(form.sortOrder ?? 0)}
                 onChange={(e) =>
-                  setDeptForm((f) => ({
+                  setForm((f) => ({
                     ...f,
                     sortOrder: e.target.value.replace(/\D/g, "").slice(0, 6) || "0",
                   }))
@@ -607,10 +302,10 @@ export default function OrgStructurePage() {
             </label>
             <label className="flex align-items-center gap-2">
               <Checkbox
-                inputId="deptActive"
-                checked={Boolean(deptForm.isActive)}
+                inputId="sbuActive"
+                checked={Boolean(form.isActive)}
                 onChange={(e) =>
-                  setDeptForm((f) => ({ ...f, isActive: Boolean(e.checked) }))
+                  setForm((f) => ({ ...f, isActive: Boolean(e.checked) }))
                 }
                 disabled={saving}
               />
