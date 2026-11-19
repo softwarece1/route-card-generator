@@ -842,20 +842,23 @@ def list_dept_heads_for_dept(
     return {"items": dept_mod.dept_heads_for_dept(dept)}
 
 
+@router.get("/plant-sbu")
+def get_plant_sbu_mapping(
+    plant: str = Query(""),
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    from app.route_card import plants as plants_mod
+    from app.route_card.sap_org_client import fetch_plant_sbu_mapping
+
+    plant_code = plants_mod.resolve_sync_plant_code(current_user, plant)
+    return fetch_plant_sbu_mapping(plant_code)
+
+
 @router.post("/work-centers/sync-from-sap")
 async def sync_work_centers_from_sap(
     request: Request, current_user: dict = Depends(require_dept_head_or_admin)
 ):
-    """Discover unique SAP work centres and upsert into the plant master.
-
-    Body: { plant_code?, from_date?, to_date?, part_number?, dept? }
-    Dates: when omitted, from_date is last plant sync (or 1 year ago) through today.
-
-    Returns a normal JSON body (same shape as main1_fixed search_unique_work_center),
-    plus created_count / existing_count from local upserts.
-    """
-    from datetime import date, timedelta
-
+    """Fetch Plant/SBU mapping and work centres directly from SAP Zppfm001."""
     from app.route_card import plants as plants_mod
     from app.route_card import work_centers as wc_mod
 
@@ -867,29 +870,13 @@ async def sync_work_centers_from_sap(
     requested_plant = str(body.get("plant_code") or body.get("plantCode") or "").strip()
     plant_code = plants_mod.resolve_sync_plant_code(current_user, requested_plant)
 
-    today = date.today()
-    default_to = today.isoformat()
-    last_synced = plants_mod.get_work_center_synced_at(plant_code)
-    if last_synced:
-        default_from = last_synced.date().isoformat()
-    else:
-        default_from = (today - timedelta(days=365)).isoformat()
-    from_date = str(body.get("from_date") or body.get("fromDate") or default_from).strip()
-    to_date = str(body.get("to_date") or body.get("toDate") or default_to).strip()
-    part_number = body.get("part_number") or body.get("partNumber")
-
     dept = str(body.get("dept") or "").strip()
     if (current_user.get("role") or "").strip() != "admin":
         dept = (current_user.get("dept") or "").strip()
 
-    return wc_mod.sync_work_centers_from_sap(
-        current_user,
-        plant_code=plant_code,
-        from_date=from_date,
-        to_date=to_date,
-        part_number=str(part_number).strip() if part_number else None,
-        is_shared=False,
-        dept=dept,
+    return await asyncio.to_thread(
+        wc_mod.sync_work_centers_from_sap,
+        current_user, plant_code=plant_code, dept=dept,
     )
 
 

@@ -530,18 +530,23 @@ export async function fetchDeptHeads(dept) {
   return data?.items || [];
 }
 
-/**
- * Sync unique SAP work centres (normal JSON, main1_fixed-style).
- * Payload: { plantCode, fromDate, toDate, partNumber?, isShared?, dept? }
- */
+export async function fetchPlantSbuMapping(plantCode) {
+  try {
+    const { data } = await http.get(`${BASE}/plant-sbu`, {
+      params: { plant: plantCode },
+      timeout: 150_000,
+    });
+    return data?.items || [];
+  } catch (error) {
+    throw new Error(asError(error, 'Could not fetch Plant/SBU mapping from SAP'));
+  }
+}
+
+/** Fetch organization mapping and work centres directly from SAP Zppfm001. */
 export async function syncWorkCentersFromSap(payload) {
   const body = {
-    part_number: payload.partNumber || null,
-    is_shared: false,
     dept: payload.dept || '',
   };
-  if (payload.fromDate) body.from_date = payload.fromDate;
-  if (payload.toDate) body.to_date = payload.toDate;
   if (payload.plantCode) body.plant_code = payload.plantCode;
   try {
     const { data } = await http.post(`${BASE}/work-centers/sync-from-sap`, body, {

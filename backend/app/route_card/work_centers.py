@@ -1323,13 +1323,14 @@ def ensure_sap_work_center(
     user: dict,
     *,
     sap_code: str,
+    name: str = "",
     plant: str = "",
     is_shared: bool = False,
     dept: str = "",
 ) -> tuple[dict, bool]:
     """Find or create a plant-scoped work centre from a SAP Arbpl code.
 
-    Preserves an existing spreadsheet name. Returns (wc_dict, created).
+    Uses the SAP description when supplied. Returns (wc_dict, created).
     """
     sap = (sap_code or "").strip()
     if not sap:
@@ -1356,8 +1357,10 @@ def ensure_sap_work_center(
         if not (hit.sap_code or "").strip():
             hit.sap_code = sap
             changed = True
-        # Keep spreadsheet / curated name; only fill blank names from SAP
-        if not (hit.name or "").strip():
+        if name.strip() and hit.name != name.strip():
+            hit.name = name.strip()
+            changed = True
+        elif not (hit.name or "").strip():
             hit.name = sap
             changed = True
         if hit.is_shared:
@@ -1371,7 +1374,7 @@ def ensure_sap_work_center(
     wc = RcWorkCenter(
         dept=(dept or "").strip(),
         code=code,
-        name=sap,
+        name=name.strip() or sap,
         mode="manual",
         is_shared=False,
         plant=plant,
@@ -1391,151 +1394,60 @@ def sync_work_centers_from_sap(
     user: dict,
     *,
     plant_code: str,
-    from_date: str,
-    to_date: str,
-    part_number: str | None = None,
-    is_shared: bool = False,
     dept: str = "",
 ) -> dict[str, Any]:
-    """Discover unique SAP work centres and upsert into the plant master.
-
-    Response shape mirrors main1_fixed.search_unique_work_center, plus upsert counts.
-    On success stamps ``work_center_synced_at`` on the plant.
-    """
-    import logging
-
-    from app.config.settings import settings
+    """Fetch organization mapping and work centres without scanning orders."""
     from app.route_card import plants as plants_mod
-    from app.route_card import sap_oarc_client as sap
-
-    logger = logging.getLogger("route_card.work_centers")
+    from app.route_card import sap_org_client as sap
 
     plant = (plant_code or "").strip()
     if not plant:
         raise HTTPException(400, "Plant code is required")
-    if from_date > to_date:
-        raise HTTPException(400, "From date cannot be after to date")
-
-    part = (part_number or "").strip() or None
-    criteria = {
-        "plant_code": plant,
-        "from_date": from_date,
-        "to_date": to_date,
-        "part_number": part,
-        "is_shared": False,
-        "dept": (dept or "").strip(),
-    }
-
-    try:
-        list_result = sap.list_production_orders(plant, from_date, to_date, part)
-    except Exception as exc:
-        logger.exception("SAP order list failed")
-        raise HTTPException(
-            502,
-            f"SAP order list failed ({type(exc).__name__}). Check SAP credentials / gateway.",
-        ) from exc
-
-    status = str(list_result.get("status") or "S").upper()
-    if status in ("E", "A", "X"):
-        raise HTTPException(
-            502,
-            f"SAP list rejected search: {list_result.get('message') or status}",
-        )
-
-    orders = list(
-        dict.fromkeys(
-            str(row.get("production_order") or "").strip()
-            for row in (list_result.get("orders") or [])
-            if str(row.get("production_order") or "").strip()
-        )
-    )
-    max_orders = int(settings.SAP_MAX_ORDERS or 500)
-    if len(orders) > max_orders:
-        raise HTTPException(
-            422,
-            f"Search returned {len(orders)} orders; narrow date range (limit {max_orders}).",
-        )
-
+    mapping = sap.fetch_plant_sbu_mapping(plant)
+    data = sap.fetch_sap_data(plant, "WORKCENTER")
     seen: set[str] = set()
     created_count = 0
     existing_count = 0
-    success_orders = 0
     failures: list[dict[str, str]] = []
 
-    for order in orders:
+    for row in sap.extract_items(data.get("ItCrhd")):
+        center = str(row.get("Arbpl") or "").strip()
+        row_plant = str(row.get("Werks") or "").strip() or plant
+        if not center or row_plant != plant or center.upper() in seen:
+            continue
+        seen.add(center.upper())
         try:
-            detail = sap.detail_production_order(order)
-            dstatus = str(detail.get("status") or "S").upper()
-            if dstatus in ("E", "A", "X"):
-                failures.append(
-                    {
-                        "production_order": order,
-                        "status": dstatus,
-                        "message": str(detail.get("message") or dstatus),
-                    }
-                )
-                continue
-            success_orders += 1
-            for op in detail.get("operations") or []:
-                center = str(op.get("work_center") or "").strip()
-                if not center:
-                    continue
-                key = center.upper()
-                if key in seen:
-                    continue
-                seen.add(key)
-                op_plant = str(op.get("work_center_plant") or plant or "").strip()
-                try:
-                    _item, created = ensure_sap_work_center(
-                        user,
-                        sap_code=center,
-                        plant=op_plant or plant,
-                        is_shared=False,
-                        dept=dept,
-                    )
-                except HTTPException as he:
-                    failures.append(
-                        {
-                            "production_order": order,
-                            "status": "UPSERT",
-                            "message": he.detail if isinstance(he.detail, str) else str(he.detail),
-                        }
-                    )
-                    continue
-                if created:
-                    created_count += 1
-                else:
-                    existing_count += 1
-        except Exception as exc:
-            logger.exception("Failed to fetch production order %r", order)
-            failures.append(
-                {
-                    "production_order": order,
-                    "status": "EXCEPTION",
-                    "message": type(exc).__name__,
-                }
+            _item, created = ensure_sap_work_center(
+                user,
+                sap_code=center,
+                name=str(row.get("Ktext") or "").strip(),
+                plant=plant,
+                dept=dept,
             )
+        except HTTPException as exc:
+            failures.append({"work_center": center, "message": str(exc.detail)})
+            continue
+        if created:
+            created_count += 1
+        else:
+            existing_count += 1
 
-    # Stamp last sync only when the SAP walk completed (partial OK if we got data)
     synced_at = None
-    try:
+    if seen and not failures:
         plants_mod.mark_work_center_synced(plant)
         synced_at = plants_mod.get_work_center_synced_at(plant)
-    except Exception:
-        logger.exception("Failed to stamp work_center_synced_at for plant %s", plant)
 
     return {
         "message": (
-            "Work-centre sync completed"
-            if not failures
-            else "Work-centre sync partially completed; inspect failed_orders"
+            f"Fetched {mapping['count']} Plant/SBU mapping(s). "
+            f"Synced {created_count + existing_count} work centre(s); {created_count} newly added."
         ),
         "status": "S" if not failures else "P",
-        "criteria": criteria,
-        "total_orders": len(orders),
-        "successful_orders": success_orders,
-        "failed_orders_count": len(failures),
-        "failed_orders": failures,
+        "criteria": {"plant_code": plant, "dept": (dept or "").strip()},
+        "plant_sbu": mapping["items"],
+        "plant_sbu_count": mapping["count"],
+        "failed_work_centers": failures,
+        "failed_work_centers_count": len(failures),
         "count": len(seen),
         "work_centers": sorted(seen),
         "created_count": created_count,
