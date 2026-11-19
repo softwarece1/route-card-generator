@@ -33,7 +33,7 @@ Pillow==11.1.0
 # Local VLM (Ollama HTTP)
 httpx==0.28.1
 
-# SAP organization / work-centre service (SOAP)
+# SAP OARC work-centre sync (SOAP; optional if SAP_OARC_API_BASE_URL gateway is used)
 requests==2.32.3
 zeep==4.3.1
 
