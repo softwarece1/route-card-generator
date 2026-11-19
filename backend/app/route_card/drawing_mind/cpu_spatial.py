@@ -6,6 +6,16 @@ import re
 from typing import Any
 
 from app.route_card.drawing_mind.base import DrawingMind
+from app.route_card.drawing_mind.elaborate import (
+    AS_SHOWN,
+    ITEM_APPEAR,
+    PLACEMENT_VERB,
+    apply_grounded_elaboration,
+    bom_index,
+    elaborate_note_cpu,
+    needs_placement_elaboration,
+    note_is_enriched,
+)
 from app.route_card.drawing_mind.spatial import (
     build_spatial_graph,
     classify_offset_role,
@@ -14,16 +24,10 @@ from app.route_card.drawing_mind.spatial import (
 )
 from app.route_card.drawing_mind.types import MindResult, PlacementFact, PcbLinkFact
 
-PLACEMENT_VERB = re.compile(
-    r"\b(STICK|PASTE|GLUE|BOND|ADHERE|APPLY|MOUNT|PLACE|FIT|INSTALL)\b",
-    re.I,
-)
-AS_SHOWN = re.compile(r"\bAS\s+SHOWN\b", re.I)
+# Re-export for tests / callers that imported from this module
+_bom_index = bom_index
+
 ADHESIVE = re.compile(r"\b(ADHESIVE|GLUE|STICK|PASTE|BOND)\b", re.I)
-ITEM_APPEAR = re.compile(
-    r"(?:ITEMS?|ITMS?|IT\.?)\s*(?:NO\.?|NOS\.?|NUMBER|#)?\s*-?\s*(\d{1,3})",
-    re.I,
-)
 # Face / port labels preferred over sticker legends like POWER SUPPLY
 FACE_SURFACE_PREFS = ("DC OUT", "AC OUT", "AC IN", "MOUNTING FACE", "FRONT", "REAR")
 
@@ -120,8 +124,7 @@ class CpuSpatialMind(DrawingMind):
             check_cancelled(cancel_event)
             text = note.get("text") or ""
             items = list(note.get("items") or [])
-            needs = bool(PLACEMENT_VERB.search(text) and (AS_SHOWN.search(text) or items))
-            if not needs:
+            if not needs_placement_elaboration(text, items):
                 continue
             elaborated, place_facts, note_warns = self._elaborate_placement(
                 note, graph, unit, source_drawing_id=source_drawing_id
@@ -134,14 +137,25 @@ class CpuSpatialMind(DrawingMind):
                 note["mindConfidence"] = (
                     min(p.confidence for p in place_facts) if place_facts else 0.35
                 )
+                note["elaborated"] = True
             placements.extend(place_facts)
             if source_drawing_id is not None:
                 note["sourceDrawingId"] = source_drawing_id
             if source_filename:
                 note["sourceFilename"] = source_filename
 
+        notes[:] = apply_grounded_elaboration(
+            notes,
+            ga_extraction=ga_extraction,
+            parts_list=parts_list,
+            unit=unit,
+            engine=self.engine,
+        )
+
         # Tag remaining notes with source
         for note in notes:
+            if note_is_enriched(note):
+                note["elaborated"] = True
             if source_drawing_id is not None and "sourceDrawingId" not in note:
                 note["sourceDrawingId"] = source_drawing_id
             if source_filename and "sourceFilename" not in note:
@@ -297,7 +311,7 @@ class CpuSpatialMind(DrawingMind):
                 source_page=page_no,
             )
             facts.append(fact)
-            sentences.append(self._sentence_for(fact, unit))
+            sentences.append(self._sentence_for(fact, unit, verb=_placement_verb(text)))
 
         def _has_measured_offset(fact: PlacementFact) -> bool:
             for o in fact.offsets or []:
@@ -309,9 +323,8 @@ class CpuSpatialMind(DrawingMind):
         if not measured:
             warns.append(
                 "Drawing mind: could not resolve placement offsets for "
-                f"items {items}; keeping source note wording."
+                f"items {items}; keeping source note wording and relative placement only."
             )
-            return text, facts, warns
 
         adhesive = ""
         if ADHESIVE.search(text):
@@ -330,9 +343,10 @@ class CpuSpatialMind(DrawingMind):
 
         return elaborated, facts, warns
 
-    def _sentence_for(self, fact: PlacementFact, unit: str) -> str:
+    def _sentence_for(self, fact: PlacementFact, unit: str, verb: str = "Stick") -> str:
         it = fact.item_no
         surf = fact.surface or "the face shown on the drawing"
+        action = (verb or "Stick").capitalize()
         rel_words = {
             "below": "below",
             "above": "above",
@@ -347,15 +361,15 @@ class CpuSpatialMind(DrawingMind):
             relation = rel_words.get(rel.get("relation") or "below", "below")
             if val is not None:
                 return (
-                    f"Stick Item {it} on the {surf} side, "
+                    f"{action} Item {it} on the {surf} side, "
                     f"{val:g} {unit} {relation} Item {prev}."
                 )
-            return f"Stick Item {it} on the {surf} side, {relation} Item {prev}."
+            return f"{action} Item {it} on the {surf} side, {relation} Item {prev}."
         top = next((o for o in fact.offsets if o.get("from") == "top"), None)
         left = next((o for o in fact.offsets if o.get("from") == "left"), None)
         right = next((o for o in fact.offsets if o.get("from") == "right"), None)
         bottom = next((o for o in fact.offsets if o.get("from") == "bottom"), None)
-        parts = [f"Stick Item {it} on the {surf} side"]
+        parts = [f"{action} Item {it} on the {surf} side"]
         bits = []
         if top:
             bits.append(f"keep {top['value']:g} {unit} gap from the top edge")
@@ -378,12 +392,10 @@ class CpuSpatialMind(DrawingMind):
     ) -> list[PcbLinkFact]:
         links: list[PcbLinkFact] = []
         pl_map = (parts_list or {}).get("itemMap") or {}
-        # Also index by description tokens
         pl_items = (parts_list or {}).get("items") or []
         connectors = graph.get("allConnectors") or []
         seen: set[str] = set()
 
-        # From notes: connector mentions
         note_conns: set[str] = set()
         for n in notes:
             for c in n.get("connectors") or []:
@@ -402,7 +414,6 @@ class CpuSpatialMind(DrawingMind):
         for ref in sorted(note_conns):
             pl_item = None
             pl_desc = ""
-            # Match PL designation containing connector ref
             for it in pl_items:
                 desc = str(it.get("description") or it.get("designation") or "")
                 part = str(it.get("partNumber") or "")
@@ -450,3 +461,28 @@ class CpuSpatialMind(DrawingMind):
                     )
                 )
         return links
+
+
+def _placement_verb(text: str) -> str:
+    m = PLACEMENT_VERB.search(text or "")
+    if not m:
+        return "Stick"
+    raw = m.group(1).upper()
+    mapping = {
+        "STICK": "Stick",
+        "PASTE": "Paste",
+        "GLUE": "Glue",
+        "BOND": "Bond",
+        "ADHERE": "Adhere",
+        "APPLY": "Apply",
+        "MOUNT": "Mount",
+        "PLACE": "Place",
+        "FIT": "Fit",
+        "INSTALL": "Install",
+        "ASSEMBLE": "Assemble",
+        "FIX": "Fix",
+        "ENGAGE": "Engage",
+        "MATE": "Mate",
+        "TIGHTEN": "Tighten",
+    }
+    return mapping.get(raw, raw.title())

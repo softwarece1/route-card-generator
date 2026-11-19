@@ -760,6 +760,14 @@ def run_migrations():
         )
         print("upserted BEL route_card.departments (SBU) master; cleared dummy plant_id")
 
+        # Admin plant override for queued analyze jobs (WC linking)
+        cursor.execute(
+            """
+            ALTER TABLE route_card.analyze_jobs
+            ADD COLUMN IF NOT EXISTS plant VARCHAR(32) NULL;
+            """
+        )
+
         # Seed default admin if no users exist
         cursor.execute("SELECT COUNT(*) FROM route_card.users;")
         count = cursor.fetchone()[0]

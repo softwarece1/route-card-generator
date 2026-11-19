@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from app.route_card.extractor import sanitize_operator_instruction
 
 
 def _work_centre(text: str, torque: list[str] | None = None) -> str:
@@ -122,14 +123,34 @@ def generate_route(extraction: dict) -> dict:
     op_no = 10
     for note in notes:
         text = note.get("text") or ""
-        # Shop instruction is always the drawing wording — never rewritten or case-normalized.
+        # Keep the drawing wording. CPU/view elaboration is used only when it
+        # still contains that wording (never a free rewrite that drops the note).
         insight = (note.get("insight") or "").strip()
-        instruction_src = str(text or "").strip()
+        raw = str(text or "").strip()
+        elab = re.sub(r"\s+", " ", str(note.get("elaboratedText") or "")).strip()
+        raw_norm = re.sub(r"\s+", " ", raw).lower()
+        elab_norm = re.sub(r"\s+", " ", elab).lower()
+        head = raw_norm[:80]
+        use_elab = bool(
+            elab_norm
+            and raw_norm
+            and elab_norm != raw_norm
+            and (
+                raw_norm in elab_norm
+                or (head and head in elab_norm and "->" in elab_norm)
+                or bool(note.get("elaborated"))
+            )
+        )
+        instruction_src = elab if use_elab else raw
+        instruction_clean = sanitize_operator_instruction(instruction_src) or instruction_src
+        insight_clean = sanitize_operator_instruction(insight) if insight else ""
         torque = note.get("torque") or []
         items = note.get("items") or []
         refs = list(note.get("standards") or []) + list(note.get("references") or [])
-        name = _op_name(text, note.get("stepNo") or 1)
-        wc = _work_centre(text, torque)
+        # Prefer elaborated text for naming/WC hints when it carries grounding
+        hint_text = instruction_src or text
+        name = _op_name(hint_text, note.get("stepNo") or 1)
+        wc = _work_centre(hint_text, torque)
         items_used = _items_payload(items, bom_lookup)
         items_label = ", ".join(f"#{i['itemNo']}" + (f"×{i['qty']}" if i.get("qty") else "") for i in items_used)
         src_ref = note.get("sourceFilename") or ""
@@ -153,21 +174,22 @@ def generate_route(extraction: dict) -> dict:
                 "operation": name,
                 "workCentre": wc,
                 "machine": "Assembly station",
-                "tool": _tool(text, torque),
+                "tool": _tool(hint_text, torque),
                 "items": items_label,
                 "itemsUsed": items_used,
                 "torqueSpec": ", ".join(torque),
                 "reference": ", ".join(dict.fromkeys(refs)),
                 "setup": "1",
                 "time": "",
-                "inspection": _inspection_for_step(text, torque),
-                "instructionText": instruction_src,
-                "insight": insight,
+                "inspection": _inspection_for_step(hint_text, torque),
+                "instructionText": instruction_clean,
+                "insight": insight_clean or insight,
                 "status": "Planned",
                 "type": wc,
-                "reason": instruction_src[:240],
+                "reason": instruction_clean[:240],
                 "features": [f"ITM-{i}" for i in items],
-                "elaborated": bool(insight),
+                "elaborated": bool(insight) or use_elab or bool(note.get("elaborated")),
+                "verbatimText": raw,
                 "needsReview": bool(note.get("needsReview")),
                 "sourceDrawingId": note.get("sourceDrawingId"),
                 "placement": note.get("placement") or [],

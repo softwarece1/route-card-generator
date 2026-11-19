@@ -177,6 +177,21 @@ export async function fetchDrawingFileBlob(drawingId) {
   return data;
 }
 
+/** Gated TABLE crop — { available, imageBase64, … } or { available:false, reason }. */
+export async function fetchDrawingTableCrop(drawingId, { table, page } = {}) {
+  const params = { table: String(table || '').trim() };
+  if (page != null && page !== '') params.page = page;
+  try {
+    const { data } = await http.get(`${BASE}/drawings/${drawingId}/table-crop`, {
+      params,
+      timeout: 60_000,
+    });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not load table crop'));
+  }
+}
+
 export async function generateRouteCard(drawingId) {
   const { data } = await http.post(`${BASE}/drawings/${drawingId}/route-card`);
   return data;
@@ -316,20 +331,37 @@ export async function fetchRecent() {
   return data;
 }
 
-export async function enqueueAnalyze(sessionId, { vlmPageIndexes, async: asAsync = true } = {}) {
+export async function enqueueAnalyze(
+  sessionId,
+  { vlmPageIndexes, async: asAsync = true, plant } = {},
+) {
+  const body = { vlmPageIndexes, async: asAsync };
+  if (plant) body.plant = plant;
   const { data } = await http.post(
     `${BASE}/sessions/${sessionId}/analyze`,
-    { vlmPageIndexes, async: asAsync },
+    body,
     { timeout: 30_000 },
   );
   return data;
 }
 
-export async function analyzeSession(sessionId, { signal, vlmPageIndexes } = {}) {
+export async function fetchPriorExtractions(sessionId) {
   try {
+    const { data } = await http.get(`${BASE}/sessions/${sessionId}/prior-extractions`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not check for existing extractions'));
+  }
+}
+
+export async function analyzeSession(sessionId, { signal, vlmPageIndexes, plant } = {}) {
+  try {
+    const body = { async: false };
+    if (vlmPageIndexes) body.vlmPageIndexes = vlmPageIndexes;
+    if (plant) body.plant = plant;
     const { data } = await http.post(
       `${BASE}/sessions/${sessionId}/analyze`,
-      vlmPageIndexes ? { vlmPageIndexes, async: false } : { async: false },
+      body,
       { timeout: 1_200_000, signal },
     );
     return data;
@@ -343,11 +375,13 @@ export async function analyzeSession(sessionId, { signal, vlmPageIndexes } = {})
   }
 }
 
-export async function relinkSessionWorkCentres(sessionId) {
+export async function relinkSessionWorkCentres(sessionId, { plant } = {}) {
   try {
+    const body = {};
+    if (plant) body.plant = plant;
     const { data } = await http.post(
       `${BASE}/sessions/${sessionId}/operations/relink-work-centres`,
-      {},
+      body,
       { timeout: 120_000 },
     );
     return data;
@@ -442,10 +476,13 @@ export async function fetchWorkCenters(dept, { plant } = {}) {
   return data?.items || [];
 }
 
-export async function fetchWorkCenterCatalog(dept) {
+export async function fetchWorkCenterCatalog(dept, { plant } = {}) {
   try {
+    const params = {};
+    if (dept) params.dept = dept;
+    if (plant) params.plant = plant;
     const { data } = await http.get(`${BASE}/work-centers/catalog`, {
-      params: dept ? { dept } : undefined,
+      params: Object.keys(params).length ? params : undefined,
     });
     return data?.items || [];
   } catch {

@@ -27,10 +27,13 @@ import {
   downloadJson,
   exportPmfOarc,
   fetchDrawingFileBlob,
+  fetchDrawingTableCrop,
   fetchFavorites,
   fetchItemLinkReport,
   fetchMachinesQuietly,
   fetchMyExtractionDetail,
+  fetchPlants,
+  fetchPriorExtractions,
   fetchRecent,
   fetchReviewFlags,
   fetchSessionDocumentBlob,
@@ -62,8 +65,16 @@ import {
   squashConsecutiveSameWcRouteOps,
   templateStepToRouteOp,
 } from "@/lib/pmfOrderPrefill";
-import { annotateItemMentions, formatItemChip } from "@/lib/itemLabels";
-import { normalizeInstructionCase } from "@/lib/instructionCase";
+import {
+  annotateItemMentions,
+  collectMentionedItemNos,
+  formatItemChip,
+} from "@/lib/itemLabels";
+import { normalizeInstructionCase, sanitizeOperatorInstruction } from "@/lib/instructionCase";
+import {
+  collectTableViewHints,
+  resolveDrawingIdForTableHint,
+} from "@/lib/tableViewHints";
 import InstructionClickEdit from "@/components/InstructionClickEdit";
 import "@fontsource/rubik/400.css";
 import "@fontsource/rubik/500.css";
@@ -73,6 +84,24 @@ import "@fontsource/rubik/800.css";
 import "./route-card-generation-alt.scss";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const ADMIN_PLANT_LS_KEY = "pmf.admin.generatePlant";
+
+function readStoredAdminPlant() {
+  try {
+    return (localStorage.getItem(ADMIN_PLANT_LS_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function storeAdminPlant(code) {
+  try {
+    const v = (code || "").trim();
+    if (v) localStorage.setItem(ADMIN_PLANT_LS_KEY, v);
+  } catch {
+    /* ignore */
+  }
+}
 
 const UPLOAD_SLOTS = [
   {
@@ -190,17 +219,6 @@ function OpItemsList({ itemsUsed, fallback, itemLookup = {}, mentionedNos = null
   );
 }
 
-function collectMentionedItemNos(text) {
-  const set = new Set();
-  const re = /(?:ITEMS?|ITMS?|IT\.?)\s*(?:NO\.?|NOS\.?|NUMBER|#)?\s*-?\s*(\d{1,3})\b/gi;
-  let m;
-  while ((m = re.exec(String(text || "")))) {
-    set.add(m[1]);
-    set.add(Number(m[1]));
-  }
-  return set;
-}
-
 function DrawingPreview({ url, fileType }) {
   const kind = String(fileType || "").toUpperCase();
   if (url && kind === "PDF") {
@@ -304,7 +322,11 @@ export default function RouteCardGenerationAlt() {
     title: "",
     draft: "",
     itemsUsed: [],
+    viewRefs: [],
   });
+  const [tableCrops, setTableCrops] = useState([]); // available crops for open instruction
+  const [tableCropsLoading, setTableCropsLoading] = useState(false);
+  const [tableCropView, setTableCropView] = useState(null); // { label, src, filename, page }
   const [savingFormat, setSavingFormat] = useState(null);
   const [analysisPayload, setAnalysisPayload] = useState(null);
   const [oarcPreviewOpen, setOarcPreviewOpen] = useState(false);
@@ -320,6 +342,19 @@ export default function RouteCardGenerationAlt() {
   const [openingSession, setOpeningSession] = useState(false);
   const [excelPreview, setExcelPreview] = useState(null);
   const [opComment, setOpComment] = useState("");
+  const [plantDialog, setPlantDialog] = useState({
+    visible: false,
+    mode: "generate", // generate | relink
+    draft: "",
+  });
+  const [priorDialog, setPriorDialog] = useState({
+    visible: false,
+    matches: [],
+    checking: false,
+  });
+  const [plants, setPlants] = useState([]);
+  const [plantsLoading, setPlantsLoading] = useState(false);
+  const [adminPlant, setAdminPlant] = useState(() => readStoredAdminPlant());
   const analyzeAbortRef = useRef(null);
   const analyzingRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
@@ -409,7 +444,12 @@ export default function RouteCardGenerationAlt() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchMachinesQuietly(), fetchWorkCenterCatalog()]).then(([m, wc]) => {
+    const plant =
+      (getUser()?.role === "admin" && (adminPlant || "").trim()) || undefined;
+    Promise.all([
+      fetchMachinesQuietly(),
+      fetchWorkCenterCatalog(undefined, { plant }),
+    ]).then(([m, wc]) => {
       if (!cancelled) {
         setMachines(m || []);
         setWcCatalog(wc || []);
@@ -418,7 +458,36 @@ export default function RouteCardGenerationAlt() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [adminPlant]);
+
+  const ensurePlantsLoaded = useCallback(async () => {
+    if (plants.length) return plants;
+    setPlantsLoading(true);
+    try {
+      const rows = await fetchPlants({ activeOnly: true });
+      const list = Array.isArray(rows) ? rows : [];
+      setPlants(list);
+      return list;
+    } catch (e) {
+      toast.error(e.message || "Could not load plants");
+      setPlants([]);
+      return [];
+    } finally {
+      setPlantsLoading(false);
+    }
+  }, [plants.length]);
+
+  const openAdminPlantDialog = useCallback(
+    async (mode = "generate") => {
+      const list = await ensurePlantsLoaded();
+      const preferred =
+        (adminPlant || "").trim() ||
+        readStoredAdminPlant() ||
+        (list[0]?.code || "");
+      setPlantDialog({ visible: true, mode, draft: preferred });
+    },
+    [adminPlant, ensurePlantsLoaded],
+  );
 
   const wcDropdownOptions = useMemo(
     () =>
@@ -795,8 +864,13 @@ export default function RouteCardGenerationAlt() {
     if (!silent) toast.info("Analysis stopped.");
   }, []);
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (plantCode) => {
     if (!sessionId || !hasGa || analyzing) return;
+    const plant = (plantCode || "").trim() || undefined;
+    if (getUser()?.role === "admin" && !plant) {
+      toast.warn("Select a plant before generating.");
+      return;
+    }
     analyzeAbortRef.current?.abort();
     const ac = new AbortController();
     analyzeAbortRef.current = ac;
@@ -819,8 +893,13 @@ export default function RouteCardGenerationAlt() {
       const payload = await analyzeSession(sessionId, {
         signal: ac.signal,
         vlmPageIndexes: vlmPrefs.length ? vlmPrefs : undefined,
+        plant,
       });
       if (ac.signal.aborted) return;
+      if (plant) {
+        setAdminPlant(plant);
+        storeAdminPlant(plant);
+      }
       applyPayload(payload);
       setAnalyzing(false);
       setAnalyzed(true);
@@ -837,6 +916,32 @@ export default function RouteCardGenerationAlt() {
         analyzeAbortRef.current = null;
       }
     }
+  };
+
+  const proceedGenerate = () => {
+    if (getUser()?.role === "admin") {
+      openAdminPlantDialog("generate");
+      return;
+    }
+    runAnalysis();
+  };
+
+  const requestGenerate = async () => {
+    if (!canAnalyze || !sessionId) return;
+    setPriorDialog((s) => ({ ...s, checking: true }));
+    try {
+      const prior = await fetchPriorExtractions(sessionId);
+      const matches = prior?.matches || [];
+      if (matches.length) {
+        setPriorDialog({ visible: true, matches, checking: false });
+        return;
+      }
+    } catch {
+      /* offline / API miss — continue with generate */
+    } finally {
+      setPriorDialog((s) => ({ ...s, checking: false }));
+    }
+    proceedGenerate();
   };
 
   const persistOps = async (rows) => {
@@ -867,22 +972,113 @@ export default function RouteCardGenerationAlt() {
     setEditVisible(true);
   };
 
+  const sessionDrawingsForCrop = useMemo(() => {
+    const fromDocs = (docs.drawings || []).map((d) => ({
+      id: d.drawingId || d.id,
+      filename: d.name || d.filename || "",
+      name: d.name || d.filename || "",
+    }));
+    // Prefer real RcDrawing ids when present on analysis payload
+    const fromPayload = (analysisPayload?.documents || [])
+      .filter((d) => d.role === "drawing" && d.drawingId)
+      .map((d) => ({
+        id: d.drawingId,
+        filename: d.filename || "",
+        name: d.filename || "",
+      }));
+    const byId = new Map();
+    for (const row of [...fromPayload, ...fromDocs]) {
+      if (row.id) byId.set(Number(row.id), row);
+    }
+    if (drawingId) {
+      byId.set(Number(drawingId), {
+        id: Number(drawingId),
+        filename: docs.drawing?.name || "",
+        name: docs.drawing?.name || "",
+      });
+    }
+    return [...byId.values()];
+  }, [docs.drawings, docs.drawing, analysisPayload, drawingId]);
+
+  const loadTableCropsForInstruction = useCallback(
+    async (draft, viewRefs = []) => {
+      const mergedRefs = [
+        ...(viewRefs || []),
+        ...((mindInfo && mindInfo.viewRefs) || []),
+      ];
+      const hints = collectTableViewHints(draft, mergedRefs);
+      if (!hints.length) {
+        setTableCrops([]);
+        return;
+      }
+      setTableCropsLoading(true);
+      try {
+        const results = [];
+        for (const hint of hints) {
+          const did = resolveDrawingIdForTableHint(hint, sessionDrawingsForCrop);
+          if (!did) continue;
+          try {
+            let crop = await fetchDrawingTableCrop(did, {
+              table: hint.tableId,
+              page: hint.sheet || undefined,
+            });
+            // Single-page sheet PDFs often use sheet no in the filename only
+            if (!crop?.available && hint.sheet) {
+              crop = await fetchDrawingTableCrop(did, { table: hint.tableId });
+            }
+            if (crop?.available && crop.imageBase64) {
+              results.push({
+                ...crop,
+                src: `data:${crop.mime || "image/jpeg"};base64,${crop.imageBase64}`,
+              });
+            }
+          } catch {
+            /* gated — skip unavailable */
+          }
+        }
+        setTableCrops(results);
+      } finally {
+        setTableCropsLoading(false);
+      }
+    },
+    [mindInfo, sessionDrawingsForCrop],
+  );
+
   const openSuggestedInstruction = (op) => {
     const key = String(op.id || op.opNo);
+    const draft = normalizeInstructionCase(
+      sanitizeOperatorInstruction(op.instructionText || op.reason || "") ||
+        op.instructionText ||
+        op.reason ||
+        ""
+    );
+    const viewRefs = op.viewRefs || [];
+    setTableCrops([]);
+    setTableCropView(null);
     setInstrDialog({
       visible: true,
       opKey: key,
       title: `OP ${op.opNo} — ${op.operation || "Operation"}`,
-      draft: normalizeInstructionCase(op.instructionText || op.reason || ""),
+      draft,
       itemsUsed: op.itemsUsed || [],
+      viewRefs,
     });
+    loadTableCropsForInstruction(draft, viewRefs);
   };
 
   const saveSuggestedInstruction = async () => {
     const key = instrDialog.opKey;
     const draft = instrDialog.draft ?? "";
     if (!key) {
-      setInstrDialog({ visible: false, opKey: null, title: "", draft: "", itemsUsed: [] });
+      setInstrDialog({
+        visible: false,
+        opKey: null,
+        title: "",
+        draft: "",
+        itemsUsed: [],
+        viewRefs: [],
+      });
+      setTableCrops([]);
       return;
     }
     setSuggestedOps((prev) =>
@@ -893,7 +1089,16 @@ export default function RouteCardGenerationAlt() {
     const nextRoute = (routeOps || []).map((op) =>
       String(op.id || op.opNo) === key ? { ...op, instructionText: draft, reason: draft } : op
     );
-    setInstrDialog({ visible: false, opKey: null, title: "", draft: "", itemsUsed: [] });
+    setInstrDialog({
+      visible: false,
+      opKey: null,
+      title: "",
+      draft: "",
+      itemsUsed: [],
+      viewRefs: [],
+    });
+    setTableCrops([]);
+    setTableCropView(null);
     if (routeCardId && nextRoute.some((op) => String(op.id || op.opNo) === key)) {
       await persistOps(nextRoute);
     } else {
@@ -927,7 +1132,7 @@ export default function RouteCardGenerationAlt() {
     toast.info(`Removed OP ${row.opNo}.`);
   };
 
-  const relinkWorkCentres = async () => {
+  const relinkWorkCentres = async (plantCode) => {
     const sid = sessionIdRef.current || sessionId;
     if (!sid) {
       toast.warn("Open or analyze a session first.");
@@ -937,8 +1142,18 @@ export default function RouteCardGenerationAlt() {
       toast.warn("No route operations to re-link.");
       return;
     }
+    const fromArg = typeof plantCode === "string" ? plantCode : "";
+    const plant = (fromArg || adminPlant || "").trim() || undefined;
+    if (getUser()?.role === "admin" && !plant) {
+      openAdminPlantDialog("relink");
+      return;
+    }
     try {
-      const payload = await relinkSessionWorkCentres(sid);
+      const payload = await relinkSessionWorkCentres(sid, { plant });
+      if (plant) {
+        setAdminPlant(plant);
+        storeAdminPlant(plant);
+      }
       applyPayload(payload);
       const c = payload?.relink?.counts || {};
       const linked = c.linked ?? 0;
@@ -949,6 +1164,23 @@ export default function RouteCardGenerationAlt() {
       );
     } catch (error) {
       toast.error(error.message || "Re-link failed");
+    }
+  };
+
+  const confirmAdminPlant = () => {
+    const code = (plantDialog.draft || "").trim();
+    if (!code) {
+      toast.warn("Select a plant.");
+      return;
+    }
+    const mode = plantDialog.mode;
+    setPlantDialog((s) => ({ ...s, visible: false }));
+    setAdminPlant(code);
+    storeAdminPlant(code);
+    if (mode === "relink") {
+      relinkWorkCentres(code);
+    } else {
+      runAnalysis(code);
     }
   };
 
@@ -1390,12 +1622,18 @@ export default function RouteCardGenerationAlt() {
                 ) : null}
                 <Button
                   type="button"
-                  label={analyzing ? "Generating…" : "Generate OARC"}
+                  label={
+                    analyzing
+                      ? "Generating…"
+                      : priorDialog.checking
+                        ? "Checking…"
+                        : "Generate OARC"
+                  }
                   icon="pi pi-bolt"
                   size="small"
-                  loading={analyzing}
-                  disabled={!canAnalyze}
-                  onClick={runAnalysis}
+                  loading={analyzing || priorDialog.checking}
+                  disabled={!canAnalyze || priorDialog.checking}
+                  onClick={requestGenerate}
                 />
               </>
             }
@@ -1744,6 +1982,11 @@ export default function RouteCardGenerationAlt() {
                                   <p className="rca-note__text">
                                     {annotateItemMentions(n.text || "—", plItemLookup)}
                                   </p>
+                                  {n.elaboratedText && n.elaboratedText !== n.text ? (
+                                    <p className="rca-note__source">
+                                      Elaborated: {annotateItemMentions(n.elaboratedText, plItemLookup)}
+                                    </p>
+                                  ) : null}
                                   {n.insight ? (
                                     <p className="rca-note__source">Insight: {n.insight}</p>
                                   ) : null}
@@ -1938,10 +2181,16 @@ export default function RouteCardGenerationAlt() {
                       </div>
                       {(wcCatalog?.length > 0 || machines?.length > 0) && (
                         <div className="mt-3">
-                          <h3 className="rca-subhead">SBU work centres</h3>
+                          <h3 className="rca-subhead">
+                            {isAdminUser && adminPlant
+                              ? `Plant ${adminPlant} work centres`
+                              : "SBU work centres"}
+                          </h3>
                           <p className="rca-section-note">
-                            Ops are matched to your SBU catalogue (keywords / capability tags).
-                            Unresolved links show as review flags — edit the route card to pick a WC.
+                            Ops are matched to your{" "}
+                            {isAdminUser && adminPlant ? "plant" : "SBU"} catalogue
+                            (keywords / capability tags). Unresolved links show as review flags —
+                            edit the route card to pick a WC.
                           </p>
                           <div className="rca-machines">
                             {(wcCatalog.length ? wcCatalog : []).slice(0, 8).map((wc) => (
@@ -2360,6 +2609,125 @@ export default function RouteCardGenerationAlt() {
       />
 
       <Dialog
+        header="Existing extraction found"
+        visible={priorDialog.visible}
+        onHide={() => setPriorDialog((s) => ({ ...s, visible: false }))}
+        className="rca-prior-dialog"
+        style={{ width: "min(92vw, 28rem)" }}
+        footer={
+          <div className="oarc-instr-dialog__footer" style={{ flexWrap: "wrap" }}>
+            <Button
+              type="button"
+              label="Cancel"
+              outlined
+              size="small"
+              onClick={() => setPriorDialog((s) => ({ ...s, visible: false }))}
+            />
+            <Button
+              type="button"
+              label="View existing"
+              icon="pi pi-folder-open"
+              size="small"
+              outlined
+              disabled={!priorDialog.matches?.[0]?.sessionId}
+              onClick={() => {
+                const sid = priorDialog.matches?.[0]?.sessionId;
+                setPriorDialog((s) => ({ ...s, visible: false }));
+                if (sid) openSessionById(sid);
+              }}
+            />
+            <Button
+              type="button"
+              label="Extract again"
+              icon="pi pi-bolt"
+              size="small"
+              onClick={() => {
+                setPriorDialog((s) => ({ ...s, visible: false }));
+                proceedGenerate();
+              }}
+            />
+          </div>
+        }
+      >
+        <p className="oarc-instr-dialog__hint" style={{ marginBottom: "0.65rem" }}>
+          Data was already extracted for this GA
+          {priorDialog.matches?.[0]?.partNumber
+            ? ` (part ${priorDialog.matches[0].partNumber})`
+            : ""}
+          . Open the existing extraction or run generate again.
+        </p>
+        <ul className="rca-prior-list" style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.8rem" }}>
+          {(priorDialog.matches || []).slice(0, 5).map((m) => (
+            <li key={m.sessionId} style={{ marginBottom: "0.35rem" }}>
+              <button
+                type="button"
+                className="p-link"
+                style={{ fontSize: "0.8rem" }}
+                onClick={() => {
+                  setPriorDialog((s) => ({ ...s, visible: false }));
+                  openSessionById(m.sessionId);
+                }}
+              >
+                Session {m.sessionId}
+                {m.partNumber ? ` · ${m.partNumber}` : ""}
+                {m.matchedFilenames?.length ? ` · ${m.matchedFilenames[0]}` : ""}
+                {m.routeStatus ? ` · ${m.routeStatus}` : ""}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Dialog>
+
+      <Dialog
+        header={plantDialog.mode === "relink" ? "Select plant to re-link" : "Select plant"}
+        visible={plantDialog.visible}
+        onHide={() => setPlantDialog((s) => ({ ...s, visible: false }))}
+        className="rca-plant-dialog"
+        style={{ width: "min(92vw, 22rem)" }}
+        footer={
+          <div className="oarc-instr-dialog__footer">
+            <Button
+              type="button"
+              label="Cancel"
+              outlined
+              size="small"
+              onClick={() => setPlantDialog((s) => ({ ...s, visible: false }))}
+            />
+            <Button
+              type="button"
+              label={plantDialog.mode === "relink" ? "Re-link" : "Generate"}
+              icon={plantDialog.mode === "relink" ? "pi pi-link" : "pi pi-bolt"}
+              size="small"
+              loading={plantsLoading}
+              disabled={!plantDialog.draft || plantsLoading}
+              onClick={confirmAdminPlant}
+            />
+          </div>
+        }
+      >
+        <p className="oarc-instr-dialog__hint" style={{ marginBottom: "0.75rem" }}>
+          Work centres are linked from the selected plant catalogue.
+        </p>
+        <label className="om-input__label" htmlFor="rca-admin-plant" style={{ fontSize: "0.8rem" }}>
+          Plant
+        </label>
+        <Dropdown
+          inputId="rca-admin-plant"
+          className="w-full"
+          value={plantDialog.draft || null}
+          options={plants.map((p) => ({
+            label: p.label || `${p.code}${p.name ? ` — ${p.name}` : ""}`,
+            value: p.code,
+          }))}
+          onChange={(e) => setPlantDialog((s) => ({ ...s, draft: e.value || "" }))}
+          placeholder={plantsLoading ? "Loading plants…" : "Select plant"}
+          filter={plants.length > 8}
+          filterPlaceholder="Search plant"
+          disabled={plantsLoading}
+        />
+      </Dialog>
+
+      <Dialog
         header={activeDrawing?.name ? `Drawing viewer — ${activeDrawing.name}` : "Drawing viewer"}
         visible={viewerOpen}
         onHide={() => setViewerOpen(false)}
@@ -2375,11 +2743,20 @@ export default function RouteCardGenerationAlt() {
       <Dialog
         header={instrDialog.title || "Operation instruction"}
         visible={instrDialog.visible}
-        onHide={() =>
-          setInstrDialog({ visible: false, opKey: null, title: "", draft: "", itemsUsed: [] })
-        }
+        onHide={() => {
+          setInstrDialog({
+            visible: false,
+            opKey: null,
+            title: "",
+            draft: "",
+            itemsUsed: [],
+            viewRefs: [],
+          });
+          setTableCrops([]);
+          setTableCropView(null);
+        }}
         className="oarc-instr-dialog rca-instr-dialog"
-        style={{ width: "min(92vw, 28rem)" }}
+        style={{ width: "min(94vw, 42rem)" }}
         footer={
           <div className="oarc-instr-dialog__footer">
             <Button
@@ -2387,9 +2764,18 @@ export default function RouteCardGenerationAlt() {
               label="Cancel"
               outlined
               size="small"
-              onClick={() =>
-                setInstrDialog({ visible: false, opKey: null, title: "", draft: "", itemsUsed: [] })
-              }
+              onClick={() => {
+                setInstrDialog({
+                  visible: false,
+                  opKey: null,
+                  title: "",
+                  draft: "",
+                  itemsUsed: [],
+                  viewRefs: [],
+                });
+                setTableCrops([]);
+                setTableCropView(null);
+              }}
             />
             <Button
               type="button"
@@ -2412,6 +2798,38 @@ export default function RouteCardGenerationAlt() {
           resetKey={`${instrDialog.visible}:${instrDialog.opKey || ""}`}
           rows={6}
         />
+        {tableCropsLoading ? (
+          <p className="oarc-instr-dialog__hint" style={{ marginTop: "0.5rem" }}>
+            Checking drawing for table snapshot…
+          </p>
+        ) : null}
+        {tableCrops.length > 0 ? (
+          <div className="oarc-instr-dialog__meta" aria-label="Drawing table snapshots">
+            <span className="oarc-instr-dialog__meta-label">Tables:</span>
+            <div className="oarc-instr-dialog__chips">
+              {tableCrops.map((crop) => (
+                <Button
+                  key={`${crop.drawingId}-${crop.label}`}
+                  type="button"
+                  label={crop.label}
+                  icon="pi pi-info-circle"
+                  size="small"
+                  outlined
+                  className="p-button-sm"
+                  onClick={() =>
+                    setTableCropView({
+                      label: crop.label,
+                      src: crop.src,
+                      filename: crop.filename,
+                      page: crop.page,
+                      confidence: crop.confidence,
+                    })
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
         {(instrDialog.itemsUsed || []).length > 0 ? (
           <div className="oarc-instr-dialog__meta" aria-label="Items from Parts List">
             <span className="oarc-instr-dialog__meta-label">Items:</span>
@@ -2422,6 +2840,45 @@ export default function RouteCardGenerationAlt() {
                 </span>
               ))}
             </div>
+          </div>
+        ) : null}
+      </Dialog>
+
+      <Dialog
+        header={
+          tableCropView
+            ? `${tableCropView.label}${
+                tableCropView.filename ? ` — ${tableCropView.filename}` : ""
+              }${tableCropView.page ? ` (sheet ${tableCropView.page})` : ""}`
+            : "Table"
+        }
+        visible={Boolean(tableCropView)}
+        onHide={() => setTableCropView(null)}
+        style={{ width: "min(96vw, 42rem)" }}
+        className="rca-table-crop-dialog"
+        footer={
+          <div className="oarc-instr-dialog__footer">
+            <Button
+              type="button"
+              label="Close"
+              size="small"
+              outlined
+              onClick={() => setTableCropView(null)}
+            />
+          </div>
+        }
+      >
+        {tableCropView?.src ? (
+          <div className="rca-table-crop">
+            <img
+              src={tableCropView.src}
+              alt={tableCropView.label || "Table crop"}
+              className="rca-table-crop__img"
+            />
+            <p className="oarc-instr-dialog__hint" style={{ marginTop: "0.5rem" }}>
+              Snapshot from the uploaded drawing (not OCR). Shown only when the table caption was
+              found uniquely.
+            </p>
           </div>
         ) : null}
       </Dialog>

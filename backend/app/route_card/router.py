@@ -91,8 +91,9 @@ async def analyze_session(
 ):
     """Run analysis. Cancels Ollama work if the client disconnects or /analyze/cancel is called.
 
-    Optional JSON body: { \"vlmPageIndexes\": [1,2,3], \"async\": false }
+    Optional JSON body: { \"vlmPageIndexes\": [1,2,3], \"async\": false, \"plant\": \"1110\" }
     When async=true, enqueues a durable job and returns {jobId,...}.
+    Admin should pass ``plant`` so WC linking uses that plant catalogue.
     """
     body: dict = {}
     try:
@@ -103,10 +104,20 @@ async def analyze_session(
     vlm_pages = body.get("vlmPageIndexes") or body.get("vlm_page_indexes")
     if vlm_pages is not None and not isinstance(vlm_pages, list):
         raise HTTPException(400, "vlmPageIndexes must be a list of page numbers")
+    plant = str(body.get("plant") or body.get("plantCode") or "").strip() or None
+    role = (current_user.get("role") or "").strip().lower()
+    if role == "admin":
+        if not plant:
+            raise HTTPException(400, "Plant is required for admin generate")
+    else:
+        # Non-admin always use their SBU plant — ignore client override
+        plant = None
     if body.get("async") or body.get("enqueue"):
         from app.route_card import job_queue
 
-        return job_queue.enqueue_analyze(session_id, current_user, vlm_page_indexes=vlm_pages)
+        return job_queue.enqueue_analyze(
+            session_id, current_user, vlm_page_indexes=vlm_pages, plant=plant
+        )
 
     def work():
         job = start_job(session_id)
@@ -116,6 +127,7 @@ async def analyze_session(
                 user=current_user,
                 cancel_event=job.cancel,
                 vlm_page_indexes=vlm_pages,
+                plant=plant,
             )
         finally:
             end_job(session_id)
@@ -133,12 +145,31 @@ async def analyze_session(
 
 
 @router.post("/sessions/{session_id}/operations/relink-work-centres")
-def relink_session_work_centres(
+async def relink_session_work_centres(
     session_id: int,
+    request: Request,
     current_user: dict = Depends(get_current_user),
 ):
-    """Re-match route ops to the session owner's plant WC master (keeps manual overrides)."""
-    return service.relink_session_work_centres(session_id, user=current_user)
+    """Re-match route ops to plant WC master (keeps manual overrides).
+
+    Optional JSON body: { \"plant\": \"1110\" } — required for admin.
+    """
+    body: dict = {}
+    try:
+        if (request.headers.get("content-type") or "").startswith("application/json"):
+            body = await request.json() or {}
+    except Exception:
+        body = {}
+    plant = str(body.get("plant") or body.get("plantCode") or "").strip() or None
+    role = (current_user.get("role") or "").strip().lower()
+    if role == "admin":
+        if not plant:
+            raise HTTPException(400, "Plant is required for admin re-link")
+    else:
+        plant = None
+    return service.relink_session_work_centres(
+        session_id, user=current_user, plant=plant
+    )
 
 
 @router.post("/sessions/{session_id}/analyze/cancel")
@@ -155,6 +186,14 @@ def cancel_analyze_session(
             raise
     stopped = cancel_job(session_id)
     return {"sessionId": session_id, "cancelled": stopped}
+
+
+@router.get("/sessions/{session_id}/prior-extractions")
+def prior_extractions_for_session(
+    session_id: int, current_user: dict = Depends(get_current_user)
+):
+    """Match earlier extractions by GA filename / part number before Generate."""
+    return service.find_prior_extractions_for_session(session_id, current_user)
 
 
 @router.get("/my/extractions")
@@ -327,6 +366,23 @@ def download_drawing_file(drawing_id: int, current_user: dict = Depends(get_curr
         BytesIO(data),
         media_type=content_type,
         headers={"Content-Disposition": f'{inline}; filename="{filename}"'},
+    )
+
+
+@router.get("/drawings/{drawing_id}/table-crop")
+def drawing_table_crop(
+    drawing_id: int,
+    table: str = Query(..., description="Table id, e.g. 1 or A"),
+    page: int | None = Query(None, description="1-based PDF page / sheet"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return a gated visual crop of TABLE <id> from the drawing PDF.
+
+    Only available when the caption is found uniquely with high confidence.
+    Image pixels only — never reconstructed cell data.
+    """
+    return service.drawing_table_crop(
+        drawing_id, table_id=table, page=page, user=current_user
     )
 
 
@@ -705,11 +761,18 @@ def list_work_centers(
 @router.get("/work-centers/catalog")
 def work_centers_catalog(
     dept: str | None = Query(None),
+    plant: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
     from app.route_card import work_centers as wc_mod
 
-    return wc_mod.catalog_for_dropdowns(current_user, dept=dept)
+    role = (current_user.get("role") or "").strip().lower()
+    want_plant = (plant or "").strip() or None
+    if role != "admin":
+        want_plant = None
+    return wc_mod.catalog_for_dropdowns(
+        current_user, dept=dept, plant=want_plant
+    )
 
 
 @router.get("/work-centers/{wc_id}")

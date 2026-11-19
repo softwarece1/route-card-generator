@@ -304,8 +304,12 @@ export default function AppShell({ active = "generator", children }) {
               aria-label="Logout"
               tooltip="Logout"
               tooltipOptions={{ position: "bottom" }}
-              onClick={() => {
-                logout();
+              onClick={async () => {
+                try {
+                  await logout();
+                } catch {
+                  /* local clear still ran */
+                }
                 navigate("/login", { replace: true });
               }}
             />

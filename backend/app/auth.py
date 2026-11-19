@@ -254,6 +254,16 @@ def logout(creds: HTTPAuthorizationCredentials = Depends(security)):
     jti = payload.get("jti")
     if jti:
         _revoked_tokens.add(jti)
+    # Clear single-active-session slot so the next login is not treated as a takeover
+    uid = payload.get("uid")
+    try:
+        uid_i = int(uid) if uid is not None else None
+    except (TypeError, ValueError):
+        uid_i = None
+    if uid_i is not None and _active_sessions.get(uid_i) == jti:
+        _active_sessions.pop(uid_i, None)
+    elif uid_i is not None and jti and _active_sessions.get(uid_i) in _revoked_tokens:
+        _active_sessions.pop(uid_i, None)
     return {"detail": "Logged out successfully"}
 
 
@@ -377,6 +387,14 @@ def signup(body: SignupRequest):
     }
 
 
+@router.get("/config")
+def auth_config():
+    """Public login flags. CAPTCHA follows APP_ENV (dev off, prod on)."""
+    from app.config.settings import captcha_required
+
+    return {"captchaRequired": captcha_required()}
+
+
 @router.get("/captcha")
 @limiter.limit(getattr(settings, "RATE_LIMIT_CAPTCHA", "30/min"))
 def get_captcha(request: Request):
@@ -422,14 +440,17 @@ def login(request: Request, body: LoginRequest = Body(...)):
     creds = decrypt_creds_cipher(body.cipher, body.alg)
     emp_id = require_safe(_normalize_emp_id(str(creds.get("empId") or "")), "empId", field="empId")
     password = require_safe(str(creds.get("password") or ""), "password", field="password")
-    # CAPTCHA verification – accept from decrypted credentials or top-level request body
-    captcha_id = creds.get("captchaId") or body.captchaId
-    captcha_answer = creds.get("captchaAnswer") or body.captchaAnswer
-    if not captcha_id or not captcha_answer:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="CAPTCHA required")
-    from app.captcha import verify_captcha
-    if not verify_captcha(captcha_id, captcha_answer):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired CAPTCHA")
+    # CAPTCHA verification – skipped when APP_ENV=dev (or CAPTCHA_ENABLED=false)
+    from app.config.settings import captcha_required
+
+    if captcha_required():
+        captcha_id = creds.get("captchaId") or body.captchaId
+        captcha_answer = creds.get("captchaAnswer") or body.captchaAnswer
+        if not captcha_id or not captcha_answer:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="CAPTCHA required")
+        from app.captcha import verify_captcha
+        if not verify_captcha(captcha_id, captcha_answer):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired CAPTCHA")
     if emp_id.lower() == _ADMIN_EMP_ID:
         emp_id = _ADMIN_EMP_ID
     user = RcUser.get(emp_id=emp_id)
@@ -440,6 +461,10 @@ def login(request: Request, body: LoginRequest = Body(...)):
         )
 
     existing_jti = _active_sessions.get(user.id)
+    # Stale slot after logout / idle revoke without clearing the map
+    if existing_jti and existing_jti in _revoked_tokens:
+        _active_sessions.pop(user.id, None)
+        existing_jti = None
     if existing_jti and not body.terminateExistingSession:
         resume = _issue_takeover_resume(
             user_id=user.id, emp_id=user.emp_id, role=user.role

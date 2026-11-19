@@ -22,10 +22,12 @@ from app.route_card.drawing_mind.local_vlm import (
     LocalVlmMind,
     _compose_elaboration_from_placement,
     _is_weak_elaboration,
+    _merge_cpu_enrichment_onto_vlm,
     _merge_elaboration_onto_ocr,
     _normalize_placement,
     _normalize_step,
     _parse_vlm_json,
+    _stage_b_grounded_placements,
     _vlm_notes_usable,
     align_model_to_ocr,
     insight_is_safe,
@@ -281,8 +283,11 @@ def test_generate_route_uses_verbatim_not_insight():
     route = generate_route(extraction)
     ops = [o for o in (route.get("operations") or []) if o.get("opNo") == 10]
     assert len(ops) == 1
-    assert ops[0].get("instructionText") == OCR_BARE
-    assert "Rewritten shop English" not in (ops[0].get("instructionText") or "")
+    instr = ops[0].get("instructionText") or ""
+    # Verbatim note wins over free rewrite; sanitize may sentence-case for operators.
+    assert "485100709086" in instr
+    assert "BARE BOARD" in instr.upper()
+    assert "Rewritten shop English" not in instr
     assert "Mentions P/N" in (ops[0].get("insight") or "")
 
 
@@ -330,8 +335,14 @@ def test_local_vlm_falls_back_when_server_down():
         "title_block": {"unit": "mm"},
     }
     mind = LocalVlmMind()
-    with patch(
-        "app.route_card.drawing_mind.local_vlm.ollama_reachable", return_value=False
+    with (
+        patch(
+            "app.route_card.drawing_mind.local_vlm.vlm_status",
+            return_value=(False, "down"),
+        ),
+        patch(
+            "app.route_card.drawing_mind.local_vlm.ollama_reachable", return_value=False
+        ),
     ):
         result = mind.understand(
             pdf_bytes=b"%PDF-1.4 fake",
@@ -380,6 +391,10 @@ def test_local_vlm_uses_verbatim_ocr_when_usable():
 
     mind = LocalVlmMind()
     with (
+        patch(
+            "app.route_card.drawing_mind.local_vlm.vlm_status",
+            return_value=(True, None),
+        ),
         patch("app.route_card.drawing_mind.local_vlm.ollama_reachable", return_value=True),
         patch(
             "app.route_card.drawing_mind.local_vlm.render_note_bands",
@@ -397,6 +412,10 @@ def test_local_vlm_uses_verbatim_ocr_when_usable():
             "app.route_card.drawing_mind.local_vlm.chat_text",
             return_value=json.dumps({"text": "", "insight": "", "warnings": []}),
         ),
+        patch(
+            "app.route_card.drawing_mind.local_vlm.render_pdf_pages",
+            return_value=[],
+        ),
     ):
         result = mind.understand(
             pdf_bytes=b"%PDF-1.4 fake",
@@ -408,9 +427,59 @@ def test_local_vlm_uses_verbatim_ocr_when_usable():
     assert result.engine == "local_vlm"
     assert len(result.notes) >= 1
     assert "B1" in result.notes[0]["text"].upper()
-    assert result.notes[0].get("elaboratedText") == ""
+    # No PL extras → elaboratedText stays empty (verbatim only)
+    assert not (result.notes[0].get("elaboratedText") or "").strip()
     assert result.notes[0].get("mindEngine") == "local_vlm"
     assert result.notes[0].get("needsReview") is False
+
+
+def test_merge_cpu_enrichment_preserved_on_vlm_success():
+    vlm = [
+        {
+            "text": "STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE.",
+            "elaboratedText": "",
+            "placement": [],
+            "viewRefs": [],
+            "items": [2, 3],
+        }
+    ]
+    cpu = [
+        {
+            "text": "STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE.",
+            "elaboratedText": "Stick Item 2 on the DC OUT side. (From drawing: STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE.)",
+            "placement": [{"itemNo": 2, "surface": "DC OUT", "offsets": []}],
+            "viewRefs": [{"label": "SHEET 1"}],
+            "elaborated": True,
+            "items": [2, 3],
+        }
+    ]
+    merged = _merge_cpu_enrichment_onto_vlm(vlm, cpu)
+    assert "DC OUT" in (merged[0].get("elaboratedText") or "")
+    assert merged[0].get("placement")
+    assert merged[0].get("viewRefs")
+    assert merged[0].get("elaborated") is True
+
+
+def test_stage_b_rejects_invented_item_numbers():
+    raw = {
+        "placements": [
+            {
+                "itemNo": 99,
+                "surface": "DC OUT",
+                "offsets": [{"from": "top", "value": 5, "unit": "mm"}],
+                "confidence": 0.9,
+            },
+            {
+                "itemNo": 2,
+                "surface": "DC OUT",
+                "offsets": [{"from": "left", "value": 5, "unit": "mm"}],
+                "confidence": 0.8,
+            },
+        ]
+    }
+    got = _stage_b_grounded_placements(raw, allowed_items={2, 3}, note_text="STICK ITEM 2")
+    assert len(got) == 1
+    assert got[0]["itemNo"] == 2
 
 
 def test_chat_vision_error_path_falls_back_partial():
@@ -438,6 +507,10 @@ def test_chat_vision_error_path_falls_back_partial():
     ]
     mind = LocalVlmMind()
     with (
+        patch(
+            "app.route_card.drawing_mind.local_vlm.vlm_status",
+            return_value=(True, None),
+        ),
         patch("app.route_card.drawing_mind.local_vlm.ollama_reachable", return_value=True),
         patch(
             "app.route_card.drawing_mind.local_vlm.render_note_bands",
@@ -486,6 +559,8 @@ def _run():
     test_factory_returns_local_vlm()
     test_local_vlm_falls_back_when_server_down()
     test_local_vlm_uses_verbatim_ocr_when_usable()
+    test_merge_cpu_enrichment_preserved_on_vlm_success()
+    test_stage_b_rejects_invented_item_numbers()
     test_chat_vision_error_path_falls_back_partial()
     print("test_drawing_mind_local_vlm: OK")
 

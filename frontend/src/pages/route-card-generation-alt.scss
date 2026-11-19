@@ -1193,6 +1193,22 @@
   }
 }
 
+.rca-table-crop {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.rca-table-crop__img {
+  display: block;
+  width: 100%;
+  max-height: min(70vh, 32rem);
+  object-fit: contain;
+  border: 1px solid var(--pmf-border-strong);
+  border-radius: 0.35rem;
+  background: var(--pmf-page-bg);
+}
+
 @media (max-width: 960px) {
   .rca-footer {
     left: 0;

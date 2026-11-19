@@ -34,6 +34,7 @@ def job_dict(j: RcAnalyzeJob) -> dict:
         "message": j.message or "",
         "errorMessage": j.error_message,
         "vlmPageIndexes": j.vlm_page_indexes,
+        "plant": (getattr(j, "plant", None) or "") or None,
         "createdAt": j.created_at.isoformat() + "Z" if j.created_at else None,
         "startedAt": j.started_at.isoformat() + "Z" if j.started_at else None,
         "finishedAt": j.finished_at.isoformat() + "Z" if j.finished_at else None,
@@ -45,6 +46,7 @@ def enqueue_analyze(
     session_id: int,
     user: dict,
     vlm_page_indexes: list[int] | None = None,
+    plant: str | None = None,
 ) -> dict:
     session = RcSession.get(id=session_id)
     if not session:
@@ -70,6 +72,9 @@ def enqueue_analyze(
     }
     if vlm_page_indexes is not None:
         job_kwargs["vlm_page_indexes"] = list(vlm_page_indexes)
+    want_plant = (plant or "").strip()
+    if want_plant:
+        job_kwargs["plant"] = want_plant
     job = RcAnalyzeJob(**job_kwargs)
     session.status = "queued"
     session.updated_at = datetime.utcnow()
@@ -247,6 +252,7 @@ def _job_context(job_id: int) -> dict | None:
         if j.user
         else {},
         "vlmPageIndexes": j.vlm_page_indexes,
+        "plant": (getattr(j, "plant", None) or "") or None,
     }
 
 
@@ -282,6 +288,7 @@ def _run_one(job_id: int) -> None:
                     user=user,
                     cancel_event=job.cancel,
                     vlm_page_indexes=ctx.get("vlmPageIndexes"),
+                    plant=ctx.get("plant"),
                 )
             finally:
                 end_job(sid)

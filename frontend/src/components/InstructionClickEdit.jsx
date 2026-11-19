@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { annotateItemMentions } from "@/lib/itemLabels";
-import { normalizeInstructionCase } from "@/lib/instructionCase";
+import { normalizeInstructionCase, sanitizeOperatorInstruction } from "@/lib/instructionCase";
 import "./instruction-click-edit.scss";
 
 /**
  * Single surface: annotated preview by default; click to edit raw instruction text.
  * Item names/part numbers are display-only and never written into `value`.
+ * While editing, a live annotated preview stays visible so PL labels do not "disappear".
  */
 export default function InstructionClickEdit({
   value = "",
@@ -24,7 +25,10 @@ export default function InstructionClickEdit({
     setEditing(!String(value || "").trim());
   }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps -- reopen resets mode
 
-  const normalized = normalizeInstructionCase(value);
+  const normalized = normalizeInstructionCase(sanitizeOperatorInstruction(value) || value);
+  const annotated = annotateItemMentions(normalized, itemLookup);
+  const empty = !String(normalized || "").trim();
+  const showAnnotPreview = Boolean(annotated && annotated !== normalized);
 
   useEffect(() => {
     if (!editing || disabled) return;
@@ -62,12 +66,15 @@ export default function InstructionClickEdit({
           autoResize
           placeholder={placeholder}
         />
+        {showAnnotPreview ? (
+          <div className="instr-click-edit__live-annot" aria-live="polite">
+            <span className="instr-click-edit__live-annot-label">Preview with Parts List names</span>
+            <p className="instr-click-edit__live-annot-text">{annotated}</p>
+          </div>
+        ) : null}
       </div>
     );
   }
-
-  const annotated = annotateItemMentions(normalized, itemLookup);
-  const empty = !String(normalized || "").trim();
 
   return (
     <div ref={wrapRef} className="instr-click-edit">

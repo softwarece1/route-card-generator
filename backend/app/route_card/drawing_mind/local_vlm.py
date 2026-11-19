@@ -4,18 +4,29 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled
 from app.route_card.drawing_mind.base import DrawingMind
 from app.route_card.drawing_mind.cpu_spatial import CpuSpatialMind
+from app.route_card.drawing_mind.elaborate import (
+    apply_grounded_elaboration,
+    needs_stage_b_vision,
+    note_is_enriched,
+)
 from app.route_card.drawing_mind.ollama_client import (
     OllamaError,
     chat_text,
     chat_vision,
     ollama_reachable,
+    vlm_status,
 )
-from app.route_card.drawing_mind.page_images import ocr_image_raw, render_note_bands
+from app.route_card.drawing_mind.page_images import (
+    ocr_image_raw,
+    render_note_bands,
+    render_pdf_pages,
+)
 from app.route_card.drawing_mind.types import MindResult, PlacementFact, PcbLinkFact
 
 SYSTEM_PROMPT = (
@@ -64,6 +75,35 @@ Return JSON only:
 {{
   "text": "exact copy of the verbatim note above",
   "insight": "",
+  "warnings": []
+}}
+"""
+
+STAGE_B_PROMPT = """You are viewing a GA assembly drawing page (views + balloons + dimensions).
+
+Verbatim note that needs visual placement:
+-----
+{note_text}
+-----
+
+Items already cited on the note: {items_csv}
+
+Return JSON only describing placement you can SEE (balloon numbers, surface labels, measured dims).
+Do not invent part numbers, item numbers, or dimensions that are not visible.
+If nothing useful is visible, return empty placements.
+
+{{
+  "placements": [
+    {{
+      "itemNo": 2,
+      "surface": "visible face label or empty",
+      "offsets": [
+        {{"from": "top", "value": 5.0, "unit": "mm"}},
+        {{"from": "item", "value": 5.0, "unit": "mm", "relativeToItem": 2, "relation": "below"}}
+      ],
+      "confidence": 0.7
+    }}
+  ],
   "warnings": []
 }}
 """
@@ -797,6 +837,57 @@ def _vlm_notes_usable(notes: list[dict[str, Any]]) -> bool:
     return any(len((n.get("text") or "").strip()) >= 8 for n in notes)
 
 
+def _note_match_score(a: str, b: str) -> int:
+    body = re.sub(r"\s+", " ", (a or "")).upper()[:120]
+    vb = re.sub(r"\s+", " ", (b or "")).upper()[:120]
+    if not body or not vb:
+        return 0
+    if body in vb or vb in body:
+        return min(len(body), len(vb))
+    return len(set(body.split()) & set(vb.split()))
+
+
+def _merge_cpu_enrichment_onto_vlm(
+    vlm_notes: list[dict[str, Any]],
+    cpu_notes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep VLM verbatim text; never wipe CPU elaboratedText / placement / viewRefs."""
+    out = [dict(n) for n in vlm_notes]
+    used: set[int] = set()
+    for note in out:
+        best_i = -1
+        best_score = 0
+        for i, cn in enumerate(cpu_notes):
+            if i in used:
+                continue
+            score = _note_match_score(note.get("text") or "", cn.get("text") or "")
+            if score > best_score:
+                best_score = score
+                best_i = i
+        if best_i < 0 or best_score < 3:
+            continue
+        used.add(best_i)
+        cn = cpu_notes[best_i]
+        # Preserve CPU grounding when VLM left fields empty
+        if not (note.get("elaboratedText") or "").strip() and (cn.get("elaboratedText") or "").strip():
+            note["elaboratedText"] = cn["elaboratedText"]
+        if not (note.get("placement") or []) and (cn.get("placement") or []):
+            note["placement"] = list(cn.get("placement") or [])
+        if not (note.get("viewRefs") or []) and (cn.get("viewRefs") or []):
+            note["viewRefs"] = list(cn.get("viewRefs") or [])
+        if not (note.get("insight") or "").strip() and (cn.get("insight") or "").strip():
+            note["insight"] = cn["insight"]
+        for key in ("items", "torque", "connectors", "standards", "references"):
+            if not note.get(key) and cn.get(key):
+                note[key] = list(cn.get(key) or [])
+        if cn.get("elaborated") or note_is_enriched(note):
+            note["elaborated"] = True
+        # Prefer higher confidence engine tag but keep enrichment
+        if cn.get("mindConfidence") and not note.get("mindConfidence"):
+            note["mindConfidence"] = cn.get("mindConfidence")
+    return out
+
+
 def _merge_elaboration_onto_ocr(
     ocr_notes: list[dict[str, Any]],
     vlm_notes: list[dict[str, Any]],
@@ -805,21 +896,12 @@ def _merge_elaboration_onto_ocr(
     out = [dict(n) for n in ocr_notes]
     used: set[int] = set()
     for note in out:
-        body = re.sub(r"\s+", " ", (note.get("text") or "")).upper()[:120]
-        if not body:
-            continue
         best_i = -1
         best_score = 0
         for i, vn in enumerate(vlm_notes):
             if i in used:
                 continue
-            vb = re.sub(r"\s+", " ", (vn.get("text") or "")).upper()[:120]
-            if not vb:
-                continue
-            if body in vb or vb in body:
-                score = min(len(body), len(vb))
-            else:
-                score = len(set(body.split()) & set(vb.split()))
+            score = _note_match_score(note.get("text") or "", vn.get("text") or "")
             if score > best_score:
                 best_score = score
                 best_i = i
@@ -835,6 +917,54 @@ def _merge_elaboration_onto_ocr(
         if vn.get("needsReview"):
             note["needsReview"] = True
     return out
+
+
+def _stage_b_grounded_placements(
+    raw: dict[str, Any],
+    *,
+    allowed_items: set[int],
+    note_text: str,
+) -> list[dict[str, Any]]:
+    """Accept Stage B placements only when item nos are cited and offsets are numeric."""
+    del note_text
+    out: list[dict[str, Any]] = []
+    for p in raw.get("placements") or []:
+        if not isinstance(p, dict):
+            continue
+        try:
+            item = int(p.get("itemNo") or 0)
+        except (TypeError, ValueError):
+            continue
+        if item <= 0:
+            continue
+        if allowed_items and item not in allowed_items:
+            continue
+        offsets = _normalize_offsets(p.get("offsets"))
+        surface = str(p.get("surface") or "").strip()
+        if _WEAK_SURFACE.match(surface):
+            surface = ""
+        if not offsets and not surface:
+            continue
+        conf = _coerce_float(p.get("confidence")) or 0.55
+        out.append(
+            {
+                "itemNo": item,
+                "surface": surface,
+                "offsets": offsets,
+                "confidence": max(0.0, min(conf, 0.95)),
+            }
+        )
+    return out
+
+
+def _adaptive_note_dpi(band_count: int, configured: int) -> int:
+    """Lower DPI when many note bands to keep vision latency reasonable."""
+    base = max(120, min(int(configured or 300), 400))
+    if band_count >= 6:
+        return min(base, 220)
+    if band_count >= 4:
+        return min(base, 280)
+    return base
 
 
 def _placement_facts(placements: list[dict[str, Any]]) -> list[PlacementFact]:
@@ -916,12 +1046,33 @@ class LocalVlmMind(DrawingMind):
         model = getattr(settings, "OLLAMA_VLM_MODEL", "google/gemma-4-E4B-it")
         timeout = float(getattr(settings, "OLLAMA_TIMEOUT_SEC", 600) or 600)
         max_pages = int(getattr(settings, "OLLAMA_VLM_MAX_PAGES", 6) or 6)
-        note_dpi = int(getattr(settings, "OLLAMA_VLM_NOTE_DPI", 300) or 300)
+        note_dpi_cfg = int(getattr(settings, "OLLAMA_VLM_NOTE_DPI", 300) or 300)
         note_max_edge = int(getattr(settings, "OLLAMA_VLM_NOTE_MAX_EDGE", 2400) or 2400)
+        page_dpi = int(getattr(settings, "OLLAMA_VLM_DPI", 160) or 160)
+        page_max_edge = int(getattr(settings, "OLLAMA_VLM_MAX_IMAGE_EDGE", 1600) or 1600)
+        transcribe_max_tokens = min(
+            1024, int(getattr(settings, "OLLAMA_VLM_MAX_TOKENS", 2048) or 2048)
+        )
 
-        if not ollama_reachable(base_url, timeout=min(5.0, timeout)):
+        ok, status_err = vlm_status(base_url, model=model, timeout=min(5.0, timeout))
+        if not ok and not ollama_reachable(base_url, timeout=min(5.0, timeout)):
             warnings.append(
-                f"Drawing mind (local_vlm): vision server not reachable at {base_url} — using CPU spatial fallback."
+                f"Drawing mind (local_vlm): vision server not reachable at {base_url}"
+                + (f" ({status_err})" if status_err else "")
+                + " — using CPU spatial fallback."
+            )
+            return MindResult(
+                engine="local_vlm_fallback_cpu",
+                notes=ocr_notes,
+                placements=cpu_placements,
+                pcb_links=pcb_links,
+                warnings=warnings,
+            )
+        if not ok:
+            warnings.append(
+                f"Drawing mind (local_vlm): vision server not ready at {base_url}"
+                + (f" ({status_err})" if status_err else "")
+                + " — using CPU spatial fallback."
             )
             return MindResult(
                 engine="local_vlm_fallback_cpu",
@@ -931,12 +1082,13 @@ class LocalVlmMind(DrawingMind):
                 warnings=warnings,
             )
 
+        # Probe band count at moderate DPI first for adaptive sizing
         try:
-            bands = render_note_bands(
+            probe_bands = render_note_bands(
                 pdf_bytes,
-                dpi=note_dpi,
+                dpi=min(note_dpi_cfg, 200),
                 max_pages=max_pages,
-                max_edge=note_max_edge,
+                max_edge=min(note_max_edge, 1600),
                 page_indexes=page_indexes,
                 cancel_event=cancel_event,
             )
@@ -952,7 +1104,7 @@ class LocalVlmMind(DrawingMind):
                 warnings=warnings,
             )
 
-        if not bands:
+        if not probe_bands:
             warnings.append("Drawing mind (local_vlm): no note bands rendered — CPU fallback.")
             return MindResult(
                 engine="local_vlm_fallback_cpu",
@@ -962,23 +1114,43 @@ class LocalVlmMind(DrawingMind):
                 warnings=warnings,
             )
 
+        note_dpi = _adaptive_note_dpi(len(probe_bands), note_dpi_cfg)
+        if note_dpi != min(note_dpi_cfg, 200):
+            try:
+                bands = render_note_bands(
+                    pdf_bytes,
+                    dpi=note_dpi,
+                    max_pages=max_pages,
+                    max_edge=note_max_edge if note_dpi >= 280 else min(note_max_edge, 2000),
+                    page_indexes=page_indexes,
+                    cancel_event=cancel_event,
+                )
+            except AnalysisCancelled:
+                raise
+            except Exception:
+                bands = probe_bands
+        else:
+            bands = probe_bands
+
+        if not bands:
+            bands = probe_bands
+
         system_prompt = SYSTEM_PROMPT
         if prompt_addendum and str(prompt_addendum).strip():
             system_prompt = SYSTEM_PROMPT + "\n\n" + str(prompt_addendum).strip()
 
-        vlm_notes: list[dict[str, Any]] = []
         page_warns: list[str] = []
-        step_counter = 0
 
-        for band in bands:
-            check_cancelled(cancel_event)
+        def _transcribe_band(band: dict[str, Any]) -> tuple[int, list[dict[str, Any]], list[str]]:
+            """One vision call per note-band page; returns (page, aligned rows, warns)."""
+            local_warns: list[str] = []
             page_no = int(band.get("page") or 1)
+            check_cancelled(cancel_event)
             ocr_text = ocr_image_raw(band.get("raw") or b"")
             if not ocr_text.strip():
-                page_warns.append(
+                local_warns.append(
                     f"Drawing mind (local_vlm): page {page_no} note-band OCR empty — model lines will need review."
                 )
-
             prompt = TRANSCRIBE_PROMPT.format(ocr_text=ocr_text or "(no OCR text)")
             try:
                 raw = chat_vision(
@@ -991,28 +1163,51 @@ class LocalVlmMind(DrawingMind):
                     system=system_prompt,
                     cancel_event=cancel_event,
                     image_mime=str(band.get("mime") or "image/jpeg"),
+                    max_tokens=transcribe_max_tokens,
                 )
                 data = _parse_vlm_json(raw)
             except AnalysisCancelled:
                 raise
             except (OllamaError, ValueError, json.JSONDecodeError) as exc:
-                page_warns.append(f"VLM page {page_no}: {exc}")
-                continue
+                local_warns.append(f"VLM page {page_no}: {exc}")
+                return page_no, [], local_warns
 
             for w in data.get("warnings") or []:
                 if isinstance(w, str) and w.strip():
-                    page_warns.append(f"VLM page {page_no}: {w.strip()}")
+                    local_warns.append(f"VLM page {page_no}: {w.strip()}")
 
             ocr_lines = split_ocr_note_lines(ocr_text)
             model_lines = flatten_model_blocks(data)
             aligned = align_model_to_ocr(ocr_lines, model_lines)
-
+            rows: list[dict[str, Any]] = []
             for row in aligned:
-                step_counter += 1
                 text = str(row.get("text") or "").strip()
                 if len(text) < 3:
-                    step_counter -= 1
                     continue
+                rows.append({**row, "_page": page_no, "_ocr": ocr_text})
+            return page_no, rows, local_warns
+
+        # Limited parallelism (2-way) across note-band pages
+        band_results: list[tuple[int, list[dict[str, Any]], list[str]]] = []
+        workers = min(2, len(bands))
+        if workers <= 1:
+            for band in bands:
+                band_results.append(_transcribe_band(band))
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(_transcribe_band, b) for b in bands]
+                for fut in as_completed(futures):
+                    check_cancelled(cancel_event)
+                    band_results.append(fut.result())
+        band_results.sort(key=lambda t: t[0])
+
+        vlm_notes: list[dict[str, Any]] = []
+        step_counter = 0
+        for page_no, rows, local_warns in band_results:
+            page_warns.extend(local_warns)
+            for row in rows:
+                step_counter += 1
+                text = str(row.get("text") or "").strip()
                 needs_review = bool(row.get("needsReview"))
                 if row.get("gateConflict"):
                     page_warns.append(
@@ -1073,11 +1268,11 @@ class LocalVlmMind(DrawingMind):
         warnings.extend(page_warns)
 
         if _vlm_notes_usable(vlm_notes):
-            notes = vlm_notes
+            notes = _merge_cpu_enrichment_onto_vlm(vlm_notes, ocr_notes)
             engine = self.engine
             warnings.append(
                 f"Drawing mind (local_vlm): extracted {len(notes)} verbatim note line(s) "
-                f"from {len(bands)} note-band image(s)."
+                f"from {len(bands)} note-band image(s); CPU enrichment merged."
             )
         else:
             notes = _merge_elaboration_onto_ocr(ocr_notes, vlm_notes)
@@ -1091,9 +1286,100 @@ class LocalVlmMind(DrawingMind):
                     "Drawing mind (local_vlm): vision steps sparse — merged onto OCR notes."
                 )
 
-        placements = _prefer_vlm_placements(cpu_placements, [])
+        # Stage B: full-page vision for AS SHOWN / DETAIL cues (additive)
+        stage_b_placements: list[dict[str, Any]] = []
+        stage_b_notes = [n for n in notes if needs_stage_b_vision(n.get("text") or "")]
+        if stage_b_notes and pdf_bytes:
+            try:
+                pages_needed = sorted(
+                    {
+                        int(n.get("sheet") or 1)
+                        for n in stage_b_notes
+                        if int(n.get("sheet") or 1) > 0
+                    }
+                )[:max_pages]
+                page_imgs = render_pdf_pages(
+                    pdf_bytes,
+                    dpi=page_dpi,
+                    max_pages=max_pages,
+                    max_edge=page_max_edge,
+                    page_indexes=pages_needed or page_indexes,
+                    cancel_event=cancel_event,
+                )
+                by_page = {int(p["page"]): p for p in page_imgs}
+                for note in stage_b_notes:
+                    check_cancelled(cancel_event)
+                    if note.get("placement"):
+                        continue  # CPU already grounded placement
+                    page_no = int(note.get("sheet") or 1)
+                    img = by_page.get(page_no)
+                    if not img:
+                        continue
+                    items = [int(i) for i in (note.get("items") or []) if str(i).isdigit() or isinstance(i, int)]
+                    try:
+                        raw_b = chat_vision(
+                            prompt=STAGE_B_PROMPT.format(
+                                note_text=note.get("text") or "",
+                                items_csv=", ".join(str(i) for i in items) or "(none)",
+                            ),
+                            images_b64=[img["b64"]],
+                            model=model,
+                            base_url=base_url,
+                            timeout=timeout,
+                            temperature=0.0,
+                            system=system_prompt,
+                            cancel_event=cancel_event,
+                            image_mime=str(img.get("mime") or "image/jpeg"),
+                            max_tokens=512,
+                        )
+                        data_b = _parse_vlm_json(raw_b)
+                    except AnalysisCancelled:
+                        raise
+                    except (OllamaError, ValueError, json.JSONDecodeError) as exc:
+                        warnings.append(f"VLM Stage B page {page_no}: {exc}")
+                        continue
+                    placed = _stage_b_grounded_placements(
+                        data_b,
+                        allowed_items=set(items),
+                        note_text=str(note.get("text") or ""),
+                    )
+                    if placed:
+                        for p in placed:
+                            p["sourcePage"] = page_no
+                        note["placement"] = placed
+                        note["needsVisualElaboration"] = False
+                        stage_b_placements.extend(placed)
+                        composed = _compose_elaboration_from_placement(
+                            note.get("text") or "", placed
+                        )
+                        if composed and not _is_weak_elaboration(composed):
+                            # Placement elaboration only — no "(From drawing: …)" suffix
+                            # (verbatim stays in note["text"]; route gen uses elaborated flag).
+                            note["elaboratedText"] = composed
+                            note["elaborated"] = True
+                if stage_b_placements:
+                    warnings.append(
+                        f"Drawing mind (local_vlm): Stage B grounded {len(stage_b_placements)} placement(s)."
+                    )
+            except AnalysisCancelled:
+                raise
+            except Exception as exc:
+                warnings.append(f"Drawing mind (local_vlm): Stage B skipped ({exc}).")
+
+        unit = (ga_extraction.get("title_block") or {}).get("unit") or "mm"
+        notes = apply_grounded_elaboration(
+            notes,
+            ga_extraction=ga_extraction,
+            parts_list=parts_list,
+            unit=unit,
+            engine=engine,
+        )
+
+        placements = _prefer_vlm_placements(cpu_placements, stage_b_placements)
 
         for note in notes:
+            if note_is_enriched(note):
+                note["elaborated"] = True
             if source_drawing_id is not None and "sourceDrawingId" not in note:
                 note["sourceDrawingId"] = source_drawing_id
             if source_filename and not note.get("sourceFilename"):

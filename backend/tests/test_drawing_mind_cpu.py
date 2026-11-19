@@ -439,6 +439,61 @@ def test_detail_b_row_in_elaborated_text():
     assert "READHEAD CABLE" in elab.upper()
 
 
+def test_every_note_gets_torque_enrichment_without_parts_appendix():
+    """CPU elaborates with torque/etc.; does not append Parts: (UI shows PL names)."""
+    from app.route_card.drawing_mind.elaborate import apply_grounded_elaboration
+    from app.route_card.route_generator import generate_route
+
+    ga = {
+        "title_block": {"unit": "mm"},
+        "notes": [
+            {
+                "sheet": 1,
+                "stepNo": 1,
+                "text": "ASSEMBLE ITEM 5 TO THE CHASSIS AS SHOWN.",
+                "items": [5],
+                "torque": ["2.5 Nm"],
+                "connectors": [],
+                "standards": [],
+            },
+            {
+                "sheet": 1,
+                "stepNo": 2,
+                "text": "VERIFY DIMENSIONS AFTER ASSEMBLY.",
+                "items": [],
+                "torque": [],
+                "connectors": [],
+                "standards": [],
+            },
+        ],
+        "bom_items": [
+            {"itemNo": 5, "description": "BRACKET ASSY", "partNumber": "1121-555-001", "qty": 1}
+        ],
+    }
+    notes = apply_grounded_elaboration(ga["notes"], ga_extraction=ga, unit="mm")
+    elab0 = notes[0].get("elaboratedText") or ""
+    assert "2.5" in elab0 and "NM" in elab0.upper()
+    assert "Parts:" not in elab0
+    assert "BRACKET ASSY" not in elab0.upper()
+    assert "1121-555-001" not in elab0
+    # No invented PN on inspection-only note
+    assert "1121-999" not in (notes[1].get("elaboratedText") or "")
+    route = generate_route({**ga, "notes": notes})
+    op10 = next(o for o in route["operations"] if o["opNo"] == 10)
+    assert "Parts:" not in (op10.get("instructionText") or "")
+    assert "2.5" in (op10.get("instructionText") or "")
+    assert op10.get("verbatimText")
+    assert op10.get("elaborated") is True
+
+
+def test_assemble_verb_triggers_placement_path():
+    from app.route_card.drawing_mind.elaborate import needs_placement_elaboration
+
+    assert needs_placement_elaboration("ASSEMBLE ITEM 5 AS SHOWN ON THE FACE.", [5])
+    assert needs_placement_elaboration("TIGHTEN ITEM 8 TO 2.5 Nm.", [8])
+    assert not needs_placement_elaboration("VERIFY DIMENSIONS AFTER ASSEMBLY.", [])
+
+
 if __name__ == "__main__":
     test_spatial_graph_surfaces()
     test_item_order_from_note()
@@ -450,6 +505,8 @@ if __name__ == "__main__":
     test_parse_detail_item_table_rows()
     test_detail_b_row_in_elaborated_text()
     test_wiring_ga_view_refs_sheet2_figure_table()
+    test_every_note_gets_pl_enrichment_without_inventing_pn()
+    test_assemble_verb_triggers_placement_path()
     print("OK — CPU drawing-mind feasibility checks passed.")
     print(
         "Failure modes for VLM phase: low OCR word boxes, graphics-only balloons, "

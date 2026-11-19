@@ -82,7 +82,8 @@ export default function DeptRulesPanel() {
       <SafeInputTextarea profile="multiline" className="w-full mb-3" rows={4} value={addendum} onChange={(e) => setAddendum(e.target.value)} />
       <label className="block mb-2">Work centre aliases (one per line: Heuristic=CODE)</label>
       <p style={{ color: "var(--pmf-text-muted)", fontSize: "0.8rem", marginTop: 0 }}>
-        Example: <code>PCB Assembly=PCB</code> or <code>Assembly=ASM</code> — maps heuristic names to your WC codes.
+        Example: <code>Assembly=ASSY</code> or <code>Quality=AIPH</code> — maps heuristic names to your plant WC codes.
+        Seed codes like ASM/BOND auto-fallback to ASSY/AIPH when those exist in the catalog.
       </p>
       <SafeInputTextarea
         profile="multiline"
@@ -90,7 +91,7 @@ export default function DeptRulesPanel() {
         rows={4}
         value={wcAliasesText}
         onChange={(e) => setWcAliasesText(e.target.value)}
-        placeholder={"PCB Assembly=PCB\nTorque=TORQUE\nAssembly=ASM"}
+        placeholder={"Assembly=ASSY\nBonding=ASSY\nQuality=AIPH\nSpecial Assembly=ASSY\nCable Prep=AMW1"}
       />
       <Button
         type="button"

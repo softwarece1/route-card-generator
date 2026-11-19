@@ -7,6 +7,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { sanitizeInput } from "@/lib/inputSafe";
 import {
   concurrentSessionFromError,
+  fetchAuthConfig,
   fetchCaptcha,
   login,
   takeoverSession,
@@ -26,6 +27,7 @@ export default function LoginPage() {
   const [captchaAnswer, setCaptchaAnswer] = useState("");
   const [captchaLoading, setCaptchaLoading] = useState(false);
   const [captchaError, setCaptchaError] = useState("");
+  const [captchaRequired, setCaptchaRequired] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [formError, setFormError] = useState("");
@@ -53,7 +55,21 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
-    loadCaptcha();
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await fetchAuthConfig();
+        if (cancelled) return;
+        const required = Boolean(cfg?.captchaRequired);
+        setCaptchaRequired(required);
+        if (required) loadCaptcha();
+      } catch {
+        if (!cancelled) setCaptchaRequired(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [loadCaptcha]);
 
   useEffect(() => {
@@ -74,14 +90,14 @@ export default function LoginPage() {
 
   const empInvalid = submitted && !empId.trim();
   const passwordInvalid = submitted && !password;
-  const captchaInvalid = submitted && !captchaAnswer.trim();
+  const captchaInvalid = captchaRequired && submitted && !captchaAnswer.trim();
 
   const onSubmit = async (e) => {
     e.preventDefault();
     setSubmitted(true);
     setFormError("");
     if (!empId.trim() || !password) return;
-    if (!captchaAnswer.trim()) {
+    if (captchaRequired && !captchaAnswer.trim()) {
       setFormError("Please enter the CAPTCHA code");
       return;
     }
@@ -108,7 +124,7 @@ export default function LoginPage() {
           ? detail
           : detail?.message || err?.message || "Sign in failed"
       );
-      loadCaptcha();
+      if (captchaRequired) loadCaptcha();
     } finally {
       setLoading(false);
     }
@@ -127,14 +143,14 @@ export default function LoginPage() {
         typeof detail === "string" ? detail : err?.message || "Could not take over session"
       );
       setConcurrent({ open: false, message: "", resumeToken: "", confirming: false });
-      loadCaptcha();
+      if (captchaRequired) loadCaptcha();
     }
   };
 
   const cancelTakeover = () => {
     setConcurrent({ open: false, message: "", resumeToken: "", confirming: false });
     setFormError("Sign-in cancelled — the other session stays active.");
-    loadCaptcha();
+    if (captchaRequired) loadCaptcha();
   };
 
   return (
@@ -209,6 +225,7 @@ export default function LoginPage() {
               />
             </div>
 
+            {captchaRequired ? (
             <div className="rc-login__field rc-login__captcha-field">
               <label className="rc-login__label" htmlFor="captchaAnswer">
                 Enter CAPTCHA
@@ -263,6 +280,7 @@ export default function LoginPage() {
                 </small>
               ) : null}
             </div>
+            ) : null}
 
             <Button
               type="submit"

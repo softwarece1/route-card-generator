@@ -45,16 +45,16 @@ def _op_no(raw: Any, index: int) -> int:
 
 def _instruction_for_op(op: dict, notes: list[dict] | None) -> str:
     """Prefer instructionText; else match note by step / op number."""
-    from app.route_card.extractor import break_instruction_points
+    from app.route_card.extractor import sanitize_operator_instruction
 
     text = _s(op.get("instructionText") or op.get("reason"))
     if text:
-        return break_instruction_points(text)
+        return sanitize_operator_instruction(text)
     op_no = _num(op.get("opNo"), None)
     for note in notes or []:
         step = _num(note.get("stepNo"), None)
         if op_no is not None and step is not None and int(op_no) == int(step):
-            return break_instruction_points(_s(note.get("text")))
+            return sanitize_operator_instruction(_s(note.get("text")))
     return ""
 
 

@@ -57,6 +57,42 @@ BUILTIN_WC_ALIASES = {
     "Special Assembly": "SPECIAL",
 }
 
+# Legacy seed→plant remaps — used ONLY when no plant catalog is loaded (bootstrap).
+# With a live plant catalog, resolve scores by WC name/code/keywords instead.
+SEED_CODE_FALLBACKS: dict[str, list[str]] = {
+    "ASM": ["ASSY", "AFMM", "AMMM", "AMW1", "AMW2", "AVPAT"],
+    "BOND": ["ASSY", "APLQ", "APMC"],
+    "TORQUE": ["ASSY", "AFMM", "AMMM"],
+    "SPECIAL": ["ASSY", "AMW2", "AVPAT", "AMMM"],
+    "QUALITY": ["AIPH", "QTEST", "DMMI", "ATPG"],
+    "PCB": ["ASOL", "ASSY", "APMC"],
+    "CABLE": ["ACFM", "ACSL", "AMCC", "AMW1", "AWSA"],
+}
+
+# Soft verb/phrase families for scoring instruction text against WC names
+_SEMANTIC_NAME_HINTS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
+    (
+        ("INSPECT", "VERIFY", "VISUAL", "WARPAGE", "WEIGHT", "MASS", "CHECK"),
+        ("INSPECT", "INSPECTION", "PHYSICAL", "TEST", "QUALITY", "METROLOGY"),
+    ),
+    (
+        ("WIRE", "WIRING", "CRIMP", "CABLE", "HARNESS", "ENAMELED", "ENAMEL"),
+        ("WIRE", "WIRING", "CABLE", "CRIMP", "HARNESS", "MTG", "MECH"),
+    ),
+    (
+        ("SOLDER", "PCB", "ROHS", "LEAD-FREE", "BARE BOARD", "CONFORMAL"),
+        ("SOLDER", "SOLDERING", "PCB", "BOARD", "COATING"),
+    ),
+    (
+        ("BOND", "GLUE", "PASTE", "STICK", "ADHESIVE", "PEEL", "MASK"),
+        ("BOND", "ADHESIVE", "GLUE", "PASTE", "MASK", "POTTING"),
+    ),
+    (
+        ("ASSEMBLE", "ASSEMBLY", "INSTALL", "MOUNT", "FIT", "PLACE", "TIGHTEN", "TORQUE"),
+        ("ASSY", "ASSEMBLY", "MTG", "MOUNT", "MECH", "TORQUE", "FASTEN"),
+    ),
+]
+
 # Fields rewritten by the resolver (manual_override keeps the prior values)
 RESOLVER_LINK_KEYS = (
     "workCentre",
@@ -305,14 +341,16 @@ def list_work_centers(
 
 
 @db_session
-def catalog_for_dropdowns(user: dict, dept: str | None = None) -> dict:
+def catalog_for_dropdowns(
+    user: dict, dept: str | None = None, plant: str | None = None
+) -> dict:
     """Slim catalog for route editor / templates — plant-scoped for the SBU."""
     d = (dept or _dept(user) or "").strip()
-    plant = _plant_for_dept_name(d) if d else ""
-    if plant:
+    want_plant = (plant or "").strip() or (_plant_for_dept_name(d) if d else "")
+    if want_plant:
         items = list_work_centers(
             user,
-            plant=plant,
+            plant=want_plant,
             include_shared=False,
             active_only=True,
             include_machines=False,
@@ -325,7 +363,7 @@ def catalog_for_dropdowns(user: dict, dept: str | None = None) -> dict:
             active_only=True,
             include_machines=False,
         )
-    return {"items": items, "dept": d, "plant": plant}
+    return {"items": items, "dept": d, "plant": want_plant}
 
 
 @db_session
@@ -649,12 +687,12 @@ def list_machines(user: dict | None = None, active_only: bool = True) -> list[di
 # ---------------------------------------------------------------------------
 
 
-def _load_catalog(dept: str) -> list[RcWorkCenter]:
+def _load_catalog(dept: str, plant: str | None = None) -> list[RcWorkCenter]:
     d = (dept or "").strip()
-    plant = _plant_for_dept_name(d)
+    want_plant = (plant or "").strip() or _plant_for_dept_name(d)
     rows = select(w for w in RcWorkCenter if w.is_active)[:]
-    if plant:
-        return [w for w in rows if (w.plant or "").strip() == plant]
+    if want_plant:
+        return [w for w in rows if (w.plant or "").strip() == want_plant]
     dept_rows = [w for w in rows if (not w.is_shared) and (w.dept or "") == d]
     shared = [w for w in rows if w.is_shared]
     return dept_rows + shared
@@ -704,26 +742,44 @@ def _hint_tags(heuristic_wc: str, instruction: str) -> set[str]:
 
 
 def _derived_keywords(wc: Any) -> list[str]:
-    """Keywords from match_keywords, or tokens of code/name/sap_code when empty."""
-    stored = [str(k).upper().strip() for k in (getattr(wc, "match_keywords", None) or []) if k]
-    if stored:
-        return stored
+    """Configured match_keywords plus tokens from code/name/sap (name is primary)."""
     toks: list[str] = []
+    stop = {"WC", "NO", "OF", "THE", "AND", "OR", "FOR", "TO", "IN", "ON", "AT", "BY"}
+    for k in getattr(wc, "match_keywords", None) or []:
+        u = str(k).upper().strip()
+        if u and u not in toks:
+            toks.append(u)
     for src in (
-        getattr(wc, "code", None),
         getattr(wc, "name", None),
+        getattr(wc, "code", None),
         getattr(wc, "sap_code", None),
     ):
         for part in re.findall(r"[A-Za-z0-9]{2,}", str(src or "")):
             u = part.upper()
-            if u not in toks and u not in {"WC", "NO", "OF", "THE", "AND", "OR"}:
+            if u not in toks and u not in stop:
                 toks.append(u)
     return toks
 
 
-def _effective_aliases(aliases: dict | None) -> dict[str, str]:
-    """Built-in heuristic→code map; dept/session aliases win on conflict."""
-    out = dict(BUILTIN_WC_ALIASES)
+def _name_phrases(wc: Any) -> list[str]:
+    """Multi-word phrases from WC name for stronger instruction matching."""
+    name = re.sub(r"\s+", " ", str(getattr(wc, "name", None) or "")).strip().upper()
+    if not name:
+        return []
+    phrases = [name]
+    parts = [p for p in re.split(r"[\s/&,]+", name) if len(p) >= 3]
+    for i in range(len(parts) - 1):
+        phrases.append(f"{parts[i]} {parts[i + 1]}")
+    return phrases
+
+
+def _effective_aliases(
+    aliases: dict | None,
+    *,
+    include_builtins: bool = True,
+) -> dict[str, str]:
+    """Dept/session aliases; builtins only when no plant catalog (bootstrap)."""
+    out: dict[str, str] = dict(BUILTIN_WC_ALIASES) if include_builtins else {}
     for k, v in (aliases or {}).items():
         key = str(k or "").strip()
         val = str(v or "").strip()
@@ -732,9 +788,79 @@ def _effective_aliases(aliases: dict | None) -> dict[str, str]:
     return out
 
 
-def _score_wc(wc: RcWorkCenter, heuristic: str, instruction: str, aliases: dict) -> float:
+def _catalog_code_set(catalog: list) -> set[str]:
+    return {_norm(getattr(w, "code", None) or "") for w in (catalog or []) if getattr(w, "code", None)}
+
+
+def remap_heuristic_to_catalog(
+    heuristic: str,
+    catalog: list,
+    *,
+    use_seed_fallbacks: bool = True,
+) -> tuple[str, str]:
+    """Map heuristic labels/codes onto a code that exists in the plant catalog.
+
+    When ``use_seed_fallbacks`` is False (plant catalog present), only soft
+    name/code matching is used — no hard-coded ASSY/BOND chains.
+    """
+    h = (heuristic or "").strip()
+    if not h:
+        return h, ""
+    codes = _catalog_code_set(catalog)
+    if not codes:
+        return h, ""
+    hn = _norm(h)
+    if hn in codes:
+        return h, ""
+    if use_seed_fallbacks:
+        for cand in SEED_CODE_FALLBACKS.get(h.upper(), []) or SEED_CODE_FALLBACKS.get(h, []):
+            if _norm(cand) in codes:
+                return cand, f"Mapped {h} → {cand} (plant catalog)"
+        for seed, chain in SEED_CODE_FALLBACKS.items():
+            if hn == _norm(seed):
+                for cand in chain:
+                    if _norm(cand) in codes:
+                        return cand, f"Mapped {h} → {cand} (plant catalog)"
+    # Soft match: catalog code/name vs heuristic
+    for w in catalog or []:
+        code = (getattr(w, "code", None) or "").strip()
+        name = (getattr(w, "name", None) or "").strip()
+        cn, nn = _norm(code), _norm(name)
+        if not cn:
+            continue
+        if hn and (hn == nn or hn in nn or nn in hn or hn in cn or cn in hn):
+            return code, f"Mapped {h} → {code} (name/code match)"
+    return h, ""
+
+
+def _semantic_name_score(instruction: str, wc: Any) -> float:
+    """Soft overlap between instruction verbs and WC name tokens."""
+    text_u = (instruction or "").upper()
+    name_u = " ".join(
+        [
+            str(getattr(wc, "name", None) or ""),
+            str(getattr(wc, "code", None) or ""),
+        ]
+    ).upper()
+    if not text_u or not name_u:
+        return 0.0
     score = 0.0
-    aliases = _effective_aliases(aliases)
+    for instr_keys, name_keys in _SEMANTIC_NAME_HINTS:
+        if any(k in text_u for k in instr_keys) and any(k in name_u for k in name_keys):
+            score += 18.0
+    return min(score, 36.0)
+
+
+def _score_wc(
+    wc: RcWorkCenter,
+    heuristic: str,
+    instruction: str,
+    aliases: dict,
+    *,
+    include_builtins: bool = True,
+) -> float:
+    score = 0.0
+    aliases = _effective_aliases(aliases, include_builtins=include_builtins)
     # 1) alias exact → code / name / sap
     alias_target = aliases.get(heuristic or "")
     if alias_target and _norm(alias_target) in (
@@ -743,12 +869,26 @@ def _score_wc(wc: RcWorkCenter, heuristic: str, instruction: str, aliases: dict)
         _norm(wc.sap_code or ""),
     ):
         score += 100.0
-    # 2) keywords (configured or derived from SAP code/name)
+    # 2) keywords (configured + derived from name/code)
     text_u = (instruction or "").upper()
     kws = _derived_keywords(wc)
     hits = sum(1 for k in kws if k and len(k) >= 2 and k in text_u)
     if hits:
         score += 40.0 + min(hits, 5) * 5.0
+    # 2b) WC name phrases (primary signal for plant catalogs)
+    phrase_hits = 0
+    for ph in _name_phrases(wc):
+        if len(ph) >= 4 and ph in text_u:
+            phrase_hits += 1
+        else:
+            # partial: most tokens of a phrase appear in instruction
+            toks = [t for t in ph.split() if len(t) >= 3]
+            if len(toks) >= 2 and sum(1 for t in toks if t in text_u) >= max(2, len(toks) - 1):
+                phrase_hits += 1
+    if phrase_hits:
+        score += 35.0 + min(phrase_hits, 3) * 8.0
+    # 2c) soft semantic verb ↔ name
+    score += _semantic_name_score(instruction, wc)
     # 3) capability tags
     want = _hint_tags(heuristic, instruction)
     have = {str(t).lower() for t in (wc.capability_tags or [])}
@@ -828,14 +968,14 @@ def resolve_operations(
     dept: str,
     aliases: dict | None = None,
     notes: list | None = None,
+    plant: str | None = None,
 ) -> list[dict]:
     """Link free-text WC/machine on ops to plant/dept catalog. Mutates copies."""
     if not getattr(settings, "WC_RESOLVER_ENABLED", True):
         return operations
 
     d = (dept or "").strip()
-    catalog = _load_catalog(d)
-    aliases = _effective_aliases(aliases)
+    catalog = _load_catalog(d, plant=plant)
     note_by_step: dict[int, str] = {}
     for n in notes or []:
         if not isinstance(n, dict):
@@ -855,6 +995,9 @@ def resolve_operations(
             note_by_step[label] = (note_by_step.get(label) or "") + " " + bag
 
     has_plant_catalog = any(not w.is_shared for w in catalog)
+    # With a plant catalog: dept aliases only — no global Assembly→ASM / SEED→ASSY maps
+    aliases = _effective_aliases(aliases, include_builtins=not has_plant_catalog)
+    catalog_codes = _catalog_code_set(catalog)
     out: list[dict] = []
     for op in operations or []:
         row = dict(op)
@@ -872,12 +1015,47 @@ def resolve_operations(
             out.append(row)
             continue
 
-        # alias remap first (string label → code)
+        remap_reason = ""
+        # Explicit dept alias (label → real plant code)
         if heuristic in aliases:
             heuristic = aliases[heuristic]
             row["workCentre"] = heuristic
 
-        scored = [(_score_wc(w, heuristic, instruction, aliases), w) for w in catalog]
+        if has_plant_catalog:
+            remapped, remap_reason = remap_heuristic_to_catalog(
+                heuristic, catalog, use_seed_fallbacks=False
+            )
+            if remapped != heuristic:
+                heuristic = remapped
+                row["workCentre"] = heuristic
+            # Seed/dummy codes not in plant catalog → ignore; score by instruction vs names
+            elif (
+                heuristic.upper() in DUMMY_WC_CODES
+                and _norm(heuristic) not in catalog_codes
+            ):
+                remap_reason = f"Ignored seed code {heuristic}; scoring catalog by instruction/name"
+                heuristic = ""
+        else:
+            remapped, remap_reason = remap_heuristic_to_catalog(
+                heuristic, catalog, use_seed_fallbacks=True
+            )
+            if remapped != heuristic:
+                heuristic = remapped
+                row["workCentre"] = heuristic
+
+        scored = [
+            (
+                _score_wc(
+                    w,
+                    heuristic,
+                    instruction,
+                    aliases,
+                    include_builtins=not has_plant_catalog,
+                ),
+                w,
+            )
+            for w in catalog
+        ]
         scored.sort(key=lambda x: (-x[0], 0 if not x[1].is_shared else 1, x[1].sort_order))
         best_score, best = scored[0]
         second = scored[1][0] if len(scored) > 1 else 0.0
@@ -935,7 +1113,10 @@ def resolve_operations(
                     row["machineId"] = None
         row["linkStatus"] = mstatus
         row["linkConfidence"] = round(min(best_score / 100.0, 0.99), 3)
-        row["linkReason"] = f"Matched {best.code} ({best.name})"
+        reason = f"Matched {best.code} ({best.name})"
+        if remap_reason:
+            reason = f"{remap_reason}; {reason}"
+        row["linkReason"] = reason
         out.append(row)
     return out
 

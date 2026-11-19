@@ -1,0 +1,172 @@
+{
+  "name": "PSPU GA assembly — MS plant 1111",
+  "description": "Shop-ready pack for PSPU (1180 000 737 82 / 1180 000 622 39). Expands GA notes into short operator steps and maps to plant WC codes (ASSY, AMW1, AIPH). Use as dept auto-template or duplicate into Operation Templates.",
+  "placement": "any",
+  "deptHint": "MS",
+  "plantHint": "1111",
+  "wcAliasesSuggested": {
+    "Assembly": "ASSY",
+    "Bonding": "ASSY",
+    "Torque": "ASSY",
+    "Special Assembly": "ASSY",
+    "Quality": "AIPH",
+    "Cable Prep": "AMW1",
+    "PCB Assembly": "ASOL"
+  },
+  "steps": [
+    {
+      "operation": "Torque standard (PS902)",
+      "workCentre": "ASSY",
+      "tool": "Torque wrench",
+      "inspection": "All fasteners per PS902",
+      "instructionText": "Use installation torque for every fastener as per PS902 unless a note gives a specific connector torque. Keep calibrated wrench available for J1–J9 and J5/J6 final torque."
+    },
+    {
+      "operation": "Clean hatched thermal surfaces",
+      "workCentre": "ASSY",
+      "tool": "IPA / lint-free cloth",
+      "inspection": "Visual — hatched surfaces clean and dry",
+      "instructionText": "Clean all hatched surfaces on the chassis / heat-sink faces with IPA and a lint-free cloth. Do not leave fibres or residue before thermal pads."
+    },
+    {
+      "operation": "Apply thermal pads (50×25, 15×15, 162×77, 35×35)",
+      "workCentre": "ASSY",
+      "tool": "Applicator",
+      "inspection": "Visual — liner removed, pad seated, no air gap",
+      "instructionText": "Peel liners from Item 28 (50×25), Item 29 (15×15 ×6), Item 30 (162×77) and Item 38 (35×35). Paste Item 28/29/30 on hatched places as shown on GA sheet 1. Spread Item 38 on the XMC heat-sink hatched area. Do not stretch pads."
+    },
+    {
+      "operation": "Mount AC-DC power supply",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools + torque wrench",
+      "inspection": "Visual — PSU flat on pad; fasteners present",
+      "instructionText": "Place Item 30 thermal pad, then Item 2 (PSU) onto Item 1 (mechanical assy). Fix with Item 3 (plain M4 ×4), Item 5 (SCR M4×16 ×4) and Item 56 (spring M4 ×4). Torque per PS902."
+    },
+    {
+      "operation": "Wire PSU primary / secondary",
+      "workCentre": "AMW1",
+      "tool": "Assembly tools",
+      "inspection": "Visual — terminals correct; no strand whiskers",
+      "instructionText": "Fix wires W8 and W9 to X1.1 and X1.2 on Item 2 (see GA wiring diagram 1180 000 737 82). Fix crimped wires of harness 1180 000 737 82 to X2.1–X2.4 on Item 2 as per TABLE 1 (crimp-1→X2.1 … crimp-4→X2.4)."
+    },
+    {
+      "operation": "Fit RF enclosure for PSU",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools",
+      "inspection": "Visual — mating holes aligned",
+      "instructionText": "Fix Item 50 (RF enclosure) to Item 1 at corresponding mating holes using the same fasteners used for Item 24 of mechanical assy 1180 000 839 67."
+    },
+    {
+      "operation": "Interface PCB — O-ring / jam-nut prep",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools + torque wrench",
+      "inspection": "Torque J1–J4,J8,J9: 4.5–5.1 Nm; J7: 6.2–6.7 Nm; J5/J6 hand-tight only until Item 37",
+      "instructionText": "Orient chassis Item 1 vertically. Hold interface PCB Item 6 horizontal. Ensure jam nuts removed and O-rings (Item 43/related) seated in grooves. Move PCB in and up into connector cut-outs. Assemble with Item 7,8,9,10. Use Item 53 polyamide washer only if PCB is not parallel to wall. Tighten jam nuts without rotating connectors. Follow SAP special assy instructions (ref 1180 000 622 39)."
+    },
+    {
+      "operation": "Connector engagement tools (J1–J9)",
+      "workCentre": "ASSY",
+      "tool": "Connector engagement tools + Fischer tool 2300 102 000 70",
+      "inspection": "Visual — tool flush to chassis; jam nuts tight",
+      "instructionText": "Slide engagement tool between connector columns (J1/J2 & J3/J4; then J7 & J8/J9; then J5/J6). Keep tool face against chassis wall; lock with M3×8. Tighten jam nuts with proper tools. For J5/J6 use Fischer tool slowly (Note 32)."
+    },
+    {
+      "operation": "Loctite 270 on connector threads",
+      "workCentre": "ASSY",
+      "tool": "Applicator (Item 52 Loctite 270)",
+      "inspection": "Visual — compound on last two threads only; contacts clean",
+      "instructionText": "Dip a small tip in Loctite 270 (Item 52). Apply around the last two visible threads of all connectors. Do not drip into contact area. Allow to dry; wipe excess (Note 33 / SAP special assy)."
+    },
+    {
+      "operation": "Front bracket / ECR parts on chassis",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools",
+      "inspection": "Visual",
+      "instructionText": "Assemble Item 11 to Item 1 using Item 13, 14 and 15 (front bracket hardware)."
+    },
+    {
+      "operation": "COM Express — fit SODIMM RAM",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools / ESD",
+      "inspection": "Visual — modules fully seated, latches locked",
+      "instructionText": "Assemble Item 41 (16GB DDR4 SODIMM ×2) to Item 21 (COM Express module). Follow SAP special assy steps. Observe ESD."
+    },
+    {
+      "operation": "COM Express frame to base PCB",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools",
+      "inspection": "Visual — 6× M2.5 CSK seated",
+      "instructionText": "Assemble Item 22 (COM Exp. frame) to Item 16 (base PCB) using Item 23 (M2.5×6 CSK ×6). Refer SAP special assy."
+    },
+    {
+      "operation": "COM Express module into frame",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools",
+      "inspection": "Visual — connector fully mated",
+      "instructionText": "Engage connectors of Item 16 as required. Assemble Item 21 to Item 22 using Item 45 hardware where specified and Item 13 washers as noted on GA."
+    },
+    {
+      "operation": "MXM module prep and engage",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools",
+      "inspection": "Visual — Detail C/D; connector mated",
+      "instructionText": "Fix Item 25 to Item 24 using Item 19 (2 places). Engage MXM Item 24 to connector on Item 16 and fasten with Item 13, 14, 19 (Detail C sheet 2 & Detail D)."
+    },
+    {
+      "operation": "mSATA storage stack",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools",
+      "inspection": "Visual — captive screws tight on frame",
+      "instructionText": "Assemble Item 18 (mSATA spacer) to Item 17 (1TB mSATA) using Item 20 (captive screws ×2). Engage connector and tighten Item 20 onto Item 22."
+    },
+    {
+      "operation": "Coin cell on base PCB",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools",
+      "inspection": "Visual — seated at J3",
+      "instructionText": "Assemble Item 42 (Li coin cell) to Item 16 at location J3."
+    },
+    {
+      "operation": "Mate base PCB stack to interface PCB",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools",
+      "inspection": "Visual — ISO view sheet 2",
+      "instructionText": "Mate assembled Item 16 to Item 6 (ISO metric view, sheet 2). Plug harness connector of 1180 000 737 82 onto Item 16 as shown."
+    },
+    {
+      "operation": "Fix base PCB to chassis",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools + torque wrench",
+      "inspection": "Visual — XMC spacers Item 44 used at XMC location",
+      "instructionText": "Fix Item 16 to Item 1 using Item 8, 9, 26 and Item 44 (2×) at XMC location. Torque per PS902."
+    },
+    {
+      "operation": "USB / LED / FP2 interconnects",
+      "workCentre": "AMW1",
+      "tool": "Assembly tools",
+      "inspection": "Visual — connectors fully home",
+      "instructionText": "Temporarily remove Item 25 of 1180 000 839 67, plug USB to J14 on Item 16, re-tighten. Plug LED connectors from Item 1 to J38 and J42 on Item 16. Plug FP2 connector to CN3 on Item 16."
+    },
+    {
+      "operation": "SFPDP / XMC heat-sink build",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools + Therm-A-Gap gel",
+      "inspection": "Visual — screw heads on PCB side; Detail E; LC optical pairs engaged",
+      "instructionText": "Remove XMC facia from Item 45 (2 screws; store safely). Place Item 51 gel on Item 48 as shown; place Item 38 pad. Mount Item 48 to Item 45 with 4× Item 13/14/49 — screw heads on PCB side. Engage 2 pairs LC optical to Item 45 (Detail E sheet 2). Fit Item 44 spacers on Item 16. Engage Item 45 to Item 16; fasten board side with Item 48/13/14 and SFP side with Item 15/13/14."
+    },
+    {
+      "operation": "Hard disk, top plate, dust caps",
+      "workCentre": "ASSY",
+      "tool": "Assembly tools + torque wrench + Fischer 2300 102 000 72",
+      "inspection": "J5/J6 final torque 1.5 Nm; dust caps fitted; flange clean",
+      "instructionText": "Assemble Item 27 (HDD assy ×2) to Item 1 on SFP side. Clean Item 32; peel Item 31 EMI gasket; paste to top plate with even hand pressure. Assemble Item 32+31 to Item 1 with Item 33 (M3×8 CSK ×33); clean flange first. Fit dust caps Item 34/35/36/40 with Item 8/9/39. Remove J5/J6 jam nuts, insert Item 37, torque jam nuts to 1.5 Nm with Fischer tool; apply thread lock per SAP. Pack and store finished assy."
+    },
+    {
+      "operation": "Final inspection",
+      "workCentre": "AIPH",
+      "tool": "Torque verifier / visual",
+      "inspection": "100% torque + connector engagement",
+      "instructionText": "Verify connector torques (J1–J4,J8,J9 4.5–5.1 Nm; J7 6.2–6.7 Nm; J5/J6 1.5 Nm). Confirm all connectors engaged, thermal pads seated, dust caps present, and PS902 compliance for remaining fasteners."
+    }
+  ]
+}

@@ -1542,6 +1542,38 @@ def create_route_remark(route_id: int, body: str, user: dict | None = None) -> d
 
 
 @db_session
+def drawing_table_crop(
+    drawing_id: int,
+    *,
+    table_id: str,
+    page: int | None = None,
+    user: dict | None = None,
+) -> dict:
+    """Gated TABLE N image crop from a drawing PDF. Never invents cell data."""
+    from app.route_card.drawing_mind.table_crop import render_table_crop
+
+    drawing = RcDrawing.get(id=drawing_id)
+    if not drawing:
+        raise HTTPException(404, "Drawing not found")
+    if drawing.session:
+        _assert_session_access(drawing.session, user, write=False)
+    data = load_bytes(drawing)
+    ext = Path(drawing.filename or "").suffix.lower()
+    if ext != ".pdf":
+        return {
+            "available": False,
+            "reason": "Table crop is only available for PDF drawings",
+            "label": f"TABLE {(table_id or '').strip().upper() or '?'}",
+            "drawingId": drawing_id,
+            "filename": drawing.filename or "",
+        }
+    result = render_table_crop(data, table_id=table_id, page_no=page)
+    result["drawingId"] = drawing_id
+    result["filename"] = drawing.filename or ""
+    return result
+
+
+@db_session
 def drawing_file_meta(drawing_id: int) -> tuple[bytes, str, str]:
     drawing = RcDrawing.get(id=drawing_id)
     if not drawing:
@@ -1791,11 +1823,16 @@ def delete_session_document(
 
 
 @db_session
-def relink_session_work_centres(session_id: int, user: dict | None = None) -> dict:
+def relink_session_work_centres(
+    session_id: int,
+    user: dict | None = None,
+    plant: str | None = None,
+) -> dict:
     """
     Re-run plant-scoped WC resolver on the session route card.
 
-    Uses the **session owner's** SBU plant. Preserves manual_override rows.
+    Uses explicit ``plant`` when provided (admin), else the session owner's SBU plant.
+    Preserves manual_override rows.
     """
     from app.route_card.work_centers import (
         merge_resolved_preserving_overrides,
@@ -1823,6 +1860,7 @@ def relink_session_work_centres(session_id: int, user: dict | None = None) -> di
     owner_dept = (session.user.dept or "").strip() if session.user else ""
     if not owner_dept and user:
         owner_dept = (user.get("dept") or "").strip()
+    want_plant = (plant or "").strip() or None
 
     existing_ops = [op_to_out(o) for o in sorted(card.operations, key=lambda x: x.op_no)]
     # Prefer latest merged extraction notes (verbatim + insight)
@@ -1834,6 +1872,7 @@ def relink_session_work_centres(session_id: int, user: dict | None = None) -> di
             existing_ops,
             dept=owner_dept,
             notes=notes,
+            plant=want_plant,
         )
     except Exception as exc:
         raise HTTPException(500, f"Work centre resolver failed: {exc}") from exc
@@ -1871,7 +1910,9 @@ def relink_session_work_centres(session_id: int, user: dict | None = None) -> di
     payload["routeOperations"] = merged
     payload["relink"] = {
         "dept": owner_dept,
-        "plant": (merged[0].get("plant") if merged else "") or "",
+        "plant": want_plant
+        or (merged[0].get("plant") if merged else "")
+        or "",
         "counts": counts,
         "warnings": warnings,
     }
@@ -1884,6 +1925,7 @@ def analyze_session(
     user: dict | None = None,
     cancel_event=None,
     vlm_page_indexes: list[int] | None = None,
+    plant: str | None = None,
 ) -> dict:
     from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled
 
@@ -1910,6 +1952,7 @@ def analyze_session(
             cancel_event=cancel_event,
             user=user,
             vlm_page_indexes=vlm_page_indexes,
+            plant=plant,
         )
     except AnalysisCancelled:
         session.status = "cancelled"
@@ -2008,6 +2051,7 @@ def _analyze_session_body(
     cancel_event=None,
     user: dict | None = None,
     vlm_page_indexes: list[int] | None = None,
+    plant: str | None = None,
 ) -> dict:
     from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled
     from app.route_card.drawing_mind import merge_ga_extractions
@@ -2234,14 +2278,16 @@ def _analyze_session_body(
             from app.route_card.work_centers import unresolved_wc_messages
             from app.route_card.workflow import resolve_route_operations
 
-            # Prefer session owner's SBU so plant catalog matches the drawing owner
+            # Prefer explicit plant (admin) or session owner's SBU plant catalog
             dept_r = (session.user.dept or "").strip() if session.user else ""
             if not dept_r and user:
                 dept_r = (user.get("dept") or "").strip()
+            want_plant = (plant or "").strip() or None
             generated["operations"] = resolve_route_operations(
                 generated.get("operations") or [],
                 dept=dept_r,
                 notes=parsed.get("notes") or [],
+                plant=want_plant,
             )
             for msg in unresolved_wc_messages(generated.get("operations") or []):
                 extra_warnings.append(msg)
@@ -2278,10 +2324,12 @@ def _analyze_session_body(
                 dept_w = (session.user.dept or "").strip() if session.user else ""
                 if not dept_w and user:
                     dept_w = (user.get("dept") or "").strip()
+                want_plant_w = (plant or "").strip() or None
                 generated["operations"] = resolve_route_operations(
                     generated.get("operations") or [],
                     dept=dept_w,
                     notes=parsed.get("notes") or [],
+                    plant=want_plant_w,
                 )
                 for msg in unresolved_wc_messages(generated.get("operations") or []):
                     if msg not in extra_warnings:
@@ -2691,6 +2739,130 @@ def _session_summary(session: RcSession) -> dict:
             if owner
             else None
         ),
+    }
+
+
+def _norm_match_key(value: str) -> str:
+    return re.sub(r"\s+", "", (value or "").strip().lower())
+
+
+@db_session
+def find_prior_extractions_for_session(session_id: int, user: dict | None = None) -> dict:
+    """Find earlier analyzed sessions that match this session's GA filename(s) or part number.
+
+    Used before Generate so the user can open the existing extraction instead of re-running.
+    """
+    session = RcSession.get(id=session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    _assert_session_access(session, user, write=False)
+
+    ga_names = {
+        _norm_match_key(d.filename)
+        for d in session.documents
+        if d.role == "drawing" and (d.filename or "").strip()
+    }
+    ga_names |= {
+        _norm_match_key(d.filename)
+        for d in session.drawings
+        if (d.filename or "").strip()
+    }
+    ga_names.discard("")
+
+    # Light part-number hints from already-analyzed PL on this session (if any)
+    part_keys: set[str] = set()
+    pl_doc = _get_role_doc(session, "partslist")
+    if pl_doc and isinstance(pl_doc.extraction, dict):
+        pn = pl_doc.extraction.get("partNumber") or ""
+        key = _norm_match_key(pn)
+        if key:
+            part_keys.add(key)
+
+    if not ga_names and not part_keys:
+        return {"matches": [], "gaFilenames": [], "partNumbers": []}
+
+    owner = session.user or _resolve_user(user)
+    role = _user_role(user)
+    candidates: list[RcSession] = []
+    if role == "admin":
+        candidates = select(s for s in RcSession if s.id != session_id).order_by(
+            desc(RcSession.updated_at)
+        )[:400]
+    elif owner:
+        candidates = select(
+            s for s in RcSession if s.user == owner and s.id != session_id
+        ).order_by(desc(RcSession.updated_at))[:200]
+    else:
+        candidates = []
+
+    matches: list[dict] = []
+    for other in candidates:
+        # Need a completed/analyzed route — skip empty opens
+        if (other.status or "") in {"open", "cancelled"} and not list(other.drawings):
+            continue
+        summary = _session_summary(other)
+        if not summary.get("routeCardId") and (other.status or "") not in {
+            "analyzed",
+            "ready",
+            "ied_review",
+            "ied_complete",
+            "approved",
+        }:
+            # Still allow if drawings were analyzed
+            has_extraction = False
+            for dr in other.drawings:
+                if dr.extractions.select().first():
+                    has_extraction = True
+                    break
+            if not has_extraction and not summary.get("routeCardId"):
+                continue
+
+        other_names = {
+            _norm_match_key(d.get("filename") or "")
+            for d in (summary.get("documents") or [])
+            if d.get("role") == "drawing"
+        }
+        other_names.discard("")
+        matched_by: list[str] = []
+        hit_names = sorted(ga_names & other_names)
+        if hit_names:
+            matched_by.append("filename")
+        other_pn = _norm_match_key(summary.get("partNumber") or "")
+        if other_pn and other_pn in part_keys:
+            matched_by.append("partNumber")
+        if not matched_by:
+            continue
+        matches.append(
+            {
+                "sessionId": summary["sessionId"],
+                "partNumber": summary.get("partNumber") or "",
+                "partName": summary.get("partName") or "",
+                "revision": summary.get("revision") or "",
+                "routeStatus": summary.get("routeStatus") or summary.get("status") or "",
+                "updatedAt": summary.get("updatedAt"),
+                "matchedBy": matched_by,
+                "matchedFilenames": [
+                    d.get("filename")
+                    for d in (summary.get("documents") or [])
+                    if d.get("role") == "drawing"
+                    and _norm_match_key(d.get("filename") or "") in ga_names
+                ],
+                "user": summary.get("user"),
+            }
+        )
+        if len(matches) >= 8:
+            break
+
+    return {
+        "matches": matches,
+        "gaFilenames": sorted(
+            {
+                (d.filename or "").strip()
+                for d in session.documents
+                if d.role == "drawing" and (d.filename or "").strip()
+            }
+        ),
+        "partNumbers": sorted({pn for pn in part_keys}),
     }
 
 

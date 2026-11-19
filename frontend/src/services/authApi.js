@@ -18,6 +18,11 @@ async function fetchPublicKey() {
   return publicKeyPromise;
 }
 
+export async function fetchAuthConfig() {
+  const { data } = await http.get('/auth/config');
+  return data;
+}
+
 export async function fetchCaptcha() {
   const { data } = await http.get('/auth/captcha');
   return data;
@@ -129,7 +134,18 @@ export async function changePassword({ currentPassword, newPassword }) {
   return data;
 }
 
-export function logout() {
+export async function logout() {
+  const token = localStorage.getItem('rc_token') || '';
+  try {
+    if (token) {
+      await http.post('/auth/logout', null, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 8_000,
+      });
+    }
+  } catch {
+    /* still clear local auth */
+  }
   clearAuth();
   publicKeyPromise = null;
 }

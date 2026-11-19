@@ -279,6 +279,7 @@ def resolve_route_operations(
     *,
     dept: str | None,
     notes: list | None = None,
+    plant: str | None = None,
 ) -> list[dict]:
     """Apply WC resolver (also when no auto-templates ran)."""
     from app.route_card.dept_config import get_dept_rules
@@ -289,7 +290,13 @@ def resolve_route_operations(
     if d:
         rules = (get_dept_rules(d).get("rules") or {})
         aliases = rules.get("wcAliases") or {}
-    return resolve_operations(operations or [], dept=d, aliases=aliases, notes=notes)
+    return resolve_operations(
+        operations or [],
+        dept=d,
+        aliases=aliases,
+        notes=notes,
+        plant=plant,
+    )
 
 
 def suggest_vlm_pages(raw_text: str, page_count: int | None) -> list[int]:

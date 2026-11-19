@@ -245,6 +245,7 @@ class RcAnalyzeJob(db.Entity):
     message = Optional(str, default="")
     error_message = Optional(str)
     vlm_page_indexes = Optional(Json)  # list[int] or null = auto
+    plant = Optional(str)  # admin plant override for WC linking
     created_at = Required(datetime, default=datetime.utcnow)
     started_at = Optional(datetime)
     finished_at = Optional(datetime)

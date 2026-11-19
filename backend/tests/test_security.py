@@ -236,6 +236,11 @@ def test_login_captcha_scenarios():
     from app.database.connection import connect_to_db
 
     connect_to_db()
+    from app.config.settings import settings
+
+    prev_env, prev_flag = settings.APP_ENV, settings.CAPTCHA_ENABLED
+    settings.APP_ENV = "prod"
+    settings.CAPTCHA_ENABLED = ""
 
     def encrypt_creds(payload: dict) -> str:
         pub = _private_key().public_key()
@@ -387,4 +392,6 @@ def test_login_captcha_scenarios():
     me_new = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {new_token}"})
     assert me_new.status_code == 200
     _pending_session_takeovers.clear()
+    settings.APP_ENV = prev_env
+    settings.CAPTCHA_ENABLED = prev_flag
 

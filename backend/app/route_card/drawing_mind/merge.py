@@ -196,6 +196,20 @@ def merge_ga_extractions(
     notes, view_facts, view_warns = resolve_view_refs_for_notes(notes, ga_results)
     warnings.extend(view_warns)
 
+    # PL / torque / connector enrichment on every note (CPU-first path)
+    from app.route_card.drawing_mind.elaborate import apply_grounded_elaboration
+
+    unit = (title.get("unit") if isinstance(title, dict) else None) or "mm"
+    notes = apply_grounded_elaboration(
+        notes,
+        ga_extraction={
+            "bom_items": [bom_by_item[k] for k in sorted(bom_by_item)],
+            "title_block": title,
+        },
+        unit=unit,
+        engine="merge",
+    )
+
     # Index sheet numbers on gaSources for UI
     from app.route_card.drawing_mind.view_refs import catalog_sheet
 

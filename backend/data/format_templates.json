@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-12T10:45:18+00:00",
+  "updatedAt": "2026-11-19T10:25:32+00:00",
   "templates": [
     {
       "id": "bel-ga-default",
@@ -97,11 +97,11 @@
         "noteHeaderCountMin": 0
       },
       "stats": {
-        "useCount": 72,
+        "useCount": 82,
         "learnCount": 0
       },
       "createdAt": "2026-09-24T06:42:40+00:00",
-      "updatedAt": "2026-11-12T10:45:06+00:00"
+      "updatedAt": "2026-11-19T10:25:32+00:00"
     },
     {
       "id": "bel-wl-default",
@@ -296,13 +296,13 @@
         ]
       },
       "stats": {
-        "useCount": 33,
+        "useCount": 34,
         "learnCount": 1
       },
       "sourceSessionId": 94,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-24T06:45:14+00:00",
-      "updatedAt": "2026-11-02T07:55:23+00:00"
+      "updatedAt": "2026-11-19T09:43:37+00:00"
     },
     {
       "id": "learned-ga-f5ed4e252b",
@@ -705,13 +705,13 @@
         ]
       },
       "stats": {
-        "useCount": 28,
+        "useCount": 29,
         "learnCount": 1
       },
       "sourceSessionId": 179,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-25T07:36:16+00:00",
-      "updatedAt": "2026-10-24T04:32:28+00:00"
+      "updatedAt": "2026-11-19T04:12:45+00:00"
     },
     {
       "id": "learned-ga-ebcca3f69e",
@@ -803,13 +803,13 @@
         ]
       },
       "stats": {
-        "useCount": 17,
+        "useCount": 24,
         "learnCount": 1
       },
       "sourceSessionId": 275,
       "notes": "Saved after engineer review",
       "createdAt": "2026-09-28T11:18:11+00:00",
-      "updatedAt": "2026-11-12T10:45:18+00:00"
+      "updatedAt": "2026-11-19T10:22:28+00:00"
     },
     {
       "id": "learned-ga-b80d291367",
@@ -900,13 +900,193 @@
         ]
       },
       "stats": {
-        "useCount": 10,
+        "useCount": 17,
         "learnCount": 1
       },
       "sourceSessionId": 9,
       "notes": "Saved after engineer review",
       "createdAt": "2026-10-13T06:25:44+00:00",
-      "updatedAt": "2026-11-02T08:12:51+00:00"
+      "updatedAt": "2026-11-19T10:25:32+00:00"
+    },
+    {
+      "id": "learned-ga-8a7a6deac5",
+      "name": "GA drawing \u2014 PSPU / MS assembly (1180 000 737 82)",
+      "docType": "GA",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "ASSY INSTRUCTIONS",
+          "ASSEMBLY INSTRUCTIONS",
+          "SPECIAL ASSY INSTRUCTIONS",
+          "SPECIAL ASSEMBLY INSTRUCTIONS",
+          "CTQ POINTS",
+          "CTQ POINT",
+          "CRITICAL TO QUALITY POINTS"
+        ],
+        "plColumns": {},
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "GA",
+        "keywords": [
+          "NOTE",
+          "NOTES",
+          "REMARKS",
+          "INSTRUCTIONS",
+          "INSTRUCTION",
+          "ASSY NOTES",
+          "ASSEMBLY NOTES",
+          "ASSY INSTRUCTIONS",
+          "notes",
+          "parts_list",
+          "wire_list",
+          "title",
+          "ga",
+          "bel_pn"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": true,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": true,
+        "noteHeaderCountMin": 1,
+        "sampleTokens": [
+          "000",
+          "1.",
+          "1180",
+          "2.",
+          "28",
+          "29",
+          "3.",
+          "30",
+          "38",
+          "737",
+          "8.",
+          "82",
+          "ALL",
+          "AREA",
+          "ARRANGEMENT",
+          "AS",
+          "ASSEMBLE",
+          "ASSEMBLY",
+          "ASSY.",
+          "AT",
+          "ATTACHED",
+          "BE",
+          "CLEAN",
+          "DETAIL",
+          "DRAWING",
+          "FASTENERS",
+          "FOR",
+          "GENERAL",
+          "HATCHED",
+          "INSTALLATION",
+          "INSTRUCTIONS",
+          "ITEM",
+          "NO.",
+          "NOTE",
+          "OF",
+          "ON",
+          "PASTE",
+          "PER",
+          "PLACES.",
+          "PS902"
+        ]
+      },
+      "stats": {
+        "useCount": 0,
+        "learnCount": 1
+      },
+      "sourceSessionId": 32,
+      "notes": "PSPU GA family: numbered notes, PS902 torque, special assy SAP refs, DETAIL C/D/E, TABLE 1 wire crimps.",
+      "createdAt": "2026-11-19T04:23:36+00:00",
+      "updatedAt": "2026-11-19T04:23:36+00:00"
+    },
+    {
+      "id": "learned-pl-46b922e3a7",
+      "name": "Parts List \u2014 PSPU / MS (1180 family)",
+      "docType": "PL",
+      "builtin": false,
+      "aliases": {
+        "noteHeaders": [],
+        "plColumns": {
+          "item": [
+            "ITEM",
+            "ITEM NO",
+            "ITM",
+            "S.NO",
+            "SL NO",
+            "SL.NO"
+          ],
+          "description": [
+            "DESIGNATION",
+            "DESCRIPTION",
+            "DESC",
+            "PART NAME"
+          ],
+          "partNo": [
+            "PART NO",
+            "PART NUMBER",
+            "P/N",
+            "PN"
+          ],
+          "qty": [
+            "QTY",
+            "QUANTITY",
+            "QTY.",
+            "NOS"
+          ]
+        },
+        "wlHints": []
+      },
+      "fingerprint": {
+        "docTypeHint": "PL",
+        "keywords": [
+          "parts_list",
+          "bel_pn"
+        ],
+        "hasBelPartNo": true,
+        "hasNotesHeader": false,
+        "hasPartsListHeader": true,
+        "hasWireListHeader": false,
+        "noteHeaderCountMin": 0,
+        "sampleTokens": [
+          "000",
+          "1180",
+          "282",
+          "4579",
+          "67",
+          "76",
+          "839",
+          "901",
+          "AC-DC",
+          "ASSY",
+          "DESIGNATION",
+          "ITEM",
+          "LIST",
+          "MECHANICAL",
+          "NO",
+          "PART",
+          "PARTS",
+          "POWERSUPPLY",
+          "PSPU",
+          "QTY"
+        ]
+      },
+      "stats": {
+        "useCount": 0,
+        "learnCount": 1
+      },
+      "sourceSessionId": 32,
+      "notes": "BEL MS parts list for PSPU mechanical/electronic assembly.",
+      "createdAt": "2026-11-19T04:23:36+00:00",
+      "updatedAt": "2026-11-19T04:23:36+00:00"
     }
   ]
 }

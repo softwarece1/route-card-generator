@@ -44,3 +44,30 @@
   line-height: 1.45;
   padding: 0.45rem 0.6rem;
 }
+
+.instr-click-edit__live-annot {
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px dashed var(--pmf-border-strong);
+  background: color-mix(in srgb, var(--pmf-accent) 6%, var(--pmf-page-bg));
+}
+
+.instr-click-edit__live-annot-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--pmf-text-muted, #64748b);
+  margin-bottom: 0.2rem;
+}
+
+.instr-click-edit__live-annot-text {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--pmf-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

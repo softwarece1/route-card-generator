@@ -4,6 +4,7 @@ __pycache__/
 .env
 uploads/
 exports/
+.logs/*.log
 data/auth_rsa_private.pem
 *.egg-info/
 .pytest_cache/

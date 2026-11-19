@@ -420,11 +420,211 @@ def break_instruction_points(text: str) -> str:
     return normalize_instruction_case(text.strip())
 
 
+# Document / sheet chrome that OCR/VLM often glues into shop instructions.
+_INSTR_DOC_HEADER = re.compile(
+    r"Special\s+Assembly\s+Instructions\s+for\s+(?:\d{4}\s+\d{3}\s+\d{3}\s+\d{2}|\d{10,14})"
+    r"(?:\s+Page\s+\d+\s+of\s+\d+)?",
+    re.I,
+)
+_INSTR_PAGE_OF = re.compile(r"\bPage\s+\d+\s+of\s+\d+\b", re.I)
+_INSTR_PN_TOKEN = re.compile(
+    r"P/?N\s*:\s*(?:\d{4}\s+\d{3}\s+\d{3}\s+\d{2}|\d{10,14})",
+    re.I,
+)
+_INSTR_FROM_DRAWING = re.compile(r"\s*\(\s*From\s+drawing\s*:\s*[^)]*\)\s*", re.I)
+_INSTR_PARTS_APPENDIX = re.compile(
+    r"\s*Parts\s*:\s*.+?(?=(?:\s*(?:Torque|Connectors|Standard|Placement)\s*:)|$)",
+    re.I,
+)
+# Only sentence-start imperatives (Capitalized) — never mid-phrase "shall slide".
+_INSTR_ACTION_SPLIT = re.compile(
+    r"(?<=[\w).!?])\s+(?=(?:"
+    r"Carefully|Ensure|Further|Now|Engage|Refer|"
+    r"Place|Install|Assemble|Verify|Check|Peel|Stick|Paste|"
+    r"Apply|Mount|Secure"
+    r")\b)"
+)
+_INSTR_ARROW_SPLIT = re.compile(r"\s*(->|→)\s*")
+_INSTR_KEEP_PN_CONTEXT = re.compile(
+    r"(?:tool|engage|using|fastener|part\s*no|item)\s*$",
+    re.I,
+)
+_INSTR_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
+
+
+def _strip_chrome_part_numbers(text: str) -> str:
+    """Drop standalone P/N headers; keep tool/item P/Ns mid-sentence."""
+
+    def _repl(match: re.Match) -> str:
+        before = text[max(0, match.start() - 24) : match.start()]
+        if _INSTR_KEEP_PN_CONTEXT.search(before):
+            return match.group(0)
+        return " "
+
+    return _INSTR_PN_TOKEN.sub(_repl, text)
+
+
+# Revision-history table rows OCR often glues onto the NOTES column beside them.
+_REV_DATE_FRAG = (
+    r"\d{1,2}\s*[./]\s*\d{1,2}(?:\s*[./]\s*\d{2,4}|\s*[./]\s*)"
+)
+_REV_DELETED_PHRASE = (
+    r"(?:NOTE\s+\d+\s*&\s*\d+\s+DELETED|"
+    r"(?:[A-Za-z]{1,4}(?:\s*[_\-.•]+\s*[A-Za-z0-9]{0,4}){0,5}\s+)?"
+    r"\d{1,2}\s+DELETED)(?:\s+\d+\s+one)?"
+)
+_REV_BLEED_BLOCK = re.compile(
+    rf"(?:\s+|,|;)+(?:[-•*]\s*)?(?:{_REV_DATE_FRAG}\s*)?(?:{_REV_DELETED_PHRASE})",
+    re.I,
+)
+_REV_DATE_BEFORE_WORD = re.compile(
+    rf"\s+{_REV_DATE_FRAG}(?:[\s•*.|-]*)(?=(?:indicated|shown|per|figure|as|in|on|to|the)\b)",
+    re.I,
+)
+_REV_DATE_TRAILING = re.compile(rf"\s+{_REV_DATE_FRAG}\s*$", re.I | re.M)
+_REV_BULLET_ONLY = re.compile(
+    rf"^(?:[-•*]\s*)?(?:{_REV_DATE_FRAG}\s*)?(?:{_REV_DELETED_PHRASE})\s*$",
+    re.I,
+)
+_REV_OCR_NOISE_BULLET = re.compile(
+    r"^(?:[-•*]\s*)?(?:[A-Za-z]{1,3}(?:\s*[_\-.•]+\s*[A-Za-z0-9]{0,3}){1,6})\s*"
+    r"(?:\d{1,2}\s+)?(?:deleted|one)\b.*$",
+    re.I,
+)
+
+
+def _strip_revision_table_bleed(text: str) -> str:
+    """Remove revision-table cells that OCR merged into assembly instructions."""
+    s = str(text or "")
+    if not s:
+        return ""
+    # Full revision row glued mid-sentence (date + NOTE n & m DELETED / OCR garble)
+    s = _REV_BLEED_BLOCK.sub(" ", s)
+    # Date alone jammed before a continuation word ("as 15. 03. Indicated…")
+    s = _REV_DATE_BEFORE_WORD.sub(" ", s)
+    s = _REV_DATE_TRAILING.sub("", s)
+    # Loose "9 deleted 1 one" / "NOTE 8 & 9 DELETED" remnants
+    s = re.sub(
+        rf"(?:\s+|,|;)+(?:{_REV_DELETED_PHRASE})",
+        " ",
+        s,
+        flags=re.I,
+    )
+    s = re.sub(r"\s{2,}", " ", s)
+    s = re.sub(r"\s+([.,;:])", r"\1", s)
+    return s.strip(" ;:|\n\t")
+
+
+def _strip_instruction_chrome(text: str) -> str:
+    s = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    s = _INSTR_FROM_DRAWING.sub(" ", s)
+    s = _INSTR_PARTS_APPENDIX.sub(" ", s)
+    s = _INSTR_DOC_HEADER.sub(" ", s)
+    s = _INSTR_PAGE_OF.sub(" ", s)
+    s = _strip_chrome_part_numbers(s)
+    s = _strip_revision_table_bleed(s)
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r" *\n *", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s).strip(" ;:|\n\t")
+    return s
+
+
+def _to_operator_bullets(lines: list[str]) -> str:
+    deduped: list[str] = []
+    for line in lines:
+        key = re.sub(r"\s+", " ", line).strip().lower()
+        if not key:
+            continue
+        if deduped and re.sub(r"\s+", " ", deduped[-1]).strip().lower() == key:
+            continue
+        deduped.append(re.sub(r"\s+", " ", line).strip(" ;:|"))
+    if not deduped:
+        return ""
+    if len(deduped) == 1 and not re.match(
+        r"^(?:[-•*]|\d+[.)]|[a-z]\)|->|→)\s", deduped[0]
+    ):
+        return deduped[0]
+    bullets: list[str] = []
+    for line in deduped:
+        if line.startswith("->") or line.startswith("→"):
+            bullets.append(line if line.startswith("• ") else f"• {line}")
+        elif re.match(r"^(?:[-•*]|\d+[.)]|[a-z]\))\s", line):
+            rest = re.sub(r"^(?:[-•*]|\d+[.)]|[a-z]\))\s*", "", line).strip()
+            bullets.append(f"• {rest}" if rest else line)
+        else:
+            bullets.append(f"• {line}")
+    return "\n".join(bullets)
+
+
+def sanitize_operator_instruction(text: str) -> str:
+    """Strip drawing-chrome junk and format shop instructions as readable bullets.
+
+    Keeps grounded elaboration (placement, torque, view-ref appendix). Removes
+    repeated 'Special Assembly Instructions… Page X of Y', standalone P/N
+    headers, 'Parts: …' / '(From drawing: …)' suffixes that duplicate UI fields.
+    """
+    if not text:
+        return ""
+    s = _strip_instruction_chrome(text)
+    if not s:
+        return ""
+
+    # Already bulletized — chrome-strip only (idempotent for re-open / re-save).
+    raw_lines = [ln.strip() for ln in s.split("\n") if ln.strip()]
+    bulletish = sum(1 for ln in raw_lines if ln.lstrip().startswith(("•", "-", "*")))
+    if len(raw_lines) >= 2 and bulletish >= max(2, int(len(raw_lines) * 0.5)):
+        cleaned = []
+        for ln in raw_lines:
+            body = re.sub(r"^(?:[-•*]\s+)", "", ln).strip()
+            body = _strip_revision_table_bleed(body)
+            if re.fullmatch(r"P/?N\s*:\s*[\d\s]+", body, flags=re.I):
+                continue
+            if not body:
+                continue
+            if _REV_BULLET_ONLY.match(body) or _REV_OCR_NOISE_BULLET.match(body):
+                continue
+            if re.fullmatch(r"(?i)\d+\s+deleted(?:\s+\d+\s+one)?", body):
+                continue
+            cleaned.append(f"• {body}")
+        return _to_operator_bullets(cleaned)
+
+    # Keep view-ref appendix with its arrow on one line.
+    s = _INSTR_ARROW_SPLIT.sub(r"\n\1 ", s)
+    s = _INSTR_ACTION_SPLIT.sub("\n", s)
+    s = _INSTR_SENTENCE_SPLIT.sub("\n", s)
+    s = break_instruction_points(s)
+
+    lines: list[str] = []
+    for raw_line in s.split("\n"):
+        line = re.sub(r"\s+", " ", raw_line).strip(" ;:|")
+        if not line:
+            continue
+        if _INSTR_DOC_HEADER.fullmatch(line) or _INSTR_PAGE_OF.fullmatch(line):
+            continue
+        if re.fullmatch(r"P/?N\s*:\s*[\d\s]+", line, flags=re.I):
+            continue
+        body = re.sub(r"^(?:[-•*]\s+)", "", line).strip()
+        if _REV_BULLET_ONLY.match(body) or _REV_OCR_NOISE_BULLET.match(body):
+            continue
+        if re.fullmatch(r"(?i)\d+\s+deleted(?:\s+\d+\s+one)?", body):
+            continue
+        # break_instruction_points can split "(sheet 1)" → "(sheet" + "1)"
+        if lines and re.fullmatch(r"\d{1,3}\)", line):
+            prev = lines[-1]
+            if prev.endswith("(") or re.search(r"\((?:sheet|page|rev)\s*$", prev, re.I):
+                lines[-1] = f"{prev} {line}"
+                continue
+        lines.append(line)
+
+    return _to_operator_bullets(lines)
+
+
 def _note_step_dict(sheet: int, step_no: int, text: str) -> dict | None:
     text = _norm_spaces(NOTES_JUNK_TAIL.sub("", text))
     text = re.sub(r"\s+", " ", text).strip(" ;:")
     # Trailing revision dates stuck on by OCR
     text = re.sub(r"\s+\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s*$", "", text).strip()
+    text = _strip_revision_table_bleed(text)
     # Title-block / revision-table OCR bleed glued onto instruction lines.
     # Strip the bleed *segment* only — do not cut away the rest of the step.
     text = re.sub(
@@ -448,7 +648,7 @@ def _note_step_dict(sheet: int, step_no: int, text: str) -> dict | None:
     )
     text = re.sub(
         r"\s+(?:No\.\s*\|?\s*CN\.?\s*NO\.|DATE\s+CHANGE|NUMBER\s+ITEM\s*\|?\s*QTY|"
-        r"a\s+ORIGINAL\b[^\n]{0,40}|NOTE\s+\d+\s*&\s*\d+\s+DELETED[^\n]{0,40}|"
+        r"a\s+ORIGINAL\b[^\n]{0,40}|"
         r"NEXT\s+ASSEMBLY\b|YOG\s+UMRESH\b[^\n]{0,60})",
         " ",
         text,

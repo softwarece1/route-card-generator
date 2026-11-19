@@ -16,7 +16,6 @@ import {
   createWorkCenter,
   deleteWorkCenter,
   fetchPlants,
-  fetchPlantSbuMapping,
   fetchWorkCenters,
   syncWorkCentersFromSap,
   updateWorkCenter,
@@ -161,23 +160,11 @@ export default function WorkCentersPage() {
     }
   }, [selectedPlantCode, loadWorkCentres]);
 
+  // Plant/SBU mapping comes from SAP Zppfm001 (intranet only). Do not auto-fetch
+  // on plant select — that fails outside the plant network. Sync fills this table.
   useEffect(() => {
-    let cancelled = false;
-    if (!selectedPlantCode || !canManage) {
-      setPlantSbu({ items: [], loading: false, error: "" });
-      return;
-    }
-    setPlantSbu({ items: [], loading: true, error: "" });
-    fetchPlantSbuMapping(selectedPlantCode).then(
-      (items) => {
-        if (!cancelled) setPlantSbu({ items, loading: false, error: "" });
-      },
-      (error) => {
-        if (!cancelled) setPlantSbu({ items: [], loading: false, error: error.message });
-      }
-    );
-    return () => { cancelled = true; };
-  }, [selectedPlantCode, canManage]);
+    setPlantSbu({ items: [], loading: false, error: "" });
+  }, [selectedPlantCode]);
 
   const filteredSbus = useMemo(() => {
     let rows = sbus;
@@ -322,7 +309,7 @@ export default function WorkCentersPage() {
   const syncedLabel = formatSyncedAt(selectedPlant?.workCenterSyncedAt);
 
   const headerSubtitle = isAdmin
-    ? "Select an SBU to view its Plant/SBU mapping and sync work centres from SAP."
+    ? "Select an SBU to browse local work centres. Sync from SAP needs the plant intranet."
     : selectedSbu
       ? selectedPlantCode
         ? `${selectedSbu.name} · Plant ${selectedPlantCode}`
@@ -340,7 +327,10 @@ export default function WorkCentersPage() {
           disabled={!selectedPlantCode}
         />
       </IconField>
-      <div className="rc-wc__sync-group" title={syncedLabel.full}>
+      <div
+        className="rc-wc__sync-group"
+        title={`${syncedLabel.full}. SAP Zppfm001 is reachable on the plant intranet only.`}
+      >
         <Button
           type="button"
           label="Sync from SAP"
@@ -481,7 +471,7 @@ export default function WorkCentersPage() {
                         emptyMessage={
                           plantSbu.error
                             ? "Plant/SBU mapping could not be loaded."
-                            : "SAP returned no Plant/SBU mappings for this plant."
+                            : "Click Sync from SAP on the plant network (intranet) to load Plant/SBU mapping."
                         }
                         columns={[
                           { field: "Plant ID", header: "Plant ID", sortable: true },

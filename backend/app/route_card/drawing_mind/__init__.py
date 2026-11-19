@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from app.route_card.drawing_mind.base import DrawingMind
 from app.route_card.drawing_mind.cpu_spatial import CpuSpatialMind
+from app.route_card.drawing_mind.elaborate import (
+    apply_grounded_elaboration,
+    elaborate_note_cpu,
+)
 from app.route_card.drawing_mind.merge import merge_ga_extractions, resolve_cross_refs
 from app.route_card.drawing_mind.types import MindResult
 from app.route_card.drawing_mind.view_refs import (
@@ -38,4 +42,6 @@ __all__ = [
     "resolve_view_refs_for_notes",
     "parse_detail_item_table",
     "extract_detail_row_snippet",
+    "apply_grounded_elaboration",
+    "elaborate_note_cpu",
 ]

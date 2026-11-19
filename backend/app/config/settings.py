@@ -99,7 +99,14 @@ class Settings(BaseSettings):
     # Backup output directory (empty = <LOCAL_UPLOAD_ROOT>/../backups or cwd/backups)
     BACKUP_ROOT: str = ""
 
+    # API error log directory (empty = <backend>/.logs)
+    ERROR_LOG_DIR: str = ""
+
     # --- Security enhancements ---
+    # dev hides login CAPTCHA; prod (or production) shows and requires it.
+    # CAPTCHA_ENABLED=true/false overrides APP_ENV when set.
+    APP_ENV: str = "dev"
+    CAPTCHA_ENABLED: str = ""
     # CAPTCHA configuration
     CAPTCHA_TTL_SECONDS: int = 120  # challenge lives for 2 minutes by default
     CAPTCHA_ATTEMPT_LIMIT: int = 5  # max attempts per challenge
@@ -126,3 +133,16 @@ class Settings(BaseSettings):
     # ... existing settings unchanged ...
 
 settings = Settings()
+
+
+def captcha_required() -> bool:
+    """Login CAPTCHA is off in dev and on in prod, unless CAPTCHA_ENABLED overrides."""
+    raw = (getattr(settings, "CAPTCHA_ENABLED", "") or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return (getattr(settings, "APP_ENV", "dev") or "dev").strip().lower() in {
+        "prod",
+        "production",
+    }

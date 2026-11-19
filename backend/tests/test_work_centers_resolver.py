@@ -6,12 +6,14 @@ from app.route_card.work_centers import (
     LINK_LINKED,
     LINK_OVERRIDE,
     LINK_UNRESOLVED,
+    SEED_CODE_FALLBACKS,
     _derived_keywords,
     _effective_aliases,
     _hint_tags,
     _norm,
     _score_wc,
     merge_resolved_preserving_overrides,
+    remap_heuristic_to_catalog,
 )
 
 
@@ -190,3 +192,93 @@ def test_heuristic_map_covers_generator_buckets():
     for name in ("Torque", "Bonding", "PCB Assembly", "Quality", "Special Assembly", "Assembly", "Cable Prep"):
         assert name in HEURISTIC_TAG_MAP
         assert name in BUILTIN_WC_ALIASES
+
+
+def test_remap_seed_asm_to_plant_assy():
+    """Bootstrap path (no plant scoring) may still use seed fallbacks."""
+    catalog = [
+        _FakeWC(code="ASSY", name="ASSY", capability_tags=["assembly"]),
+        _FakeWC(code="AIPH", name="PHYSICAL INSPECTION", capability_tags=["inspect"]),
+        _FakeWC(code="QTEST", name="TESTING / MS", capability_tags=["inspect"]),
+    ]
+    code, reason = remap_heuristic_to_catalog("ASM", catalog, use_seed_fallbacks=True)
+    assert code == "ASSY"
+    assert "ASSY" in reason
+    q, _ = remap_heuristic_to_catalog("QUALITY", catalog, use_seed_fallbacks=True)
+    assert q == "AIPH"
+    # Already in catalog — unchanged
+    same, empty = remap_heuristic_to_catalog("ASSY", catalog)
+    assert same == "ASSY" and empty == ""
+
+
+def test_remap_without_seed_fallbacks_does_not_invent_assy():
+    """Plant-catalog mode: no hard-coded ASM→ASSY / QUALITY→AIPH."""
+    catalog = [
+        _FakeWC(code="ASSY", name="ASSY", capability_tags=["assembly"]),
+        _FakeWC(code="AIPH", name="PHYSICAL INSPECTION", capability_tags=["inspect"]),
+    ]
+    code, reason = remap_heuristic_to_catalog("ASM", catalog, use_seed_fallbacks=False)
+    assert code == "ASM"
+    assert reason == ""
+    q, qreason = remap_heuristic_to_catalog("QUALITY", catalog, use_seed_fallbacks=False)
+    assert q == "QUALITY"
+    assert qreason == ""
+
+
+def test_score_prefers_wc_name_semantics_over_seed_codes():
+    """Instruction verbs match plant WC names (description), not seed ASSY/BOND."""
+    inspect = _FakeWC(
+        code="AIPH",
+        name="PHYSICAL INSPECTION",
+        match_keywords=["AIPH"],
+        capability_tags=[],
+        is_shared=False,
+    )
+    wiring = _FakeWC(
+        code="AMW1",
+        name="MECH MTG & WIRING OF SUB ASSY",
+        match_keywords=["AMW1"],
+        capability_tags=[],
+        is_shared=False,
+    )
+    solder = _FakeWC(
+        code="ASOL",
+        name="SOLDERING",
+        match_keywords=["ASOL"],
+        capability_tags=[],
+        is_shared=False,
+    )
+    aliases = _effective_aliases({}, include_builtins=False)
+    insp_score = _score_wc(
+        inspect, "", "Verify dimensions and visual inspect warpage", aliases, include_builtins=False
+    )
+    wire_score = _score_wc(
+        wiring, "", "Crimp and wire harness to sub assembly", aliases, include_builtins=False
+    )
+    sol_score = _score_wc(
+        solder, "", "Solder transformer pads per RoHS", aliases, include_builtins=False
+    )
+    assert insp_score > _score_wc(
+        wiring, "", "Verify dimensions and visual inspect warpage", aliases, include_builtins=False
+    )
+    assert wire_score > _score_wc(
+        inspect, "", "Crimp and wire harness to sub assembly", aliases, include_builtins=False
+    )
+    assert sol_score > _score_wc(
+        inspect, "", "Solder transformer pads per RoHS", aliases, include_builtins=False
+    )
+
+
+def test_derived_keywords_include_name_even_when_match_keywords_set():
+    wc = _FakeWC(code="AIPH", name="PHYSICAL INSPECTION", match_keywords=["AIPH"])
+    kws = _derived_keywords(wc)
+    assert "AIPH" in kws
+    assert "PHYSICAL" in kws
+    assert "INSPECTION" in kws
+
+
+def test_seed_fallbacks_cover_builtin_codes():
+    for seed in BUILTIN_WC_ALIASES.values():
+        assert seed in SEED_CODE_FALLBACKS or seed in {"PCB"}  # PCB may exist as real code
+    assert "ASSY" in SEED_CODE_FALLBACKS["ASM"]
+    assert "AIPH" in SEED_CODE_FALLBACKS["QUALITY"]
