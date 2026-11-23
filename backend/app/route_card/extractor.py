@@ -364,9 +364,72 @@ def normalize_instruction_case(text: str) -> str:
     return out
 
 
+_LIST_MARKER_TOKEN = re.compile(
+    r"(?:"
+    r"[a-z]\)|"
+    r"(?i:xii|xi|ix|viii|vii|vi|iv|iii|ii|x|v|i)\)|"
+    r"\d{1,3}\)"
+    r")"
+)
+
+
+def _split_list_markers_outside_parens(text: str) -> str:
+    """Newline before a)/1)/i) list markers only at parenthesis depth 0.
+
+    Keeps part-number tails like ``(… 3004 004 306 32) on the face`` intact.
+    """
+    if not text:
+        return ""
+    out: list[str] = []
+    depth = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "(":
+            depth += 1
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ")":
+            depth = max(0, depth - 1)
+            out.append(ch)
+            i += 1
+            continue
+        if depth == 0 and ch != "\n":
+            if ch.isspace():
+                j = i
+                while j < n and text[j].isspace() and text[j] != "\n":
+                    j += 1
+                m = _LIST_MARKER_TOKEN.match(text, j)
+                if m:
+                    after_i = m.end()
+                    after = text[after_i : after_i + 1]
+                    if after_i >= n or after in " \t\n(" or after.isalpha():
+                        out.append("\n")
+                        out.append(m.group(0))
+                        i = after_i
+                        continue
+            if not ch.isalnum() and ch not in "\x00":
+                m = _LIST_MARKER_TOKEN.match(text, i + 1)
+                if m:
+                    rest = text[m.end() :]
+                    if rest[:1].isspace() and (
+                        rest.lstrip()[:1].isalpha() or rest.lstrip()[:1] == "("
+                    ):
+                        out.append(ch)
+                        out.append("\n")
+                        out.append(m.group(0))
+                        i = m.end()
+                        continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def break_instruction_points(text: str) -> str:
     """
-    Put list-style markers on their own lines inside instruction / Long Text.
+    Put list-style markers on their own lines inside instruction / LongText.
 
     Handles mid-paragraph markers such as:
       ... ITEM No. 1 a) ENSURE ... b) ENSURE ... i) CHECK ... 2) TORQUE ...
@@ -374,6 +437,7 @@ def break_instruction_points(text: str) -> str:
 
     Does not invent bullets for ordinary prose; only splits on existing markers.
     Does NOT treat "(REVISION E)" / "REVISION E)" as a list point.
+    Never splits digit/letter markers inside parentheses (part-number tails).
     Also normalizes OCR ALL-CAPS into sentence case.
     """
     if not text:
@@ -388,29 +452,7 @@ def break_instruction_points(text: str) -> str:
         return f"\x00REV{len(protected) - 1}\x00"
 
     text = re.sub(r"\(?\bREVISIONS?\s+[A-Z]\)", _mask, text, flags=re.I)
-
-    # Letter bullets: lowercase a)–z) only (never E) from REVISION E).
-    # Roman: i) ii) iii) … (case-insensitive via local flag).
-    # Digits: 1) 2) 12)
-    text = re.sub(
-        r"(?<!\n)\s+(?=(?:"
-        r"[a-z]\)|"
-        r"(?i:xii|xi|ix|viii|vii|vi|iv|iii|ii|x|v|i)\)|"
-        r"\d{1,3}\)"
-        r")(?:\s+|$))",
-        "\n",
-        text,
-    )
-    # Glued markers: "...1a) ENSURE" (lowercase letter / roman / digit only)
-    text = re.sub(
-        r"(?<![A-Za-z0-9\n\x00])(?=(?:"
-        r"[a-z]\)|"
-        r"(?i:xii|xi|ix|viii|vii|vi|iv|iii|ii|x|v|i)\)|"
-        r"\d{1,3}\)"
-        r")\s+[A-Za-z(])",
-        "\n",
-        text,
-    )
+    text = _split_list_markers_outside_parens(text)
 
     for i, original in enumerate(protected):
         text = text.replace(f"\x00REV{i}\x00", original)
@@ -418,6 +460,7 @@ def break_instruction_points(text: str) -> str:
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return normalize_instruction_case(text.strip())
+
 
 
 # Document / sheet chrome that OCR/VLM often glues into shop instructions.
@@ -436,13 +479,16 @@ _INSTR_PARTS_APPENDIX = re.compile(
     r"\s*Parts\s*:\s*.+?(?=(?:\s*(?:Torque|Connectors|Standard|Placement)\s*:)|$)",
     re.I,
 )
-# Only sentence-start imperatives (Capitalized) — never mid-phrase "shall slide".
-_INSTR_ACTION_SPLIT = re.compile(
-    r"(?<=[\w).!?])\s+(?=(?:"
+# Imperatives only after a clause end (., !, ?, ;, )) or jammed tool-code (M3x8L Now…).
+# Never mid-phrase after an ordinary word — that cut sentences and dropped tails.
+_INSTR_ACTION_VERBS = (
     r"Carefully|Ensure|Further|Now|Engage|Refer|"
     r"Place|Install|Assemble|Verify|Check|Peel|Stick|Paste|"
-    r"Apply|Mount|Secure"
-    r")\b)"
+    r"Apply|Mount|Secure|Fix|Bond|Glue|Torque|Tighten|Remove|Replace|Fit|Insert"
+)
+_INSTR_ACTION_SPLIT = re.compile(
+    r"(?<=[.!?;)])\s+(?=(?:" + _INSTR_ACTION_VERBS + r")\b)"
+    r"|(?<=\d[Ll])\s+(?=(?:Now|Further|Carefully|Ensure)\b)"
 )
 _INSTR_ARROW_SPLIT = re.compile(r"\s*(->|→)\s*")
 _INSTR_KEEP_PN_CONTEXT = re.compile(
@@ -450,6 +496,8 @@ _INSTR_KEEP_PN_CONTEXT = re.compile(
     re.I,
 )
 _INSTR_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
+# Mid-paragraph bullet glyphs glued into one line (… Item 4. • Assemble …).
+_INSTR_INLINE_BULLET_SPLIT = re.compile(r"(?<!\n)\s*[•·●▪‣⁃]\s+")
 
 
 def _strip_chrome_part_numbers(text: str) -> str:
@@ -540,20 +588,142 @@ def _to_operator_bullets(lines: list[str]) -> str:
         deduped.append(re.sub(r"\s+", " ", line).strip(" ;:|"))
     if not deduped:
         return ""
-    if len(deduped) == 1 and not re.match(
-        r"^(?:[-•*]|\d+[.)]|[a-z]\)|->|→)\s", deduped[0]
-    ):
-        return deduped[0]
-    bullets: list[str] = []
+
+    # Rejoin orphaned "32) on the …" fragments onto a previous unclosed "(" line.
+    joined: list[str] = []
     for line in deduped:
+        if (
+            joined
+            and re.match(r"^\d{1,3}\)\s+\S", line)
+            and joined[-1].count("(") > joined[-1].count(")")
+        ):
+            joined[-1] = f"{joined[-1]} {line}"
+            continue
+        joined.append(line)
+
+    bullets: list[str] = []
+    for line in joined:
         if line.startswith("->") or line.startswith("→"):
             bullets.append(line if line.startswith("• ") else f"• {line}")
-        elif re.match(r"^(?:[-•*]|\d+[.)]|[a-z]\))\s", line):
-            rest = re.sub(r"^(?:[-•*]|\d+[.)]|[a-z]\))\s*", "", line).strip()
-            bullets.append(f"• {rest}" if rest else line)
-        else:
-            bullets.append(f"• {line}")
+            continue
+        # True list markers a)/i)/1) only when the body looks like a new step.
+        m = re.match(r"^(?:([-•*])|(\d+[.)])|([a-z]\)))\s+(.*)$", line, flags=re.I)
+        if m:
+            rest = (m.group(4) or "").strip()
+            # Digits like "32) on the face…" are broken paren tails — keep intact.
+            if m.group(2) and rest and not re.match(
+                r"^(?:Carefully|Ensure|Further|Now|Engage|Refer|Place|Install|"
+                r"Assemble|Verify|Check|Peel|Stick|Paste|Apply|Mount|Secure|"
+                r"Fix|Bond|Glue|Torque|Tighten|Remove|Replace|Fit|Insert|"
+                r"Open|Use|Follow|Torque)\b",
+                rest,
+                flags=re.I,
+            ):
+                bullets.append(f"• {line}" if not line.startswith("• ") else line)
+            else:
+                bullets.append(f"• {rest}" if rest else line)
+            continue
+        bullets.append(f"• {line}")
     return "\n".join(bullets)
+
+
+_MULTI_SENTENCE_IN_LINE = re.compile(
+    r"(?<=[.!?])\s+(?=[A-Z(])|(?<=[.!?;)])\s+(?=(?:"
+    + _INSTR_ACTION_VERBS
+    + r")\b)"
+)
+
+
+def _expand_crowded_bullet_lines(lines: list[str]) -> list[str]:
+    """Split a bullet that still holds several human sentences into separate points."""
+    out: list[str] = []
+    for ln in lines:
+        body = re.sub(r"^(?:[-•*·●]\s+)", "", ln).strip()
+        if not body:
+            continue
+        if not _MULTI_SENTENCE_IN_LINE.search(body):
+            out.append(f"• {body}")
+            continue
+        parts = _MULTI_SENTENCE_IN_LINE.sub("\n", body).split("\n")
+        for p in parts:
+            p = re.sub(r"\s+", " ", p).strip(" ;:|")
+            if p:
+                out.append(f"• {p}")
+    return out
+
+
+def _instruction_looks_fragmented(text: str) -> bool:
+    lines = [ln.strip() for ln in (text or "").split("\n") if ln.strip()]
+    if not lines:
+        return False
+    for ln in lines:
+        body = re.sub(r"^(?:[-•*·●]\s+)", "", ln).strip()
+        if re.match(r"^\d{1,3}\)\s+", body):
+            return True
+        if body.count("(") > body.count(")"):
+            return True
+        if len(body) < 28 and re.match(
+            r"^(?:on|of|to|for|with|from|and|the)\b", body, re.I
+        ):
+            return True
+    return False
+
+
+def _llm_repoint_instruction(text: str) -> str | None:
+    """Ask local LLM to split into full shop-floor bullets without dropping words."""
+    src = (text or "").strip()
+    if not src or len(src) < 40:
+        return None
+    try:
+        from app.config.settings import settings
+        from app.route_card.drawing_mind.ollama_client import (
+            chat_text,
+            ollama_reachable,
+        )
+
+        model = (getattr(settings, "OLLAMA_VLM_MODEL", None) or "").strip()
+        base = (getattr(settings, "OLLAMA_BASE_URL", None) or "").strip() or None
+        if not model:
+            return None
+        if not ollama_reachable(base, timeout=2.0):
+            return None
+        prompt = (
+            "Rewrite the shop instruction below as one bullet per complete action.\n"
+            "Rules:\n"
+            "- Keep EVERY word/number/part-number; never truncate a sentence.\n"
+            "- Do not invent steps, items, or dimensions.\n"
+            "- Split only at natural action boundaries (new Assemble/Ensure/Torque…).\n"
+            "- Never split inside parentheses (part descriptions / PNs).\n"
+            "- Output ONLY lines starting with '• '.\n\n"
+            f"INSTRUCTION:\n{src[:4000]}\n"
+        )
+        raw = chat_text(
+            prompt=prompt,
+            model=model,
+            base_url=base,
+            timeout=45.0,
+            temperature=0.0,
+            system=(
+                "You format manufacturing operator instructions. "
+                "Preserve all content; only add line breaks and '• ' bullets."
+            ),
+            max_tokens=1024,
+        )
+    except Exception:
+        return None
+    lines = []
+    for ln in str(raw or "").splitlines():
+        t = ln.strip().lstrip("•*- ").strip()
+        if t:
+            lines.append(f"• {t}")
+    if len(lines) < 1:
+        return None
+    # Safety: refuse if the model dropped too many source tokens
+    src_tokens = set(re.findall(r"[A-Za-z0-9]+", src.lower()))
+    out_tokens = set(re.findall(r"[A-Za-z0-9]+", " ".join(lines).lower()))
+    if src_tokens and len(out_tokens & src_tokens) / max(len(src_tokens), 1) < 0.85:
+        return None
+    return "\n".join(lines)
 
 
 def sanitize_operator_instruction(text: str) -> str:
@@ -562,6 +732,7 @@ def sanitize_operator_instruction(text: str) -> str:
     Keeps grounded elaboration (placement, torque, view-ref appendix). Removes
     repeated 'Special Assembly Instructions… Page X of Y', standalone P/N
     headers, 'Parts: …' / '(From drawing: …)' suffixes that duplicate UI fields.
+    Splits only at human clause boundaries so part-number tails are never cut off.
     """
     if not text:
         return ""
@@ -569,13 +740,21 @@ def sanitize_operator_instruction(text: str) -> str:
     if not s:
         return ""
 
-    # Already bulletized — chrome-strip only (idempotent for re-open / re-save).
+    # Break mid-line bullets onto their own lines before any other splits.
+    s = _INSTR_INLINE_BULLET_SPLIT.sub("\n• ", s)
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r" *\n *", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s).strip()
+
+    # Already bulletized — chrome-strip, then expand crowded multi-sentence lines.
     raw_lines = [ln.strip() for ln in s.split("\n") if ln.strip()]
-    bulletish = sum(1 for ln in raw_lines if ln.lstrip().startswith(("•", "-", "*")))
+    bulletish = sum(
+        1 for ln in raw_lines if ln.lstrip().startswith(("•", "-", "*", "·", "●"))
+    )
     if len(raw_lines) >= 2 and bulletish >= max(2, int(len(raw_lines) * 0.5)):
         cleaned = []
         for ln in raw_lines:
-            body = re.sub(r"^(?:[-•*]\s+)", "", ln).strip()
+            body = re.sub(r"^(?:[-•*·●]\s+)", "", ln).strip()
             body = _strip_revision_table_bleed(body)
             if re.fullmatch(r"P/?N\s*:\s*[\d\s]+", body, flags=re.I):
                 continue
@@ -586,7 +765,13 @@ def sanitize_operator_instruction(text: str) -> str:
             if re.fullmatch(r"(?i)\d+\s+deleted(?:\s+\d+\s+one)?", body):
                 continue
             cleaned.append(f"• {body}")
-        return _to_operator_bullets(cleaned)
+        expanded = _expand_crowded_bullet_lines(cleaned)
+        out = _to_operator_bullets(expanded)
+        if _instruction_looks_fragmented(out):
+            llm = _llm_repoint_instruction(s)
+            if llm:
+                return llm
+        return out
 
     # Keep view-ref appendix with its arrow on one line.
     s = _INSTR_ARROW_SPLIT.sub(r"\n\1 ", s)
@@ -614,9 +799,21 @@ def sanitize_operator_instruction(text: str) -> str:
             if prev.endswith("(") or re.search(r"\((?:sheet|page|rev)\s*$", prev, re.I):
                 lines[-1] = f"{prev} {line}"
                 continue
+        # Rejoin "32) on the …" onto previous unclosed parenthesis
+        if lines and re.match(r"^\d{1,3}\)\s+\S", line):
+            prev = lines[-1]
+            if prev.count("(") > prev.count(")"):
+                lines[-1] = f"{prev} {line}"
+                continue
         lines.append(line)
 
-    return _to_operator_bullets(lines)
+    out = _to_operator_bullets(lines)
+    if _instruction_looks_fragmented(out):
+        llm = _llm_repoint_instruction(_strip_instruction_chrome(text) or text)
+        if llm:
+            return llm
+    return out
+
 
 
 def _note_step_dict(sheet: int, step_no: int, text: str) -> dict | None:
@@ -843,6 +1040,41 @@ def _normalize_note_label(raw: str) -> str:
     return lab
 
 
+_CTQ_HEADER_RE = re.compile(
+    r"CTQ\s+POINTS?|CRITICAL\s+TO\s+QUALITY\s+POINTS?",
+    re.I,
+)
+
+
+def is_ctq_header_text(text: str | None) -> bool:
+    return bool(_CTQ_HEADER_RE.search(str(text or "")))
+
+
+def is_ctq_note(note: dict | None) -> bool:
+    """True when a note came from a CTQ / Critical-To-Quality block."""
+    if not isinstance(note, dict):
+        return False
+    if str(note.get("noteKind") or "").strip().lower() == "ctq":
+        return True
+    for key in ("noteSection", "section", "header", "blockTitle", "title"):
+        if is_ctq_header_text(str(note.get(key) or "")):
+            return True
+    return False
+
+
+def _apply_note_kind(note: dict, header: str) -> dict:
+    """Stamp noteKind / noteSection from the section header that produced the note."""
+    if not isinstance(note, dict):
+        return note
+    if is_ctq_header_text(header):
+        note["noteKind"] = "ctq"
+        if not note.get("noteSection") or str(note.get("noteSection") or "").upper().startswith("NOTE"):
+            note["noteSection"] = "CTQ POINTS"
+    else:
+        note.setdefault("noteKind", "note")
+    return note
+
+
 def _parse_notes_block(block: str, sheet: int) -> list[dict]:
     lines = [_norm_spaces(ln) for ln in block.splitlines() if _norm_spaces(ln)]
     steps: list[dict] = []
@@ -940,7 +1172,7 @@ def extract_notes(pages: list[str]) -> list[dict]:
     joined = _prepare_notes_text("\n\n".join(pages) if pages else "")
     notes: list[dict] = []
 
-    # Prefer explicit NOTE I / NOTE II sections (common on PCB GAs)
+    # Prefer explicit NOTE I / NOTE II / CTQ POINTS N sections (common on PCB GAs)
     sections = list(NOTE_SECTION.finditer(joined))
     if sections:
         for i, m in enumerate(sections):
@@ -952,18 +1184,25 @@ def extract_notes(pages: list[str]) -> list[dict]:
                 block = block[: cut.start()]
             block = NOTES_JUNK_TAIL.sub("", block)
             label = _normalize_note_label(m.group("label") or "")
+            header = m.group(0) or ""
+            ctq = is_ctq_header_text(header)
+            section_name = (
+                f"CTQ POINTS {label}".strip() if ctq else f"NOTE {label}"
+            )
             parsed = _parse_notes_block(_unglue_step_numbers(block), sheet=i + 1)
             # If section is a short intro + numbered list, keep steps; if single paragraph, keep as one
             if parsed:
                 for n in parsed:
-                    n["noteSection"] = f"NOTE {label}"
+                    n["noteSection"] = section_name
+                    n["noteKind"] = "ctq" if ctq else "note"
                 notes.extend(parsed)
             else:
                 body = _norm_spaces(block)
                 body = NOTES_JUNK_TAIL.sub("", body)
                 one = _note_step_dict(i + 1, 1, body)
                 if one:
-                    one["noteSection"] = f"NOTE {label}"
+                    one["noteSection"] = section_name
+                    one["noteKind"] = "ctq" if ctq else "note"
                     notes.append(one)
     else:
         # Inline / single-line notes: "NOTE : STICK ITEM 2 & 3 ..."
@@ -975,6 +1214,7 @@ def extract_notes(pages: list[str]) -> list[dict]:
                 continue
             one = _note_step_dict(i + 1, len(notes) + 1, body)
             if one:
+                _apply_note_kind(one, m.group(0) or "")
                 notes.append(one)
 
         matches = list(NOTES_HEADER.finditer(joined))
@@ -992,7 +1232,11 @@ def extract_notes(pages: list[str]) -> list[dict]:
             if stripped and not LEADING_STEP.match(stripped.split("\n", 1)[0]) and "1." not in stripped[:40]:
                 if re.match(rf"^{NOTE_LABEL}\s*[:;.]", m.group(0), re.I):
                     continue
-            notes.extend(_parse_notes_block(_unglue_step_numbers(block), sheet=i + 1))
+            hdr = m.group(0) or ""
+            parsed = _parse_notes_block(_unglue_step_numbers(block), sheet=i + 1)
+            for n in parsed:
+                _apply_note_kind(n, hdr)
+            notes.extend(parsed)
 
     # Also catch orphan OCR dot-steps (NOTE I header lost entirely)
     if not notes or len(notes) < 3:
@@ -1032,6 +1276,7 @@ def extract_notes(pages: list[str]) -> list[dict]:
         body = n.get("text") or ""
         if _is_junk_note_text(body):
             continue
+        n.setdefault("noteKind", "ctq" if is_ctq_note(n) else "note")
         key = re.sub(r"\s+", " ", body).upper()[:180]
         if key in seen:
             continue

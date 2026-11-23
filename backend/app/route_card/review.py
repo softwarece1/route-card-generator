@@ -18,6 +18,103 @@ _ITEM_REF_RE = re.compile(
 _BARE_ITEM_RE = re.compile(r"\b(?:ITM|ITEM)[-_\s]?(\d{1,4})\b", re.I)
 _AS_SHOWN_RE = re.compile(r"\bas\s*shown\b", re.I)
 
+# Diagnostic noise → skip or collapse (do not flood Needs review).
+_WARN_SKIP_RE = re.compile(
+    r"(?:"
+    r"BOM enriched with|"
+    r"Stage C filter:\s*dropped fastener|"
+    r"VLM Stage C page\s+\d+:\s*dropped (?:fastener-only|weak) group|"
+    r"merged continuation callout|"
+    r"balloon assembly group|"
+    r"extracted \d+ verbatim note line|"
+    r"Stage D LLM route produced|"
+    r"OP\s+\d+:\s*work centre unresolved|"
+    r"Ambiguous work centre match|"
+    r"token gate conflict"
+    r")",
+    re.I,
+)
+_WARN_BALLOON_MISS_RE = re.compile(
+    r"balloon\(s\)\s+for\s+item|not found in spatial OCR",
+    re.I,
+)
+_WARN_PLACEMENT_RE = re.compile(
+    r"could not resolve placement offsets|placements? are low-confidence",
+    re.I,
+)
+_WARN_AMBIGUOUS_BALLOON_RE = re.compile(
+    r"balloon positions were ambiguous",
+    re.I,
+)
+
+
+def summarize_extra_warnings(extra_warnings: list[str] | None) -> list[tuple[str, str, str]]:
+    """Collapse analyze diagnostics into few reviewable (kind, severity, message) rows.
+
+    Returns tuples suitable for RcReviewFlag creation. Informational Stage C/BOM
+    chatter and per-OP work-centre echoes are dropped (those already have
+    dedicated high/medium flags).
+    """
+    balloon_n = 0
+    placement_n = 0
+    ambiguous = False
+    kept: list[tuple[str, str, str]] = []
+    seen_kept: set[str] = set()
+
+    for raw in extra_warnings or []:
+        w = str(raw or "").strip()
+        if not w:
+            continue
+        if _WARN_SKIP_RE.search(w):
+            continue
+        if _WARN_BALLOON_MISS_RE.search(w):
+            balloon_n += 1
+            continue
+        if _WARN_PLACEMENT_RE.search(w):
+            placement_n += 1
+            continue
+        if _WARN_AMBIGUOUS_BALLOON_RE.search(w):
+            ambiguous = True
+            continue
+        # Dedupe identical leftovers (missing drawings, Stage D skip, etc.)
+        key = w.lower()
+        if key in seen_kept:
+            continue
+        seen_kept.add(key)
+        # Soften purely informational mind messages to low; keep once.
+        sev = "low"
+        if re.search(r"not uploaded|not provided|timed out|not reachable|skipped", w, re.I):
+            sev = "low"
+        kept.append(("warning", sev, w))
+
+    out: list[tuple[str, str, str]] = []
+    if balloon_n:
+        out.append(
+            (
+                "balloon_ocr",
+                "low",
+                f"Drawing mind: {balloon_n} balloon/OCR miss(es) — placement used heuristics; verify critical mounts on the GA.",
+            )
+        )
+    if placement_n:
+        out.append(
+            (
+                "placement",
+                "low",
+                f"Drawing mind: {placement_n} placement confidence note(s) — kept source wording; verify against the GA view.",
+            )
+        )
+    if ambiguous:
+        out.append(
+            (
+                "balloon_order",
+                "low",
+                "Drawing mind: some balloon positions were ambiguous — used note order for top–bottom placement.",
+            )
+        )
+    out.extend(kept)
+    return out
+
 
 def flag_dict(f: RcReviewFlag) -> dict:
     return {
@@ -85,6 +182,31 @@ def collect_drawing_item_refs(
     for cr in mind.get("crossRefs") or []:
         if isinstance(cr, dict):
             refs |= _refs_from_text(str(cr.get("text") or cr.get("itemNo") or ""))
+    for g in mind.get("assemblyGroups") or parsed.get("assemblyGroups") or []:
+        if not isinstance(g, dict):
+            continue
+        for key in ("parentItemNo",):
+            n = str(g.get(key) or "").strip()
+            if n.isdigit():
+                refs.add(re.sub(r"^0+", "", n) or n)
+        for ch in g.get("children") or []:
+            if isinstance(ch, dict):
+                n = str(ch.get("itemNo") or "").strip()
+                if n.isdigit():
+                    refs.add(re.sub(r"^0+", "", n) or n)
+        for r in g.get("references") or []:
+            n = str(r).strip()
+            if n.isdigit():
+                refs.add(re.sub(r"^0+", "", n) or n)
+    for op in mind.get("llmRouteOps") or parsed.get("llmRouteOps") or []:
+        if not isinstance(op, dict):
+            continue
+        refs |= _refs_from_text(op.get("instructionText") or op.get("instruction") or "")
+        for it in op.get("itemsUsed") or []:
+            if isinstance(it, dict):
+                n = str(it.get("itemNo") or "").strip()
+                if n.isdigit():
+                    refs.add(re.sub(r"^0+", "", n) or n)
     refs |= _refs_from_text(parsed.get("raw_text") or "")
     return refs
 
@@ -95,36 +217,103 @@ def build_item_link_report(parsed: dict, parts_list: dict | None, mind: dict | N
     pl_only = sorted(pl_nos - ga_refs, key=lambda x: int(x) if x.isdigit() else 0)
     ga_only = sorted(ga_refs - pl_nos, key=lambda x: int(x) if x.isdigit() else 0)
     matched = sorted(pl_nos & ga_refs, key=lambda x: int(x) if x.isdigit() else 0)
-    rows = []
+
     item_map = (parts_list or {}).get("itemMap") or {}
+    if not item_map and parts_list:
+        item_map = {
+            str(it.get("itemNo")): it
+            for it in (parts_list.get("items") or [])
+            if isinstance(it, dict) and it.get("itemNo") is not None
+        }
+
+    bom_by_no: dict[str, dict] = {}
+    for b in parsed.get("bom_items") or []:
+        if not isinstance(b, dict):
+            continue
+        key = str(b.get("itemNo") or "").strip()
+        if key:
+            bom_by_no[re.sub(r"^0+", "", key) or key] = b
+
+    callout_totals: dict[int, int] = {}
+    try:
+        from app.route_card.drawing_mind.assembly_groups import callout_qty_totals
+
+        mind = mind or {}
+        groups = mind.get("assemblyGroups") or parsed.get("assemblyGroups") or []
+        callout_totals = callout_qty_totals(groups)
+    except Exception:
+        callout_totals = {}
+
+    rows = []
+    qty_mismatches: list[str] = []
+    qty_checked = 0
     for n in sorted(pl_nos | ga_refs, key=lambda x: int(x) if x.isdigit() else 0):
         desc = ""
+        pl_qty = None
         meta = item_map.get(n) or item_map.get(str(n).zfill(2)) or {}
         if isinstance(meta, dict):
             desc = meta.get("description") or ""
+            if meta.get("qty") is not None:
+                try:
+                    pl_qty = int(meta.get("qty"))
+                except (TypeError, ValueError):
+                    pl_qty = None
+
+        bom = bom_by_no.get(n) or {}
+        extracted_qty = None
+        if bom.get("extractedQty") is not None:
+            try:
+                extracted_qty = int(bom.get("extractedQty"))
+            except (TypeError, ValueError):
+                extracted_qty = None
+        if extracted_qty is None and n.isdigit() and int(n) in callout_totals:
+            extracted_qty = callout_totals[int(n)]
+        if extracted_qty is None and bom.get("qty") is not None and n not in pl_nos:
+            try:
+                extracted_qty = int(bom.get("qty"))
+            except (TypeError, ValueError):
+                extracted_qty = None
+
+        qty_match = None
+        if pl_qty is not None and extracted_qty is not None:
+            qty_checked += 1
+            qty_match = pl_qty == extracted_qty
+            if not qty_match:
+                qty_mismatches.append(n)
+
+        status = (
+            "matched"
+            if n in pl_nos and n in ga_refs
+            else ("pl_only" if n in pl_nos else "ga_only")
+        )
+        if qty_match is False and status == "matched":
+            status = "qty_mismatch"
+
         rows.append(
             {
                 "itemNo": n,
                 "description": desc,
+                "plQty": pl_qty,
+                "extractedQty": extracted_qty,
+                "qtyMatch": qty_match,
                 "onPartsList": n in pl_nos,
                 "onDrawing": n in ga_refs,
-                "status": (
-                    "matched"
-                    if n in pl_nos and n in ga_refs
-                    else ("pl_only" if n in pl_nos else "ga_only")
-                ),
+                "status": status,
             }
         )
     return {
         "matched": matched,
         "plOnly": pl_only,
         "gaOnly": ga_only,
+        "qtyMismatches": qty_mismatches,
         "rows": rows,
         "summary": {
             "plCount": len(pl_nos),
             "gaRefCount": len(ga_refs),
             "matchedCount": len(matched),
             "mismatchCount": len(pl_only) + len(ga_only),
+            "qtyChecked": qty_checked,
+            "qtyMismatchCount": len(qty_mismatches),
         },
     }
 
@@ -237,10 +426,8 @@ def rebuild_review_flags(
             "AS SHOWN found without elaboration — confirm what the view shows.",
         )
 
-    for w in extra_warnings or []:
-        if not w or not str(w).strip():
-            continue
-        add("warning", "low", str(w).strip(), source="auto:warning")
+    for kind, severity, message in summarize_extra_warnings(extra_warnings):
+        add(kind, severity, message, source="auto:warning")
 
     report = build_item_link_report(parsed, parts_list, mind=mind)
     if report["summary"]["mismatchCount"] > 0:
@@ -250,6 +437,17 @@ def rebuild_review_flags(
             "pl_ga_mismatch",
             "medium" if (pl_n + ga_n) < 8 else "high",
             f"PL↔GA item mismatch: {pl_n} PL-only, {ga_n} drawing-only refs.",
+            source="auto:item_link",
+        )
+    qty_bad = int((report.get("summary") or {}).get("qtyMismatchCount") or 0)
+    if qty_bad > 0:
+        sample = ", ".join((report.get("qtyMismatches") or [])[:8])
+        add(
+            "pl_bom_qty_mismatch",
+            "medium" if qty_bad < 5 else "high",
+            f"PL qty ≠ BOM/callout extracted qty for {qty_bad} item(s)"
+            + (f": {sample}" if sample else "")
+            + ".",
             source="auto:item_link",
         )
 

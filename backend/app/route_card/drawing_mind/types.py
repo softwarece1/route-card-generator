@@ -71,6 +71,8 @@ class MindResult:
     pcb_links: list[PcbLinkFact] = field(default_factory=list)
     cross_refs: list[CrossRefFact] = field(default_factory=list)
     view_refs: list[dict[str, Any]] = field(default_factory=list)
+    assembly_groups: list[dict[str, Any]] = field(default_factory=list)
+    llm_route_ops: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,5 +83,7 @@ class MindResult:
             "pcbLinks": [p.to_dict() for p in self.pcb_links],
             "crossRefs": [c.to_dict() for c in self.cross_refs],
             "viewRefs": list(self.view_refs),
+            "assemblyGroups": list(self.assembly_groups),
+            "llmRouteOps": list(self.llm_route_ops),
             "warnings": list(dict.fromkeys(self.warnings)),
         }

@@ -42,6 +42,11 @@ VIEW_REF = re.compile(
     rf"(?:{REF_CUE}\s+)?(?:VIEWS?)\s*(?:NO\.?|#)?\s*([0-9]{{1,2}}|[A-Z])\b",
     re.I,
 )
+# SECTION A-A / SECTION BB / SECTION A
+SECTION_REF = re.compile(
+    rf"(?:{REF_CUE}\s+)?SECTION\s*([0-9]{{1,2}}|[A-Z])(?:\s*[-–—]\s*\1)?\b",
+    re.I,
+)
 # Named blocks without a number: INTERCONNECTION TABLE, TOOLING MATRIX
 NAMED_BLOCK = re.compile(
     r"\b((?:INTERCONNECTION|INTERCONNECT(?:ION)?)\s+(?:TABLE|LIST(?:ING)?|DETAILS?)|"
@@ -247,6 +252,12 @@ def extract_view_refs_from_text(text: str) -> list[tuple[str, str, str]]:
     for m in VIEW_REF.finditer(text or ""):
         rid = (m.group(1) or "").upper()
         add("view", rid, f"VIEW {rid}")
+    for m in SECTION_REF.finditer(text or ""):
+        rid = (m.group(1) or "").upper()
+        if rid.isalpha():
+            add("section", rid, f"SECTION {rid}-{rid}")
+        else:
+            add("section", rid, f"SECTION {rid}")
     for m in NAMED_BLOCK.finditer(text or ""):
         raw = re.sub(r"\s+", " ", m.group(1)).upper()
         if "INTERCONNECT" in raw:
@@ -502,7 +513,7 @@ def resolve_view_refs_for_notes(
                         if cand:
                             match = cand
                             break
-            elif kind in {"figure", "table", "detail", "view", "named"}:
+            elif kind in {"figure", "table", "detail", "view", "section", "named"}:
                 match = _find_by_content(catalog, kind=kind, rid=rid)
                 if not match and src_sheet:
                     # Same-sheet default when feature exists on source
@@ -511,8 +522,9 @@ def resolve_view_refs_for_notes(
                         or (kind == "table" and rid in src_sheet.tables)
                         or (kind == "detail" and rid in src_sheet.details)
                         or (kind == "named" and any(rid in n for n in src_sheet.named))
+                        or kind in {"view", "section"}
                     )
-                    if local_ok or kind in {"figure", "table", "detail"}:
+                    if local_ok or kind in {"figure", "table", "detail", "section"}:
                         match = src_sheet
                         status = "same_sheet"
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -115,6 +116,42 @@ def test_strips_revision_bleed_from_existing_bullets():
     assert "15. 03" not in out
     assert "indicated" in low
     assert "heat shrunk" in low
+
+
+def test_inline_bullets_become_pointwise_lines():
+    """Mid-line • markers (common after merge) must become one bullet per line."""
+    raw = (
+        "• Assemble Item 5 (Screw) on the ENGAGE CONNECTOR side, below Item 4. "
+        "• Assemble Item 53 (Washer) on the ENGAGE CONNECTOR side, below Item 5. "
+        "• Assemble Item 4 (Interface PCB) on the ENGAGE CONNECTOR side. "
+        "(All sizes are in mm.) Ensure all jam nuts are removed before fitment."
+    )
+    out = sanitize_operator_instruction(raw)
+    lines = [ln for ln in out.split("\n") if ln.strip()]
+    assert len(lines) >= 4, out
+    assert all(ln.lstrip().startswith("•") for ln in lines), out
+    assert "Item 5" in out and "Item 53" in out and "Item 4" in out
+    # Must not stay as one wrapped wall of text
+    assert "\n•" in out
+    assert "fitment" in out.lower()
+
+
+def test_part_number_paren_tail_not_cut_off():
+    """Do not split inside (… 306 32) or drop '32) on the …'."""
+    raw = (
+        "Assemble Item 5 (Screw hexagon skt hd aisi 316-m3x8, 3004 004 306 32) "
+        "on the ENGAGE CONNECTOR side, below Item 4. "
+        "Ensure all jam nuts are removed before fitment."
+    )
+    out = sanitize_operator_instruction(raw)
+    assert "3004 004 306 32)" in out, out
+    assert "on the ENGAGE CONNECTOR side" in out, out
+    assert "fitment" in out.lower(), out
+    # Must not start a bullet mid-phrase at the part-number tail
+    assert not any(
+        re.match(r"^•\s*32\)", ln) or re.match(r"^•\s*on the ENGAGE", ln)
+        for ln in out.splitlines()
+    ), out
 
 
 def test_generate_route_sanitizes_instruction_text():

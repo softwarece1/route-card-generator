@@ -369,6 +369,29 @@ def download_drawing_file(drawing_id: int, current_user: dict = Depends(get_curr
     )
 
 
+@router.get("/drawings/{drawing_id}/view-crop")
+def drawing_view_crop(
+    drawing_id: int,
+    kind: str = Query("table", description="table | figure | detail | named"),
+    id: str = Query(..., description="Ref id, e.g. 1, A, or INTERCONNECTION TABLE"),
+    page: int | None = Query(None, description="1-based PDF page / sheet"),
+    vlm: bool = Query(
+        True,
+        description="If OCR caption miss, try VLM locate (still gated; never invents)",
+    ),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return a gated visual crop of TABLE/FIGURE/DETAIL/named block from the PDF."""
+    return service.drawing_view_crop(
+        drawing_id,
+        kind=kind,
+        ref_id=id,
+        page=page,
+        user=current_user,
+        allow_vlm=vlm,
+    )
+
+
 @router.get("/drawings/{drawing_id}/table-crop")
 def drawing_table_crop(
     drawing_id: int,

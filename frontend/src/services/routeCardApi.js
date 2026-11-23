@@ -177,19 +177,29 @@ export async function fetchDrawingFileBlob(drawingId) {
   return data;
 }
 
-/** Gated TABLE crop — { available, imageBase64, … } or { available:false, reason }. */
-export async function fetchDrawingTableCrop(drawingId, { table, page } = {}) {
-  const params = { table: String(table || '').trim() };
+/** Gated TABLE/FIGURE/DETAIL/named crop — { available, imageBase64, … }. */
+export async function fetchDrawingViewCrop(drawingId, { kind = 'table', id, page, vlm = true } = {}) {
+  const params = {
+    kind: String(kind || 'table').trim().toLowerCase(),
+    id: String(id || '').trim(),
+    vlm: vlm ? true : false,
+  };
   if (page != null && page !== '') params.page = page;
   try {
-    const { data } = await http.get(`${BASE}/drawings/${drawingId}/table-crop`, {
+    const { data } = await http.get(`${BASE}/drawings/${drawingId}/view-crop`, {
       params,
-      timeout: 60_000,
+      // OCR is fast; VLM caption locate may need longer
+      timeout: vlm ? 180_000 : 60_000,
     });
     return data;
   } catch (error) {
-    throw new Error(asError(error, 'Could not load table crop'));
+    throw new Error(asError(error, 'Could not load drawing view crop'));
   }
+}
+
+/** Gated TABLE crop — { available, imageBase64, … } or { available:false, reason }. */
+export async function fetchDrawingTableCrop(drawingId, { table, page } = {}) {
+  return fetchDrawingViewCrop(drawingId, { kind: 'table', id: table, page });
 }
 
 export async function generateRouteCard(drawingId) {

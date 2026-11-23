@@ -9,8 +9,31 @@ from app.route_card.models import RcDepartment, RcPlant
 from app.route_card.op_templates import _dept, _is_admin
 
 
-def plant_dict(p: RcPlant) -> dict:
+def _sbu_names_by_plant() -> dict[str, list[str]]:
+    """Map plant code → linked SBU display names (active departments)."""
+    by_plant: dict[str, list[str]] = {}
+    for d in select(d for d in RcDepartment if d.is_active)[:]:
+        plant = (d.plant_id or "").strip()
+        if not plant:
+            continue
+        label = (d.name or d.code or "").strip()
+        if not label:
+            continue
+        by_plant.setdefault(plant, [])
+        if label not in by_plant[plant]:
+            by_plant[plant].append(label)
+    return by_plant
+
+
+def plant_dict(p: RcPlant, *, sbu_names: list[str] | None = None) -> dict:
     synced = getattr(p, "work_center_synced_at", None)
+    sbus = [n for n in (sbu_names or []) if n]
+    if sbus:
+        label = f"{p.code} - {', '.join(sbus)}"
+    elif (p.name or "").strip() and (p.name or "").strip() != (p.code or "").strip():
+        label = f"{p.code} - {p.name.strip()}"
+    else:
+        label = p.code
     return {
         "id": p.id,
         "code": p.code,
@@ -19,7 +42,9 @@ def plant_dict(p: RcPlant) -> dict:
         "isActive": bool(p.is_active),
         "sortOrder": p.sort_order,
         "workCenterSyncedAt": synced.isoformat() + "Z" if synced else None,
-        "label": f"{p.code} — {p.name}",
+        "sbuNames": sbus,
+        "sbuName": sbus[0] if sbus else "",
+        "label": label,
         "value": p.code,
     }
 
@@ -38,6 +63,7 @@ def _plant_id_for_dept(dept: str) -> str:
 
 @db_session
 def list_plants(active_only: bool = True) -> list[dict]:
+    sbu_map = _sbu_names_by_plant()
     rows = select(p for p in RcPlant)[:]
     out = []
     for p in rows:
@@ -45,7 +71,7 @@ def list_plants(active_only: bool = True) -> list[dict]:
             continue
         out.append(p)
     out.sort(key=lambda p: (p.sort_order, p.code))
-    return [plant_dict(p) for p in out]
+    return [plant_dict(p, sbu_names=sbu_map.get(p.code) or []) for p in out]
 
 
 @db_session
@@ -53,7 +79,8 @@ def get_plant(plant_id: int) -> dict:
     p = RcPlant.get(id=plant_id)
     if not p:
         raise HTTPException(404, "Plant not found")
-    return plant_dict(p)
+    sbu_map = _sbu_names_by_plant()
+    return plant_dict(p, sbu_names=sbu_map.get(p.code) or [])
 
 
 @db_session
@@ -157,4 +184,5 @@ def upsert_plant(body: dict, plant_id: int | None = None) -> dict:
             m.plant = code
 
     commit()
-    return plant_dict(p)
+    sbu_map = _sbu_names_by_plant()
+    return plant_dict(p, sbu_names=sbu_map.get(p.code) or [])

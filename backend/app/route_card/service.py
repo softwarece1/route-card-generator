@@ -1021,6 +1021,8 @@ def analyze_drawing(drawing_id: int) -> dict:
             source_filename=drawing.filename,
         )
         parsed["notes"] = mind_result.notes
+        parsed["assemblyGroups"] = list(mind_result.assembly_groups or [])
+        parsed["llmRouteOps"] = list(mind_result.llm_route_ops or [])
         parsed["warnings"] = list(
             dict.fromkeys((parsed.get("warnings") or []) + spatial_warns + mind_result.warnings)
         )
@@ -1542,15 +1544,17 @@ def create_route_remark(route_id: int, body: str, user: dict | None = None) -> d
 
 
 @db_session
-def drawing_table_crop(
+def drawing_view_crop(
     drawing_id: int,
     *,
-    table_id: str,
+    kind: str,
+    ref_id: str,
     page: int | None = None,
     user: dict | None = None,
+    allow_vlm: bool = True,
 ) -> dict:
-    """Gated TABLE N image crop from a drawing PDF. Never invents cell data."""
-    from app.route_card.drawing_mind.table_crop import render_table_crop
+    """Gated TABLE/FIGURE/DETAIL/named image crop from a drawing PDF."""
+    from app.route_card.drawing_mind.table_crop import render_view_crop
 
     drawing = RcDrawing.get(id=drawing_id)
     if not drawing:
@@ -1559,18 +1563,43 @@ def drawing_table_crop(
         _assert_session_access(drawing.session, user, write=False)
     data = load_bytes(drawing)
     ext = Path(drawing.filename or "").suffix.lower()
+    kind_n = (kind or "table").strip().lower()
+    rid = (ref_id or "").strip()
+    label_guess = {
+        "figure": f"FIGURE {rid.upper() or '?'}",
+        "detail": f"DETAIL {rid.upper() or '?'}",
+        "named": (rid or "NAMED BLOCK").upper(),
+        "table": f"TABLE {rid.upper() or '?'}",
+    }.get(kind_n, f"TABLE {rid.upper() or '?'}")
     if ext != ".pdf":
         return {
             "available": False,
-            "reason": "Table crop is only available for PDF drawings",
-            "label": f"TABLE {(table_id or '').strip().upper() or '?'}",
+            "reason": "View crop is only available for PDF drawings",
+            "kind": kind_n,
+            "label": label_guess,
             "drawingId": drawing_id,
             "filename": drawing.filename or "",
         }
-    result = render_table_crop(data, table_id=table_id, page_no=page)
+    result = render_view_crop(
+        data, kind=kind_n, ref_id=rid, page_no=page, allow_vlm=bool(allow_vlm)
+    )
     result["drawingId"] = drawing_id
     result["filename"] = drawing.filename or ""
     return result
+
+
+@db_session
+def drawing_table_crop(
+    drawing_id: int,
+    *,
+    table_id: str,
+    page: int | None = None,
+    user: dict | None = None,
+) -> dict:
+    """Gated TABLE N image crop from a drawing PDF. Never invents cell data."""
+    return drawing_view_crop(
+        drawing_id, kind="table", ref_id=table_id, page=page, user=user
+    )
 
 
 @db_session
@@ -2029,6 +2058,8 @@ def _analyze_one_ga(
     )
     parsed["notes"] = mind_result.notes
     parsed["mind"] = mind_result.to_dict()
+    parsed["assemblyGroups"] = list(mind_result.assembly_groups or [])
+    parsed["llmRouteOps"] = list(mind_result.llm_route_ops or [])
     parsed["warnings"] = list(
         dict.fromkeys(
             (parsed.get("warnings") or [])
@@ -2216,6 +2247,43 @@ def _analyze_session_body(
                 )
             )
         ]
+        assembly_groups = [
+            g for m in mind_payloads for g in (m.get("assemblyGroups") or [])
+        ]
+        try:
+            from app.route_card.drawing_mind.assembly_groups import (
+                bom_items_from_assembly_groups,
+                dedupe_groups,
+                filter_weak_groups,
+                merge_bom_with_balloon_items,
+            )
+
+            assembly_groups = dedupe_groups(assembly_groups)
+            assembly_groups, _fwarns = filter_weak_groups(
+                assembly_groups, parts_list=parts_list
+            )
+            for w in _fwarns:
+                if w:
+                    extra_warnings.append(f"Stage C filter: {w}")
+            balloon_bom = bom_items_from_assembly_groups(
+                assembly_groups, parts_list=parts_list
+            )
+            if balloon_bom:
+                parsed["bom_items"] = merge_bom_with_balloon_items(
+                    parsed.get("bom_items") or [], balloon_bom
+                )
+                extra_warnings.append(
+                    f"BOM enriched with {len(balloon_bom)} balloon callout item(s) "
+                    f"({len(parsed.get('bom_items') or [])} total BOM rows)."
+                )
+        except Exception:
+            try:
+                from app.route_card.drawing_mind.assembly_groups import dedupe_groups
+
+                assembly_groups = dedupe_groups(assembly_groups)
+            except Exception:
+                pass
+
         combined_mind = {
             "engine": (mind_payloads[0].get("engine") if mind_payloads else "cpu_spatial"),
             "placements": [
@@ -2226,6 +2294,8 @@ def _analyze_session_body(
             ],
             "crossRefs": parsed.get("crossRefs") or [],
             "viewRefs": parsed.get("viewRefs") or [],
+            "assemblyGroups": assembly_groups,
+            "llmRouteOps": [],
             "warnings": list(
                 dict.fromkeys(
                     [w for m in mind_payloads for w in (m.get("warnings") or [])]
@@ -2235,9 +2305,79 @@ def _analyze_session_body(
             "gaSources": parsed.get("gaSources") or [],
         }
         parsed["mind"] = combined_mind
+        parsed["assemblyGroups"] = assembly_groups
 
         if parts_list:
             parsed["bom_items"] = enrich_bom_with_pl(parsed.get("bom_items") or [], parts_list)
+
+        # Stage D: LLM full route from notes + balloon groups + PL (soft-fail)
+        llm_route_ops: list = []
+        try:
+            from app.config.settings import settings as _settings
+            from app.route_card.drawing_mind.assembly_groups import (
+                generate_llm_route_ops,
+                group_item_nos,
+                pl_item_set,
+            )
+            from app.route_card.drawing_mind.ollama_client import (
+                ollama_reachable,
+                vlm_status,
+            )
+
+            base_url = getattr(_settings, "OLLAMA_BASE_URL", "")
+            model = getattr(_settings, "OLLAMA_VLM_MODEL", "google/gemma-4-E4B-it")
+            timeout = float(getattr(_settings, "OLLAMA_TIMEOUT_SEC", 900) or 900)
+            max_tokens = min(
+                4096, int(getattr(_settings, "OLLAMA_VLM_MAX_TOKENS", 2048) or 2048) * 2
+            )
+            engine_name = (getattr(_settings, "DRAWING_MIND_ENGINE", "") or "").lower()
+            ok, _err = vlm_status(base_url, model=model, timeout=min(5.0, timeout))
+            if (
+                engine_name in {"local_vlm", "vlm"}
+                and (ok or ollama_reachable(base_url, timeout=min(5.0, timeout)))
+                and (parsed.get("notes") or assembly_groups)
+            ):
+                cited = set()
+                for n in parsed.get("notes") or []:
+                    for i in n.get("items") or []:
+                        try:
+                            cited.add(int(i))
+                        except (TypeError, ValueError):
+                            pass
+                cited |= {
+                    int(x) for x in group_item_nos(assembly_groups) if str(x).isdigit()
+                }
+                gaps = [str(n) for n in sorted(pl_item_set(parts_list) - cited)]
+                llm_route_ops, d_warns = generate_llm_route_ops(
+                    notes=parsed.get("notes") or [],
+                    assembly_groups=assembly_groups,
+                    parts_list=parts_list,
+                    model=model,
+                    base_url=base_url,
+                    timeout=timeout,
+                    max_tokens=max_tokens,
+                    cancel_event=cancel_event,
+                    pl_gaps=gaps,
+                )
+                for w in d_warns:
+                    extra_warnings.append(f"LLM route: {w}")
+                if llm_route_ops:
+                    extra_warnings.append(
+                        f"Drawing mind: Stage D LLM route produced {len(llm_route_ops)} operation(s)."
+                    )
+            elif engine_name in {"local_vlm", "vlm"}:
+                extra_warnings.append(
+                    "Drawing mind: Stage D LLM route skipped (vision server not reachable)."
+                )
+        except AnalysisCancelled:
+            raise
+        except Exception as exc:
+            extra_warnings.append(f"Drawing mind: Stage D LLM route skipped ({exc}).")
+            llm_route_ops = []
+
+        combined_mind["llmRouteOps"] = llm_route_ops
+        parsed["llmRouteOps"] = llm_route_ops
+        parsed["mind"] = combined_mind
 
         # Persist merged extraction on primary drawing for route-card FK
         extraction = RcExtraction(

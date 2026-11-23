@@ -123,10 +123,20 @@ const FROM_DRAWING_RE = /\s*\(\s*From\s+drawing\s*:\s*[^)]*\)\s*/gi;
 const PARTS_APPENDIX_RE =
   /\s*Parts\s*:\s*.+?(?=(?:\s*(?:Torque|Connectors|Standard|Placement)\s*:)|$)/gi;
 const PN_TOKEN_RE = /P\/?N\s*:\s*(?:\d{4}\s+\d{3}\s+\d{3}\s+\d{2}|\d{10,14})/gi;
-// Capitalized sentence-start imperatives only (never mid-phrase "shall slide").
-const ACTION_SPLIT_RE =
-  /(?<=[\w).!?])\s+(?=(?:Carefully|Ensure|Further|Now|Engage|Refer|Place|Install|Assemble|Verify|Check|Peel|Stick|Paste|Apply|Mount|Secure)\b)/g;
+// Imperatives only after a clause end — never mid-phrase (that cut part-number tails).
+const ACTION_VERBS =
+  "Carefully|Ensure|Further|Now|Engage|Refer|Place|Install|Assemble|Verify|Check|Peel|Stick|Paste|Apply|Mount|Secure|Fix|Bond|Glue|Torque|Tighten|Remove|Replace|Fit|Insert";
+const ACTION_SPLIT_RE = new RegExp(
+  `(?<=[.!?;)])\\s+(?=(?:${ACTION_VERBS})\\b)|(?<=\\d[Ll])\\s+(?=(?:Now|Further|Carefully|Ensure)\\b)`,
+  "g"
+);
 const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+(?=[A-Z(])/g;
+const MULTI_SENTENCE_IN_LINE_RE = new RegExp(
+  `(?<=[.!?])\\s+(?=[A-Z(])|(?<=[.!?;)])\\s+(?=(?:${ACTION_VERBS})\\b)`,
+  "g"
+);
+/** Mid-paragraph bullet glyphs glued into one line (… Item 4. • Assemble …). */
+const INLINE_BULLET_SPLIT_RE = /(?<!\n)\s*[•·●▪‣⁃]\s+/g;
 const KEEP_PN_CONTEXT_RE = /(?:tool|engage|using|fastener|part\s*no|item)\s*$/i;
 
 function stripChromePartNumbers(text) {
@@ -183,6 +193,27 @@ function isRevisionJunkBullet(body) {
   return false;
 }
 
+function expandCrowdedBulletLines(lines) {
+  const out = [];
+  for (const ln of lines) {
+    const body = String(ln || "")
+      .replace(/^[-•*·●]\s+/, "")
+      .trim();
+    if (!body) continue;
+    if (!MULTI_SENTENCE_IN_LINE_RE.test(body)) {
+      MULTI_SENTENCE_IN_LINE_RE.lastIndex = 0;
+      out.push(`• ${body}`);
+      continue;
+    }
+    MULTI_SENTENCE_IN_LINE_RE.lastIndex = 0;
+    for (const part of body.replace(MULTI_SENTENCE_IN_LINE_RE, "\n").split("\n")) {
+      const p = part.replace(/\s+/g, " ").replace(/^[\s;:|]+|[\s;:|]+$/g, "");
+      if (p) out.push(`• ${p}`);
+    }
+  }
+  return out;
+}
+
 function toOperatorBullets(lines) {
   const deduped = [];
   for (const line of lines) {
@@ -193,14 +224,37 @@ function toOperatorBullets(lines) {
     deduped.push(cleaned);
   }
   if (!deduped.length) return "";
-  if (deduped.length === 1 && !/^(?:[-•*]|\d+[.)]|[a-z]\)|->|→)\s/i.test(deduped[0])) {
-    return deduped[0];
+
+  // Rejoin orphaned "32) on the …" onto previous unclosed "(" line.
+  const joined = [];
+  for (const line of deduped) {
+    if (
+      joined.length &&
+      /^\d{1,3}\)\s+\S/.test(line) &&
+      (joined[joined.length - 1].match(/\(/g) || []).length >
+        (joined[joined.length - 1].match(/\)/g) || []).length
+    ) {
+      joined[joined.length - 1] = `${joined[joined.length - 1]} ${line}`;
+      continue;
+    }
+    joined.push(line);
   }
-  return deduped
+
+  const stepStart = new RegExp(
+    `^(?:${ACTION_VERBS}|Open|Use|Follow|Torque)\\b`,
+    "i"
+  );
+  // Always point-wise — one bullet per line for editor + OARC print.
+  return joined
     .map((line) => {
       if (/^(?:->|→)\s/.test(line)) return line.startsWith("• ") ? line : `• ${line}`;
-      if (/^(?:[-•*]|\d+[.)]|[a-z]\))\s/i.test(line)) {
-        const rest = line.replace(/^(?:[-•*]|\d+[.)]|[a-z]\))\s*/i, "").trim();
+      const m = line.match(/^(?:([-•*])|(\d+[.)])|([a-z]\)))\s+(.*)$/i);
+      if (m) {
+        const rest = (m[4] || "").trim();
+        // Digits like "32) on the face…" are broken paren tails — keep intact.
+        if (m[2] && rest && !stepStart.test(rest)) {
+          return line.startsWith("• ") ? line : `• ${line}`;
+        }
         return rest ? `• ${rest}` : line;
       }
       return `• ${line}`;
@@ -223,22 +277,24 @@ export function sanitizeOperatorInstruction(text) {
   s = s.replace(PAGE_OF_RE, " ");
   s = stripChromePartNumbers(s);
   s = stripRevisionTableBleed(s);
+  // Break mid-line bullets onto their own lines before any other splits.
+  s = s.replace(INLINE_BULLET_SPLIT_RE, "\n• ");
   s = s.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   if (!s) return "";
 
   const rawLines = s.split("\n").map((ln) => ln.trim()).filter(Boolean);
-  const bulletish = rawLines.filter((ln) => /^[-•*]/.test(ln)).length;
+  const bulletish = rawLines.filter((ln) => /^[-•*·●]/.test(ln)).length;
   if (rawLines.length >= 2 && bulletish >= Math.max(2, Math.floor(rawLines.length * 0.5))) {
     const cleaned = [];
     for (const ln of rawLines) {
-      let body = ln.replace(/^[-•*]\s+/, "").trim();
+      let body = ln.replace(/^[-•*·●]\s+/, "").trim();
       body = stripRevisionTableBleed(body);
       if (!body || /^P\/?N\s*:\s*[\d\s]+$/i.test(body) || isRevisionJunkBullet(body)) {
         continue;
       }
       cleaned.push(`• ${body}`);
     }
-    return toOperatorBullets(cleaned);
+    return toOperatorBullets(expandCrowdedBulletLines(cleaned));
   }
 
   s = s.replace(/\s*(->|→)\s*/g, "\n$1 ");
@@ -246,17 +302,24 @@ export function sanitizeOperatorInstruction(text) {
   s = s.replace(SENTENCE_SPLIT_RE, "\n");
   s = normalizeInstructionCase(s);
 
-  const lines = s
-    .split("\n")
-    .map((line) => line.replace(/\s+/g, " ").replace(/^[\s;:|]+|[\s;:|]+$/g, ""))
-    .filter((line) => {
-      if (!line) return false;
-      if (/^P\/?N\s*:\s*[\d\s]+$/i.test(line)) return false;
-      if (/^Page\s+\d+\s+of\s+\d+$/i.test(line)) return false;
-      const body = line.replace(/^[-•*]\s+/, "").trim();
-      if (isRevisionJunkBullet(body)) return false;
-      return true;
-    });
+  const lines = [];
+  for (const rawLine of s.split("\n")) {
+    const line = rawLine.replace(/\s+/g, " ").replace(/^[\s;:|]+|[\s;:|]+$/g, "");
+    if (!line) continue;
+    if (/^P\/?N\s*:\s*[\d\s]+$/i.test(line)) continue;
+    if (/^Page\s+\d+\s+of\s+\d+$/i.test(line)) continue;
+    const body = line.replace(/^[-•*]\s+/, "").trim();
+    if (isRevisionJunkBullet(body)) continue;
+    // Rejoin "32) on the …" onto previous unclosed parenthesis
+    if (lines.length && /^\d{1,3}\)\s+\S/.test(line)) {
+      const prev = lines[lines.length - 1];
+      if ((prev.match(/\(/g) || []).length > (prev.match(/\)/g) || []).length) {
+        lines[lines.length - 1] = `${prev} ${line}`;
+        continue;
+      }
+    }
+    lines.push(line);
+  }
 
   return toOperatorBullets(lines);
 }

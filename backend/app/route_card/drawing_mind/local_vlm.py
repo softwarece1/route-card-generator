@@ -43,11 +43,13 @@ OCR transcript of the same crop (character authority — trust these characters;
 {ocr_text}
 -----
 
-Copy every numbered instruction line under NOTE, NOTE I, NOTE II, NOTES, ASSEMBLY INSTRUCTIONS, CTQ, REMARKS, or similar.
+Copy every numbered instruction line under NOTE, NOTE I, NOTE II, NOTES, ASSEMBLY INSTRUCTIONS, CTQ POINTS, CRITICAL TO QUALITY, REMARKS, or similar.
 Keep the drawing spelling, punctuation, ranges, and part numbers exactly.
-Do not simplify English. Do not "correct" words (RoHS, ENAMELED, BARE, FACIA, etc.).
+Do not simplify English. Do not "correct" words (RoHS, ENAMELED, BARE, FACIA, NYCOSOL, etc.).
 Do not merge lines. Do not drop a line. Do not invent a component value, item, connector, or size.
 If a glyph is unreadable after checking OCR and the image, write [unreadable] in that span.
+Use title "CTQ POINTS" (not NOTE) for Critical-To-Quality / CTQ blocks so they stay quality checks.
+CTQ lines are safety-critical: prefer OCR characters; never truncate mid-word; never append table/BOM bleed after the CTQ sentence.
 
 Return JSON only (shape — no sample designators or part numbers):
 {{
@@ -92,6 +94,12 @@ Return JSON only describing placement you can SEE (balloon numbers, surface labe
 Do not invent part numbers, item numbers, or dimensions that are not visible.
 If nothing useful is visible, return empty placements.
 
+Surface rules (critical):
+- Set "surface" ONLY when a clear mounting-face / port label is printed on the drawing
+  (e.g. DC OUT, AC OUT, AC IN, MOUNTING FACE, FRONT FACE, REAR FACE).
+- Do NOT use bare FRONT / REAR / view titles (FRONT VIEW, REAR VIEW, SIDE VIEW) as surface.
+- If the face is unclear, leave "surface" as "".
+
 {{
   "placements": [
     {{
@@ -118,7 +126,11 @@ _LINK_PHRASE = re.compile(
     re.I,
 )
 _LINE_START = re.compile(r"^\s*(\d{1,2})[\.\)]\s*(.*)$")
-_NOTE_TITLE = re.compile(r"^\s*(NOTE(?:\s*[IVX]+)?|NOTES|ASSEMBLY\s+INSTRUCTIONS|CTQ|REMARKS)\b.*$", re.I)
+_NOTE_TITLE = re.compile(
+    r"^\s*(NOTE(?:\s*[IVX]+)?|NOTES|ASSEMBLY\s+INSTRUCTIONS|"
+    r"CTQ(?:\s+POINTS?)?|CRITICAL\s+TO\s+QUALITY(?:\s+POINTS?)?|REMARKS)\b.*$",
+    re.I,
+)
 # Tokens that must match exactly between OCR and model (case-insensitive).
 _TOKEN = re.compile(
     r"(?:"
@@ -658,6 +670,19 @@ def _build_note_dict(
     }
     if block_title:
         out["blockTitle"] = block_title
+        try:
+            from app.route_card.extractor import is_ctq_header_text
+
+            if is_ctq_header_text(block_title):
+                out["noteKind"] = "ctq"
+                out["noteSection"] = "CTQ POINTS"
+            else:
+                out.setdefault("noteKind", "note")
+                out.setdefault("noteSection", block_title)
+        except Exception:
+            out.setdefault("noteKind", "note")
+    else:
+        out.setdefault("noteKind", "note")
     if source_drawing_id is not None:
         out["sourceDrawingId"] = source_drawing_id
     if source_filename:
@@ -679,6 +704,23 @@ _WEAK_ELAB = re.compile(
     r"\b(specified surface|indicated face|as shown|as indicated)\b",
     re.I,
 )
+
+
+def _sanitize_surface_label(surface: str) -> str:
+    """Keep only clear mounting-face labels; drop FRONT/REAR view titles and vague fillers."""
+    from app.route_card.drawing_mind.spatial import (
+        is_strong_mounting_surface,
+        is_weak_surface_label,
+    )
+
+    surf = re.sub(r"\s+", " ", (surface or "").strip())
+    if not surf:
+        return ""
+    if _WEAK_SURFACE.match(surf) or is_weak_surface_label(surf):
+        return ""
+    if not is_strong_mounting_surface(surf):
+        return ""
+    return surf
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -730,9 +772,7 @@ def _normalize_placement(raw: Any, *, source_page: int) -> list[dict[str, Any]]:
             continue
         if item_no < 1:
             continue
-        surface = str(p.get("surface") or "").strip()
-        if _WEAK_SURFACE.match(surface):
-            surface = ""
+        surface = _sanitize_surface_label(str(p.get("surface") or ""))
         conf = _coerce_float(p.get("confidence"))
         if conf is None:
             conf = 0.7 if surface else 0.45
@@ -773,7 +813,9 @@ def _compose_elaboration_from_placement(
     parts: list[str] = []
     if re.search(r"adhesive|glue|stick|paste|bond", raw_note or "", re.I):
         parts.append("Use proper adhesive (glue).")
-    surface = next((p.get("surface") for p in placements if p.get("surface")), "")
+    surface = _sanitize_surface_label(
+        next((str(p.get("surface") or "") for p in placements if p.get("surface")), "")
+    )
     view_bit = f" ({view_used})" if view_used else ""
     if surface:
         parts.append(f"Stick these parts on the {surface}{view_bit}.")
@@ -782,6 +824,7 @@ def _compose_elaboration_from_placement(
     for p in placements:
         item = p.get("itemNo")
         offs = p.get("offsets") or []
+        item_surface = _sanitize_surface_label(str(p.get("surface") or "")) or surface
         bits: list[str] = []
         for o in offs:
             frm = o.get("from")
@@ -794,8 +837,8 @@ def _compose_elaboration_from_placement(
                 bits.append(f"keep {val:g} {unit} from {frm}")
         if bits:
             parts.append(f"Item {item}: " + "; ".join(bits) + ".")
-        elif surface:
-            parts.append(f"Item {item}: stick on {surface}.")
+        elif item_surface:
+            parts.append(f"Item {item}: stick on {item_surface}.")
     return " ".join(parts).strip()
 
 
@@ -940,9 +983,7 @@ def _stage_b_grounded_placements(
         if allowed_items and item not in allowed_items:
             continue
         offsets = _normalize_offsets(p.get("offsets"))
-        surface = str(p.get("surface") or "").strip()
-        if _WEAK_SURFACE.match(surface):
-            surface = ""
+        surface = _sanitize_surface_label(str(p.get("surface") or ""))
         if not offsets and not surface:
             continue
         conf = _coerce_float(p.get("confidence")) or 0.55
@@ -989,8 +1030,20 @@ def _prefer_vlm_placements(
     vlm_facts = _placement_facts(vlm_placements)
     if not vlm_facts:
         return cpu_placements
-    if any((f.surface and not _WEAK_SURFACE.match(f.surface)) or f.offsets for f in vlm_facts):
-        return vlm_facts
+    if any((_sanitize_surface_label(f.surface) or f.offsets) for f in vlm_facts):
+        # Drop weak FRONT/REAR surfaces the model may still emit
+        cleaned: list[PlacementFact] = []
+        for f in vlm_facts:
+            cleaned.append(
+                PlacementFact(
+                    item_no=f.item_no,
+                    surface=_sanitize_surface_label(f.surface),
+                    offsets=list(f.offsets or []),
+                    confidence=f.confidence,
+                    source_page=f.source_page,
+                )
+            )
+        return cleaned
     return cpu_placements
 
 
@@ -1030,6 +1083,7 @@ class LocalVlmMind(DrawingMind):
         warnings = list(cpu_result.warnings)
         cpu_placements: list[PlacementFact] = list(cpu_result.placements)
         pcb_links: list[PcbLinkFact] = list(cpu_result.pcb_links)
+        cpu_groups: list[dict[str, Any]] = list(cpu_result.assembly_groups or [])
         ocr_notes = [dict(n) for n in (cpu_result.notes or ga_extraction.get("notes") or [])]
 
         if not pdf_bytes:
@@ -1039,6 +1093,7 @@ class LocalVlmMind(DrawingMind):
                 notes=ocr_notes,
                 placements=cpu_placements,
                 pcb_links=pcb_links,
+                assembly_groups=cpu_groups,
                 warnings=warnings,
             )
 
@@ -1066,6 +1121,7 @@ class LocalVlmMind(DrawingMind):
                 notes=ocr_notes,
                 placements=cpu_placements,
                 pcb_links=pcb_links,
+                assembly_groups=cpu_groups,
                 warnings=warnings,
             )
         if not ok:
@@ -1079,6 +1135,7 @@ class LocalVlmMind(DrawingMind):
                 notes=ocr_notes,
                 placements=cpu_placements,
                 pcb_links=pcb_links,
+                assembly_groups=cpu_groups,
                 warnings=warnings,
             )
 
@@ -1101,6 +1158,7 @@ class LocalVlmMind(DrawingMind):
                 notes=ocr_notes,
                 placements=cpu_placements,
                 pcb_links=pcb_links,
+                assembly_groups=cpu_groups,
                 warnings=warnings,
             )
 
@@ -1111,6 +1169,7 @@ class LocalVlmMind(DrawingMind):
                 notes=ocr_notes,
                 placements=cpu_placements,
                 pcb_links=pcb_links,
+                assembly_groups=cpu_groups,
                 warnings=warnings,
             )
 
@@ -1366,6 +1425,97 @@ class LocalVlmMind(DrawingMind):
             except Exception as exc:
                 warnings.append(f"Drawing mind (local_vlm): Stage B skipped ({exc}).")
 
+        # Stage C: balloon / callout assembly groups (full-page vision + PL gate)
+        assembly_groups: list[dict[str, Any]] = list(cpu_groups)
+        try:
+            from app.route_card.drawing_mind.assembly_groups import (
+                dedupe_groups,
+                extract_assembly_groups_from_page,
+                filter_weak_groups,
+                groups_to_synthetic_notes,
+                merge_notes_with_balloon_notes,
+                scan_text_for_clusters,
+                validate_assembly_group,
+                pl_item_set,
+            )
+
+            pl_nos = pl_item_set(parts_list)
+            stage_c_tokens = min(
+                2048, int(getattr(settings, "OLLAMA_VLM_MAX_TOKENS", 2048) or 2048)
+            )
+            page_imgs_c = render_pdf_pages(
+                pdf_bytes,
+                dpi=page_dpi,
+                max_pages=max_pages,
+                max_edge=page_max_edge,
+                page_indexes=page_indexes,
+                cancel_event=cancel_event,
+            )
+            vlm_groups: list[dict[str, Any]] = []
+            for img in page_imgs_c:
+                check_cancelled(cancel_event)
+                page_no = int(img.get("page") or 1)
+                try:
+                    groups_page, c_warns = extract_assembly_groups_from_page(
+                        image_b64=img["b64"],
+                        image_mime=str(img.get("mime") or "image/jpeg"),
+                        parts_list=parts_list,
+                        page_no=page_no,
+                        model=model,
+                        base_url=base_url,
+                        timeout=timeout,
+                        max_tokens=stage_c_tokens,
+                        cancel_event=cancel_event,
+                        source_drawing_id=source_drawing_id,
+                        source_filename=source_filename,
+                        system=system_prompt,
+                    )
+                    vlm_groups.extend(groups_page)
+                    warnings.extend(
+                        f"VLM Stage C page {page_no}: {w}" for w in c_warns if w
+                    )
+                except AnalysisCancelled:
+                    raise
+                except (OllamaError, ValueError, json.JSONDecodeError) as exc:
+                    warnings.append(f"VLM Stage C page {page_no}: {exc}")
+
+            # Soft OCR/raw-text salvage when vision found nothing new
+            if not vlm_groups:
+                blob = (ga_extraction.get("raw_text") or "") + "\n" + "\n".join(
+                    str(n.get("text") or "") for n in notes
+                )
+                for g in scan_text_for_clusters(blob):
+                    ng = validate_assembly_group(
+                        g,
+                        pl_nos,
+                        source_page=int(g.get("sourcePage") or 1),
+                        source_drawing_id=source_drawing_id,
+                        source_filename=source_filename,
+                    )
+                    if ng:
+                        ng.pop("warnings", None)
+                        vlm_groups.append(ng)
+
+            assembly_groups = dedupe_groups(list(cpu_groups) + vlm_groups)
+            assembly_groups, fwarns = filter_weak_groups(
+                assembly_groups, parts_list=parts_list
+            )
+            warnings.extend(f"VLM Stage C: {w}" for w in fwarns if w)
+            if assembly_groups:
+                balloon_notes = groups_to_synthetic_notes(
+                    assembly_groups, parts_list=parts_list
+                )
+                notes = merge_notes_with_balloon_notes(notes, balloon_notes)
+                warnings.append(
+                    f"Drawing mind (local_vlm): Stage C found {len(assembly_groups)} "
+                    f"balloon assembly group(s)."
+                )
+        except AnalysisCancelled:
+            raise
+        except Exception as exc:
+            warnings.append(f"Drawing mind (local_vlm): Stage C skipped ({exc}).")
+            assembly_groups = list(cpu_groups)
+
         unit = (ga_extraction.get("title_block") or {}).get("unit") or "mm"
         notes = apply_grounded_elaboration(
             notes,
@@ -1390,5 +1540,6 @@ class LocalVlmMind(DrawingMind):
             notes=notes,
             placements=placements,
             pcb_links=pcb_links,
+            assembly_groups=assembly_groups,
             warnings=warnings,
         )

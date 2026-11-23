@@ -6,7 +6,7 @@
  * document title becomes the suggested "Save as PDF" filename.
  */
 
-import { normalizeInstructionCase } from "@/lib/instructionCase";
+import { normalizeInstructionCase, sanitizeOperatorInstruction } from "@/lib/instructionCase";
 
 function s(v) {
   return v == null ? "" : String(v).trim();
@@ -268,13 +268,15 @@ function signatureGrid() {
 /**
  * Bullet characters that appear at the start of instruction lines in the
  * SAP long text (·, •, -, *, or a stray "." followed by spacing). These
- * are normalized to a consistent "• ". Ordinary paragraph lines are
- * left untouched — we never invent bullets.
+ * are normalized to a consistent "• ".
  */
 const BULLET_RE = /^\s*(?:[\u2022\u00B7\u25CF\u25AA\u2023\u2043]|[-*]|\.(?=\s{2,}))\s*/;
 
 function formatLongText(raw) {
-  const lines = normalizeInstructionCase(s(raw))
+  // Always point-wise: split inline bullets / action sentences first.
+  const cleaned =
+    sanitizeOperatorInstruction(raw) || normalizeInstructionCase(s(raw)) || s(raw);
+  const lines = cleaned
     .split(/\r?\n/)
     .map((l) => l.trimEnd())
     // Reference-only meta must never print on OARC
@@ -288,7 +290,8 @@ function formatLongText(raw) {
     } else if (BULLET_RE.test(line)) {
       compact.push("\u2022 " + line.replace(BULLET_RE, "").trim());
     } else {
-      compact.push(line);
+      // Fallback: still print as a bullet so OARC stays point-wise
+      compact.push("\u2022 " + line.trim());
     }
   }
   return compact.map((l) => (l ? esc(l) : "")).join("<br/>");

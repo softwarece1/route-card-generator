@@ -3,12 +3,12 @@
 }
 
 .rc-hist__filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
-  gap: 0.75rem 0.85rem;
-  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.55rem 0.65rem;
   margin-bottom: 1rem;
-  padding: 0.85rem 1rem;
+  padding: 0.65rem 0.75rem;
   background: var(--pmf-surface);
   border: 1px solid var(--pmf-border);
   border-radius: 0.75rem;
@@ -17,12 +17,15 @@
 .rc-hist__filter {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  min-width: 0;
+  gap: 0.25rem;
+  flex: 1 1 8.5rem;
+  min-width: 8.5rem;
+  max-width: 12.5rem;
 
   label {
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     font-weight: 500;
+    line-height: 1.2;
     color: var(--pmf-text-muted);
   }
 
@@ -31,18 +34,50 @@
     width: 100%;
   }
 
-  .p-inputtext {
+  .p-inputtext,
+  .p-dropdown .p-dropdown-label,
+  .p-calendar .p-inputtext {
     width: 100%;
-    font-size: 0.875rem;
+    font-size: 0.8rem;
+    min-height: 2rem;
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .p-dropdown {
+    height: 2rem;
+    align-items: center;
+  }
+
+  .p-calendar .p-datepicker-trigger.p-button {
+    width: 2rem;
+    min-width: 2rem;
+    height: 2rem;
+    padding: 0;
   }
 }
 
 .rc-hist__filter-actions {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 0.45rem;
-  flex-wrap: wrap;
-  padding-bottom: 0.1rem;
+  align-self: flex-end;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-bottom: 0;
+
+  .p-button {
+    height: 2rem;
+    min-height: 2rem;
+    padding: 0 0.65rem;
+    font-size: 0.8rem;
+  }
+
+  .p-button .p-button-icon {
+    font-size: 0.8rem;
+  }
 }
 
 .rc-hist__users-panel {
@@ -68,13 +103,15 @@
   }
 }
 
-@media (min-width: 1100px) {
-  .rc-hist__filters {
-    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+@media (max-width: 720px) {
+  .rc-hist__filter {
+    flex: 1 1 calc(50% - 0.65rem);
+    max-width: none;
   }
 
   .rc-hist__filter-actions {
-    justify-content: flex-end;
+    margin-left: 0;
+    width: 100%;
   }
 }
 

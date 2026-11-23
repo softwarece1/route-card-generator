@@ -71,3 +71,105 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.instr-view-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0 0.15rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  vertical-align: -0.15em;
+  background: var(--pmf-accent-soft);
+  color: var(--pmf-accent-strong);
+  cursor: pointer;
+  line-height: 1;
+
+  .pi {
+    font-size: 0.7rem;
+  }
+
+  &:hover,
+  &:focus-visible {
+    background: var(--pmf-accent-muted);
+    color: var(--pmf-accent);
+    outline: 2px solid color-mix(in srgb, var(--pmf-accent) 35%, transparent);
+    outline-offset: 1px;
+  }
+}
+
+.p-overlaypanel.instr-view-popover {
+  width: min(20rem, 90vw);
+  max-width: 90vw;
+  border: 1px solid var(--pmf-border);
+  border-radius: 0.5rem;
+  background: var(--pmf-surface);
+  box-shadow: var(--pmf-shadow-card, 0 8px 24px rgba(15, 23, 42, 0.16));
+
+  .p-overlaypanel-content {
+    padding: 0;
+  }
+}
+
+.instr-view-popover {
+  width: min(20rem, 90vw);
+  max-width: 90vw;
+  padding: 0;
+  overflow: hidden;
+}
+
+.instr-view-popover__head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--pmf-border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--pmf-text);
+}
+
+.instr-view-popover__head-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.instr-view-popover__body {
+  padding: 0.4rem;
+  background: var(--pmf-page-bg);
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.instr-view-popover__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 12.5rem;
+  object-fit: contain;
+  background: var(--pmf-surface);
+  border-radius: 0.25rem;
+}
+
+.instr-view-popover__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem 0.45rem;
+  border-top: 1px solid var(--pmf-border);
+}
+
+.instr-view-popover__pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--pmf-text-muted);
+}

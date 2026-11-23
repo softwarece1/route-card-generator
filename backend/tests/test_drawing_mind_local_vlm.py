@@ -143,6 +143,23 @@ def test_normalize_placement_drops_vague_surface():
     assert got[0]["offsets"][0]["value"] == 5
 
 
+def test_normalize_placement_drops_rear_view_title():
+    got = _normalize_placement(
+        [
+            {"itemNo": 2, "surface": "REAR", "offsets": [{"from": "left", "value": 5, "unit": "mm"}]},
+            {"itemNo": 3, "surface": "REAR VIEW", "offsets": []},
+            {"itemNo": 4, "surface": "REAR FACE", "offsets": [{"from": "top", "value": 3, "unit": "mm"}]},
+            {"itemNo": 5, "surface": "DC OUT", "offsets": []},
+        ],
+        source_page=1,
+    )
+    by_item = {p["itemNo"]: p["surface"] for p in got}
+    assert by_item[2] == ""
+    assert by_item[3] == ""
+    assert by_item[4] == "REAR FACE"
+    assert by_item[5] == "DC OUT"
+
+
 def test_vlm_notes_usable():
     assert not _vlm_notes_usable([])
     assert not _vlm_notes_usable([{"text": "ab"}])
@@ -541,6 +558,7 @@ def _run():
     test_normalize_step_as_shown_forces_elaboration_flag()
     test_weak_elaboration_and_compose()
     test_normalize_placement_drops_vague_surface()
+    test_normalize_placement_drops_rear_view_title()
     test_vlm_notes_usable()
     test_merge_insight_onto_ocr()
     test_token_gate_rejects_bare_board_corruption()

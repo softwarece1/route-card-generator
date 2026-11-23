@@ -2,17 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { annotateItemMentions } from "@/lib/itemLabels";
 import { normalizeInstructionCase, sanitizeOperatorInstruction } from "@/lib/instructionCase";
+import { renderInstructionWithViewInfo } from "@/lib/tableViewHints";
 import "./instruction-click-edit.scss";
 
 /**
  * Single surface: annotated preview by default; click to edit raw instruction text.
  * Item names/part numbers are display-only and never written into `value`.
- * While editing, a live annotated preview stays visible so PL labels do not "disappear".
+ * Gated view-ref (i) buttons open drawing snapshots when crops are available.
  */
 export default function InstructionClickEdit({
   value = "",
   onChange,
   itemLookup = {},
+  viewCrops = [],
+  onOpenViewCrop,
   rows = 6,
   placeholder = "Click to add instruction…",
   disabled = false,
@@ -29,6 +32,11 @@ export default function InstructionClickEdit({
   const annotated = annotateItemMentions(normalized, itemLookup);
   const empty = !String(normalized || "").trim();
   const showAnnotPreview = Boolean(annotated && annotated !== normalized);
+  const previewNodes = renderInstructionWithViewInfo(normalized, {
+    itemLookup,
+    viewCrops,
+    onOpenViewCrop,
+  });
 
   useEffect(() => {
     if (!editing || disabled) return;
@@ -58,7 +66,6 @@ export default function InstructionClickEdit({
           profile="multiline"
           value={normalized}
           onChange={(e) => {
-            // Keep editor on normalized text so Save persists readable casing.
             onChange?.(e);
           }}
           rows={rows}
@@ -66,10 +73,10 @@ export default function InstructionClickEdit({
           autoResize
           placeholder={placeholder}
         />
-        {showAnnotPreview ? (
+        {showAnnotPreview || (viewCrops || []).length > 0 ? (
           <div className="instr-click-edit__live-annot" aria-live="polite">
-            <span className="instr-click-edit__live-annot-label">Preview with Parts List names</span>
-            <p className="instr-click-edit__live-annot-text">{annotated}</p>
+            <span className="instr-click-edit__live-annot-label">Preview</span>
+            <p className="instr-click-edit__live-annot-text">{previewNodes}</p>
           </div>
         ) : null}
       </div>
@@ -85,18 +92,21 @@ export default function InstructionClickEdit({
         role="button"
         tabIndex={disabled ? -1 : 0}
         aria-label={empty ? "Add instruction" : "Edit instruction"}
-        onClick={() => {
-          if (!disabled) setEditing(true);
+        onClick={(e) => {
+          if (disabled) return;
+          if (e.target?.closest?.(".instr-view-info-btn")) return;
+          setEditing(true);
         }}
         onKeyDown={(e) => {
           if (disabled) return;
+          if (e.target?.closest?.(".instr-view-info-btn")) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             setEditing(true);
           }
         }}
       >
-        {empty ? placeholder : annotated}
+        {empty ? placeholder : previewNodes}
       </div>
     </div>
   );

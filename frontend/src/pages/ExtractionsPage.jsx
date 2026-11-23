@@ -33,6 +33,7 @@ import {
   fetchAdminExtractions,
   fetchAdminExtractionDetail,
   fetchAdminUsers,
+  fetchDeptUsers,
   fetchMyExtractionDetail,
   fetchMyExtractions,
   sessionDocumentFileUrl,
@@ -69,15 +70,47 @@ function toYmd(d) {
   return `${y}-${m}-${day}`;
 }
 
+function startOfLocalDay(d) {
+  const dt = d instanceof Date ? new Date(d) : new Date(d);
+  if (Number.isNaN(dt.getTime())) return null;
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+
+/** Default range: 1st of current month → today (local). */
+function defaultDateRange() {
+  const today = startOfLocalDay(new Date());
+  const from = new Date(today.getFullYear(), today.getMonth(), 1);
+  return { fromDate: from, toDate: today };
+}
+
+function defaultFilters() {
+  return {
+    empId: null,
+    dept: null,
+    status: null,
+    ...defaultDateRange(),
+  };
+}
+
 const STATUS_OPTIONS = ROUTE_STATUS_FILTER_OPTIONS;
 
-const EMPTY_FILTERS = {
-  empId: null,
-  dept: null,
-  status: null,
-  fromDate: null,
-  toDate: null,
-};
+function filtersAreActive(f) {
+  const d = defaultFilters();
+  return Boolean(
+    f?.empId ||
+      f?.dept ||
+      f?.status ||
+      toYmd(f?.fromDate) !== toYmd(d.fromDate) ||
+      toYmd(f?.toDate) !== toYmd(d.toDate)
+  );
+}
+
+function rowUpdatedDate(row) {
+  const raw = row?.updatedAt || row?.createdAt;
+  if (!raw) return null;
+  return startOfLocalDay(raw);
+}
 
 export default function ExtractionsPage() {
   const user = getUser();
@@ -87,8 +120,8 @@ export default function ExtractionsPage() {
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [applied, setApplied] = useState(EMPTY_FILTERS);
+  const [filters, setFilters] = useState(() => defaultFilters());
+  const [applied, setApplied] = useState(() => defaultFilters());
   const [iedTab, setIedTab] = useState(0); // 0 Pending, 1 Approved
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -104,18 +137,7 @@ export default function ExtractionsPage() {
   const [compareResult, setCompareResult] = useState(null);
   const navigate = useNavigate();
 
-  const empOptions = useMemo(
-    () => [
-      { label: "All users", value: null },
-      ...users.map((u) => ({
-        label: `${u.empId} — ${u.name}${u.dept ? ` (${u.dept})` : ""}`,
-        value: u.empId,
-      })),
-    ],
-    [users],
-  );
-
-  const deptOptions = useMemo(() => {
+  const sbuOptions = useMemo(() => {
     const fromMaster = departments.map((d) => ({
       label: d.label || d.name,
       value: d.value || d.name,
@@ -128,22 +150,44 @@ export default function ExtractionsPage() {
     for (const name of fromUsers) {
       if (!merged.has(name)) merged.set(name, { label: name, value: name });
     }
-    return [{ label: "All departments", value: null }, ...merged.values()];
+    return [{ label: "All SBUs", value: null }, ...merged.values()];
   }, [departments, users]);
 
+  /** Employees for the selected SBU (admin) or caller's SBU reports (dept head). */
+  const empOptions = useMemo(() => {
+    const sbu = (filters.dept || "").trim();
+    let pool = users;
+    if (isAdmin && sbu) {
+      pool = users.filter((u) => (u.dept || "").trim() === sbu);
+    }
+    return [
+      { label: "All employees", value: null },
+      ...pool.map((u) => ({
+        label: `${u.empId} — ${u.name}${u.dept ? ` (${u.dept})` : ""}`,
+        value: u.empId,
+      })),
+    ];
+  }, [users, filters.dept, isAdmin]);
+
   const loadMeta = useCallback(async () => {
-    if (!isAdmin) return;
+    if (isIed) return;
     try {
-      const [uRes, dRows] = await Promise.all([
-        fetchAdminUsers(),
-        fetchDepartments().catch(() => []),
-      ]);
-      setUsers(uRes.users || []);
-      setDepartments(Array.isArray(dRows) ? dRows : []);
+      if (isAdmin) {
+        const [uRes, dRows] = await Promise.all([
+          fetchAdminUsers(),
+          fetchDepartments().catch(() => []),
+        ]);
+        setUsers(uRes.users || []);
+        setDepartments(Array.isArray(dRows) ? dRows : []);
+      } else if (isDeptHead) {
+        const uRes = await fetchDeptUsers();
+        setUsers(uRes.users || []);
+        setDepartments([]);
+      }
     } catch (err) {
       setError(err.message || "Failed to load filter options");
     }
-  }, [isAdmin]);
+  }, [isAdmin, isDeptHead, isIed]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -180,9 +224,13 @@ export default function ExtractionsPage() {
   const applyFilters = () => setApplied({ ...filters });
 
   const clearFilters = () => {
-    setFilters(EMPTY_FILTERS);
-    setApplied(EMPTY_FILTERS);
+    const next = defaultFilters();
+    setFilters(next);
+    setApplied(next);
   };
+
+  const hasAppliedFilters = filtersAreActive(applied);
+  const canCompare = (selected || []).length === 2;
 
   const openIedReview = async (row) => {
     try {
@@ -305,26 +353,68 @@ export default function ExtractionsPage() {
     row.status === "analyzed" || row.status === "approved" || row.routeCardId;
 
   const patchFilter = (key, value) =>
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters((prev) => {
+      const next = { ...prev, [key]: value };
+      // Changing SBU clears employee if they are outside that SBU
+      if (key === "dept" && prev.empId) {
+        const sbu = (value || "").trim();
+        if (sbu) {
+          const stillOk = users.some(
+            (u) => u.empId === prev.empId && (u.dept || "").trim() === sbu
+          );
+          if (!stillOk) next.empId = null;
+        }
+      }
+      return next;
+    });
 
   const displayedItems = useMemo(() => {
+    let rows = items;
     if (isIed) {
-      return items.filter((row) => {
+      return rows.filter((row) => {
         const st = String(row.routeStatus || "").toLowerCase();
         if (iedTab === 0) return st === "ied_review";
         return st === "ied_complete" || st === "approved";
       });
     }
-    if (isAdmin || !applied.status) return items;
-    const st = String(applied.status).toLowerCase();
-    const routeStatuses = new Set(["draft", "ied_review", "ied_complete", "approved"]);
-    if (routeStatuses.has(st)) {
-      return items.filter(
-        (row) => String(row.routeStatus || "").toLowerCase() === st,
-      );
+
+    // Non-admin: apply status / emp / date client-side (admin uses API params)
+    if (!isAdmin) {
+      if (applied.status) {
+        const st = String(applied.status).toLowerCase();
+        const routeStatuses = new Set([
+          "draft",
+          "ied_review",
+          "ied_complete",
+          "approved",
+        ]);
+        rows = rows.filter((row) => {
+          if (routeStatuses.has(st)) {
+            return String(row.routeStatus || "").toLowerCase() === st;
+          }
+          return String(row.status || "").toLowerCase() === st;
+        });
+      }
+      if (applied.empId) {
+        const want = String(applied.empId);
+        rows = rows.filter(
+          (row) => String(row.user?.empId || "") === want
+        );
+      }
+      const from = startOfLocalDay(applied.fromDate);
+      const to = startOfLocalDay(applied.toDate);
+      if (from || to) {
+        rows = rows.filter((row) => {
+          const updated = rowUpdatedDate(row);
+          if (!updated) return false;
+          if (from && updated < from) return false;
+          if (to && updated > to) return false;
+          return true;
+        });
+      }
     }
-    return items.filter((row) => String(row.status || "").toLowerCase() === st);
-  }, [items, applied.status, isAdmin, isIed, iedTab]);
+    return rows;
+  }, [items, applied, isAdmin, isIed, iedTab]);
 
   return (
     <AppShell active="history">
@@ -362,7 +452,7 @@ export default function ExtractionsPage() {
           />
           {error ? <Message severity="error" text={error} className="w-full mb-3" /> : null}
 
-          {!isIed ? (
+          {!isIed && canCompare ? (
           <div className="flex gap-2 flex-wrap mb-3">
             <Button
               type="button"
@@ -370,7 +460,7 @@ export default function ExtractionsPage() {
               icon="pi pi-arrows-h"
               outlined
               size="small"
-              disabled={(selected || []).length !== 2}
+              className="p-button-sm"
               onClick={async () => {
                 const [a, b] = selected;
                 try {
@@ -525,41 +615,7 @@ export default function ExtractionsPage() {
             </div>
           ) : null}
 
-          {!isAdmin && !isIed ? (
-            <div className="rc-hist__filters">
-              <div className="rc-hist__filter">
-                <label htmlFor="myStatusFilter">Status</label>
-                <Dropdown
-                  inputId="myStatusFilter"
-                  value={filters.status}
-                  options={STATUS_OPTIONS}
-                  onChange={(e) => patchFilter("status", e.value)}
-                  className="w-full"
-                  placeholder="All statuses"
-                  showClear
-                />
-              </div>
-              <div className="rc-hist__filter-actions">
-                <Button
-                  type="button"
-                  label="Apply"
-                  icon="pi pi-filter"
-                  size="small"
-                  onClick={applyFilters}
-                />
-                <Button
-                  type="button"
-                  label="Clear"
-                  icon="pi pi-times"
-                  size="small"
-                  outlined
-                  onClick={clearFilters}
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {isAdmin ? (
+          {!isIed ? (
             <div className="rc-hist__filters">
               <div className="rc-hist__filter">
                 <label htmlFor="fromDate">From date</label>
@@ -589,32 +645,36 @@ export default function ExtractionsPage() {
                   className="w-full"
                 />
               </div>
-              <div className="rc-hist__filter">
-                <label htmlFor="empFilter">User</label>
-                <Dropdown
-                  inputId="empFilter"
-                  value={filters.empId}
-                  options={empOptions}
-                  onChange={(e) => patchFilter("empId", e.value)}
-                  className="w-full"
-                  placeholder="All users"
-                  filter
-                  showClear
-                />
-              </div>
-              <div className="rc-hist__filter">
-                <label htmlFor="deptFilter">Department</label>
-                <Dropdown
-                  inputId="deptFilter"
-                  value={filters.dept}
-                  options={deptOptions}
-                  onChange={(e) => patchFilter("dept", e.value)}
-                  className="w-full"
-                  placeholder="All departments"
-                  filter
-                  showClear
-                />
-              </div>
+              {isAdmin ? (
+                <div className="rc-hist__filter">
+                  <label htmlFor="sbuFilter">SBU</label>
+                  <Dropdown
+                    inputId="sbuFilter"
+                    value={filters.dept}
+                    options={sbuOptions}
+                    onChange={(e) => patchFilter("dept", e.value)}
+                    className="w-full"
+                    placeholder="All SBUs"
+                    filter
+                    showClear
+                  />
+                </div>
+              ) : null}
+              {isAdmin || isDeptHead ? (
+                <div className="rc-hist__filter">
+                  <label htmlFor="empFilter">Employee</label>
+                  <Dropdown
+                    inputId="empFilter"
+                    value={filters.empId}
+                    options={empOptions}
+                    onChange={(e) => patchFilter("empId", e.value)}
+                    className="w-full"
+                    placeholder="All employees"
+                    filter
+                    showClear
+                  />
+                </div>
+              ) : null}
               <div className="rc-hist__filter">
                 <label htmlFor="statusFilter">Status</label>
                 <Dropdown
@@ -633,17 +693,21 @@ export default function ExtractionsPage() {
                   label="Apply"
                   icon="pi pi-filter"
                   size="small"
+                  className="p-button-sm"
                   onClick={applyFilters}
                 />
-                <Button
-                  type="button"
-                  label="Clear"
-                  icon="pi pi-times"
-                  size="small"
-                  outlined
-                  severity="secondary"
-                  onClick={clearFilters}
-                />
+                {hasAppliedFilters ? (
+                  <Button
+                    type="button"
+                    label="Clear"
+                    icon="pi pi-times"
+                    size="small"
+                    className="p-button-sm"
+                    outlined
+                    severity="secondary"
+                    onClick={clearFilters}
+                  />
+                ) : null}
               </div>
             </div>
           ) : null}

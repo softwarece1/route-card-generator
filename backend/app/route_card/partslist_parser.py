@@ -669,17 +669,45 @@ def parse_partslist_bytes(data: bytes, filename: str = "", *, format_aliases: di
 
 
 def enrich_bom_with_pl(bom_items: list[dict], pl: dict) -> list[dict]:
+    """Fill PN/description from PL; PL qty is authoritative for display.
+
+    Preserves ``extractedQty`` (balloon/GA callout total) and sets ``qtyMatch``
+    when both PL qty and extracted qty are available.
+    """
     item_map = pl.get("itemMap") or {}
+    # Also index items[] when itemMap is sparse
+    if not item_map and pl.get("items"):
+        item_map = {
+            str(it.get("itemNo")): it
+            for it in (pl.get("items") or [])
+            if isinstance(it, dict) and it.get("itemNo") is not None
+        }
     out = []
     for b in bom_items or []:
         row = dict(b)
         key = str(row.get("itemNo"))
         hit = item_map.get(key)
+        # Remember pre-PL qty as extracted if not already set
+        if row.get("extractedQty") is None and row.get("qty") not in (None, ""):
+            try:
+                row["extractedQty"] = int(row.get("qty") or 0) or None
+            except (TypeError, ValueError):
+                pass
         if hit:
             row["description"] = hit.get("description") or row.get("description")
-            row["partNumber"] = hit.get("partNumber")
+            row["partNumber"] = hit.get("partNumber") or row.get("partNumber")
             if hit.get("qty") is not None:
-                row["qty"] = hit["qty"]
+                try:
+                    pl_qty = int(hit["qty"])
+                except (TypeError, ValueError):
+                    pl_qty = hit["qty"]
+                row["qty"] = pl_qty
+                ext = row.get("extractedQty")
+                if ext is not None:
+                    try:
+                        row["qtyMatch"] = int(ext) == int(pl_qty)
+                    except (TypeError, ValueError):
+                        row["qtyMatch"] = None
         out.append(row)
     return out
 

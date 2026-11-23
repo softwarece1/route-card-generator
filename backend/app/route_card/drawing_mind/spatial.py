@@ -12,8 +12,63 @@ SURFACE_HINT = re.compile(
     r"TOP\s+VIEW|SIDE\s+VIEW|BOTTOM|MOUNTING\s+FACE)\b",
     re.I,
 )
+# Bare FRONT/REAR / view titles — not a mounting face unless "… FACE/SIDE/…"
+_VIEW_OR_BARE_FACE = re.compile(
+    r"^(FRONT|REAR|TOP|BOTTOM|SIDE)(\s+VIEW)?$|"
+    r"^(TOP|SIDE|BOTTOM)\s+VIEW$",
+    re.I,
+)
+_STRONG_FACE_QUALIFIER = re.compile(
+    r"\b(FACE|SIDE|SURFACE|PANEL|FACIA|MOUNTING)\b",
+    re.I,
+)
+_NAMED_PORT_FACE = re.compile(
+    r"\b(DC\s*OUT|AC\s*IN|AC\s*OUT|MOUNTING\s+FACE|CONNECTOR)\b",
+    re.I,
+)
 # Sticker/legend text — not a mounting face (do not treat as primary surface)
 SURFACE_STICKER_NOISE = re.compile(r"\bPOWER\s+SUPPLY\b", re.I)
+
+
+def is_strong_mounting_surface(label: str) -> bool:
+    """True only for faces we can actually mount/stick on (ports, mounting face, FRONT FACE…).
+
+    Bare FRONT/REAR or 'REAR VIEW' titles must not become 'REAR side' in ops.
+    """
+    lab = re.sub(r"\s+", " ", (label or "").strip())
+    if not lab:
+        return False
+    if SURFACE_STICKER_NOISE.search(lab):
+        return False
+    if _NAMED_PORT_FACE.search(lab):
+        return True
+    # FRONT/REAR only when qualified as a face/side/surface/panel
+    if re.search(r"\b(FRONT|REAR)\b", lab, re.I) and _STRONG_FACE_QUALIFIER.search(lab):
+        if _VIEW_OR_BARE_FACE.match(lab):
+            return False
+        return True
+    return False
+
+
+def is_weak_surface_label(label: str) -> bool:
+    """View titles / vague placeholders — never invent as mounting face."""
+    lab = re.sub(r"\s+", " ", (label or "").strip())
+    if not lab:
+        return True
+    if SURFACE_STICKER_NOISE.search(lab):
+        return True
+    if _VIEW_OR_BARE_FACE.match(lab):
+        return True
+    if re.match(
+        r"^(the\s+)?(indicated|specified|shown|relevant|appropriate|given)\s+"
+        r"(face|surface|side|area)\.?$",
+        lab,
+        re.I,
+    ):
+        return True
+    return not is_strong_mounting_surface(lab) and bool(
+        re.search(r"\b(FRONT|REAR|TOP|BOTTOM|SIDE|VIEW)\b", lab, re.I)
+    )
 CONNECTOR_REF = re.compile(r"\b([JXCP]\d{1,3}|SFPDP|P\d{1,2})\b", re.I)
 ITEM_NEAR = re.compile(r"(?:ITEMS?|ITMS?|IT\.?)\s*(?:NO\.?|#)?\s*-?\s*(\d{1,3})", re.I)
 
@@ -68,29 +123,33 @@ def build_page_entities(page: dict[str, Any]) -> dict[str, Any]:
         t = texts[i].strip()
         if not t:
             continue
-        # Two-token surface: DC OUT
+        # Two-token surface: DC OUT / REAR VIEW / FRONT FACE
         if i + 1 < len(words):
             pair = f"{t} {texts[i + 1].strip()}"
             if SURFACE_HINT.search(pair) and _dist(w, words[i + 1]) < span_x * 0.08:
+                lab = re.sub(r"\s+", " ", pair).upper()
                 surfaces.append(
                     {
-                        "label": re.sub(r"\s+", " ", pair).upper(),
+                        "label": lab,
                         "x0": w["x0"],
                         "y0": min(w["y0"], words[i + 1]["y0"]),
                         "x1": words[i + 1]["x1"],
                         "y1": max(w["y1"], words[i + 1]["y1"]),
                         "page": page_no,
+                        "weak": not is_strong_mounting_surface(lab),
                     }
                 )
         if SURFACE_HINT.search(t) and len(t) > 3:
+            lab = re.sub(r"\s+", " ", t).upper()
             surfaces.append(
                 {
-                    "label": re.sub(r"\s+", " ", t).upper(),
+                    "label": lab,
                     "x0": w["x0"],
                     "y0": w["y0"],
                     "x1": w["x1"],
                     "y1": w["y1"],
                     "page": page_no,
+                    "weak": not is_strong_mounting_surface(lab),
                 }
             )
         # Still record POWER SUPPLY as a weak label (sticker content) for PL matching only
@@ -205,12 +264,27 @@ def build_spatial_graph(spatial_pages: list[dict[str, Any]], full_text: str = ""
     }
 
 
-def nearest_surface(balloon: dict, surfaces: list[dict], max_dist_frac: float = 0.35) -> str:
+def nearest_surface(
+    balloon: dict,
+    surfaces: list[dict],
+    max_dist_frac: float = 0.35,
+    *,
+    strong_only: bool = True,
+) -> str:
     if not surfaces:
         return ""
     # Prefer surfaces on same page to the right/above of left-side stickers
     same = [s for s in surfaces if s.get("page") == balloon.get("page")]
     pool = same or surfaces
+    if strong_only:
+        strong = [
+            s
+            for s in pool
+            if not s.get("weak") and is_strong_mounting_surface(s.get("label") or "")
+        ]
+        pool = strong or []
+    if not pool:
+        return ""
     best = None
     best_d = 1e18
     for s in pool:
@@ -220,8 +294,10 @@ def nearest_surface(balloon: dict, surfaces: list[dict], max_dist_frac: float = 
             best = s
     if not best:
         return ""
-    # Rough page span
-    return best["label"] if best_d < 5000 else best["label"]
+    lab = best.get("label") or ""
+    if strong_only and not is_strong_mounting_surface(lab):
+        return ""
+    return lab
 
 
 def classify_offset_role(

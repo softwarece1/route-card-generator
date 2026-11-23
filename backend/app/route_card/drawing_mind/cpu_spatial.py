@@ -20,6 +20,7 @@ from app.route_card.drawing_mind.spatial import (
     build_spatial_graph,
     classify_offset_role,
     dims_near,
+    is_strong_mounting_surface,
     nearest_surface,
 )
 from app.route_card.drawing_mind.types import MindResult, PlacementFact, PcbLinkFact
@@ -28,8 +29,8 @@ from app.route_card.drawing_mind.types import MindResult, PlacementFact, PcbLink
 _bom_index = bom_index
 
 ADHESIVE = re.compile(r"\b(ADHESIVE|GLUE|STICK|PASTE|BOND)\b", re.I)
-# Face / port labels preferred over sticker legends like POWER SUPPLY
-FACE_SURFACE_PREFS = ("DC OUT", "AC OUT", "AC IN", "MOUNTING FACE", "FRONT", "REAR")
+# Named port / mounting faces only — bare FRONT/REAR view titles are excluded
+FACE_SURFACE_PREFS = ("DC OUT", "AC OUT", "AC IN", "MOUNTING FACE", "FRONT FACE", "REAR FACE")
 
 
 def _item_order_from_note(text: str, items: list[int]) -> list[int]:
@@ -52,27 +53,42 @@ def _item_order_from_note(text: str, items: list[int]) -> list[int]:
 
 
 def _pick_face_surface(surfaces: list[dict], item_balloons: dict[int, dict]) -> str:
-    strong = [s for s in surfaces if not s.get("weak")]
-    pool = strong or surfaces
+    """Return a mounting face only when OCR shows a clear port/face label.
+
+    Bare FRONT/REAR / view titles are ignored — do not invent 'REAR side'.
+    """
+    strong = [
+        s
+        for s in surfaces
+        if not s.get("weak") and is_strong_mounting_surface(s.get("label") or "")
+    ]
+    if not strong:
+        return ""
     for pref in FACE_SURFACE_PREFS:
-        for s in pool:
+        for s in strong:
             if pref in (s.get("label") or ""):
                 return s["label"]
     if item_balloons:
         first = next(iter(item_balloons.values()))
-        # Prefer non-weak nearest
-        from app.route_card.drawing_mind.spatial import nearest_surface
-
-        hit = nearest_surface(first, [s for s in pool if not s.get("weak")] or pool)
-        if hit and "POWER SUPPLY" not in hit:
+        hit = nearest_surface(first, strong, strong_only=True)
+        if hit and is_strong_mounting_surface(hit):
             return hit
-        if hit:
-            # Fall through — still avoid sticker legend if DC OUT exists elsewhere
-            for s in pool:
-                if "DC OUT" in (s.get("label") or ""):
-                    return s["label"]
-        return hit if hit and "POWER SUPPLY" not in (hit or "") else (hit or "")
-    return ""
+    # Prefer any named port face on the sheet over nothing
+    for s in strong:
+        lab = s.get("label") or ""
+        if "DC OUT" in lab or "AC OUT" in lab or "AC IN" in lab or "MOUNTING FACE" in lab:
+            return lab
+    return strong[0]["label"] if len(strong) == 1 else ""
+
+
+def _surface_phrase(surface: str) -> str:
+    """Format mounting face for operator text; empty when surface is unknown/weak."""
+    surf = re.sub(r"\s+", " ", (surface or "").strip())
+    if not surf or not is_strong_mounting_surface(surf):
+        return ""
+    if re.search(r"\b(SIDE|FACE|SURFACE|PANEL)\b", surf, re.I):
+        return f"on the {surf}"
+    return f"on the {surf} side"
 
 
 def _balloons_form_clear_stack(ordered: list[int], item_balloons: dict[int, dict]) -> bool:
@@ -169,11 +185,50 @@ class CpuSpatialMind(DrawingMind):
                 "Verify against the GA view; switch to local_vlm when GPU is available."
             )
 
+        # Soft balloon-cluster salvage from OCR/raw text (no VLM required)
+        assembly_groups: list[dict[str, Any]] = []
+        try:
+            from app.route_card.drawing_mind.assembly_groups import (
+                dedupe_groups,
+                groups_to_synthetic_notes,
+                merge_notes_with_balloon_notes,
+                pl_item_set,
+                scan_text_for_clusters,
+                validate_assembly_group,
+            )
+
+            pl_nos = pl_item_set(parts_list)
+            blob = raw + "\n" + "\n".join(str(n.get("text") or "") for n in notes)
+            for g in scan_text_for_clusters(blob):
+                ng = validate_assembly_group(
+                    g,
+                    pl_nos,
+                    source_page=1,
+                    source_drawing_id=source_drawing_id,
+                    source_filename=source_filename,
+                )
+                if ng:
+                    ng.pop("warnings", None)
+                    assembly_groups.append(ng)
+            assembly_groups = dedupe_groups(assembly_groups)
+            if assembly_groups:
+                balloon_notes = groups_to_synthetic_notes(
+                    assembly_groups, parts_list=parts_list
+                )
+                notes = merge_notes_with_balloon_notes(notes, balloon_notes)
+                warnings.append(
+                    f"Drawing mind (CPU): found {len(assembly_groups)} balloon "
+                    "assembly group(s) from OCR callouts."
+                )
+        except Exception as exc:
+            warnings.append(f"Drawing mind (CPU): balloon scan skipped ({exc}).")
+
         return MindResult(
             engine=self.engine,
             notes=notes,
             placements=placements,
             pcb_links=pcb_links,
+            assembly_groups=assembly_groups,
             warnings=warnings,
         )
 
@@ -226,9 +281,9 @@ class CpuSpatialMind(DrawingMind):
                 "using dimension/surface heuristics only."
             )
 
+        # Only keep a surface when OCR shows a clear mounting face (ports / FACE labels).
+        # Never invent FRONT/REAR from view titles.
         surface = _pick_face_surface(surfaces, item_balloons)
-        if not surface:
-            surface = "the face shown on the drawing"
 
         offset_dims = [d for d in dimensions if d["value"] <= 50]
 
@@ -345,7 +400,7 @@ class CpuSpatialMind(DrawingMind):
 
     def _sentence_for(self, fact: PlacementFact, unit: str, verb: str = "Stick") -> str:
         it = fact.item_no
-        surf = fact.surface or "the face shown on the drawing"
+        face = _surface_phrase(fact.surface or "")
         action = (verb or "Stick").capitalize()
         rel_words = {
             "below": "below",
@@ -359,17 +414,19 @@ class CpuSpatialMind(DrawingMind):
             prev = rel.get("relativeToItem")
             val = rel.get("value")
             relation = rel_words.get(rel.get("relation") or "below", "below")
+            head = f"{action} Item {it}"
+            if face:
+                head = f"{head} {face}"
             if val is not None:
-                return (
-                    f"{action} Item {it} on the {surf} side, "
-                    f"{val:g} {unit} {relation} Item {prev}."
-                )
-            return f"{action} Item {it} on the {surf} side, {relation} Item {prev}."
+                return f"{head}, {val:g} {unit} {relation} Item {prev}."
+            return f"{head}, {relation} Item {prev}."
         top = next((o for o in fact.offsets if o.get("from") == "top"), None)
         left = next((o for o in fact.offsets if o.get("from") == "left"), None)
         right = next((o for o in fact.offsets if o.get("from") == "right"), None)
         bottom = next((o for o in fact.offsets if o.get("from") == "bottom"), None)
-        parts = [f"{action} Item {it} on the {surf} side"]
+        head = f"{action} Item {it}"
+        if face:
+            head = f"{head} {face}"
         bits = []
         if top:
             bits.append(f"keep {top['value']:g} {unit} gap from the top edge")
@@ -380,8 +437,8 @@ class CpuSpatialMind(DrawingMind):
         if right:
             bits.append(f"keep {right['value']:g} {unit} gap from the right edge")
         if bits:
-            parts.append(", ".join(bits))
-        return ", ".join(parts) + "."
+            return f"{head}, " + ", ".join(bits) + "."
+        return f"{head}."
 
     def _link_pcb_pl_wl(
         self,

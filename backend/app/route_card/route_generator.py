@@ -4,7 +4,67 @@ from __future__ import annotations
 
 import re
 
-from app.route_card.extractor import sanitize_operator_instruction
+from app.route_card.extractor import is_ctq_note, sanitize_operator_instruction
+
+
+def partition_notes_for_route(notes: list | None) -> tuple[list, list]:
+    """Split notes into assembly (ops) vs CTQ (quality inspection)."""
+    assembly: list = []
+    ctq: list = []
+    for n in notes or []:
+        if not isinstance(n, dict):
+            continue
+        if is_ctq_note(n):
+            ctq.append(n)
+        else:
+            assembly.append(n)
+    return assembly, ctq
+
+
+def _clean_ctq_dimension(text: str) -> str:
+    """Tighten CTQ OCR for Quality tab: strip bullets, glue, and table bleed."""
+    t = str(text or "")
+    t = sanitize_operator_instruction(t) or t
+    t = re.sub(r"^[\s•\-\*\u2022\u25CF]+", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    # Drop trailing BOM / PL / revision junk often glued after the CTQ sentence
+    t = re.sub(
+        r"\s+(?:AD\s*[—\-].*|SES\s+\d.*|Qty[-–—]?\s*\d+\s*Nos?.*|"
+        r"item\s*=\s*\d.*|PL[-–—]\s*\d{4}.*)$",
+        "",
+        t,
+        flags=re.I,
+    )
+    # Collapse obvious OCR letter-runs stuck to words (e.g. "LOOM Li After" stays;
+    # strip lone 1–2 letter garbage tokens mid-string only when surrounded by spaces)
+    t = re.sub(r"\s+[a-z]{1,2}\s+(?=[A-Z])", " ", t)
+    return t.strip(" :;,-•\u2022\u25CF*")[:240]
+
+
+def ctq_notes_to_inspection(ctq_notes: list, *, start_idx: int = 1) -> list[dict]:
+    """Map CTQ POINTS lines to Quality & Inspection characteristics."""
+    rows: list[dict] = []
+    idx = start_idx
+    for n in ctq_notes or []:
+        if not isinstance(n, dict):
+            continue
+        text = _clean_ctq_dimension(n.get("text") or "")
+        if len(text) < 6:
+            continue
+        rows.append(
+            {
+                "id": f"ic-ctq-{idx}",
+                "dimension": text,
+                "nominal": "—",
+                "tolerance": "—",
+                "method": "Visual / as specified",
+                "frequency": "100%",
+                "criticality": "Critical",
+                "source": "ctq",
+            }
+        )
+        idx += 1
+    return rows
 
 
 def _work_centre(text: str, torque: list[str] | None = None) -> str:
@@ -112,16 +172,155 @@ def _items_payload(item_nos: list[int], bom_lookup: dict[int, int]) -> list[dict
     return [{"itemNo": n, "qty": bom_lookup.get(n), "description": None} for n in item_nos]
 
 
+def _final_inspection_op(extraction: dict, notes: list, op_no: int, title: dict) -> dict:
+    torques = extraction.get("torque_specs") or []
+    checks = []
+    tools = []
+    if torques:
+        checks.append("torque points")
+        tools.append("Torque verifier")
+    has_connectors = any(n.get("connectors") for n in notes if isinstance(n, dict))
+    if has_connectors:
+        checks.append("connector engagement")
+    if title.get("weight"):
+        checks.append("weight")
+        tools.append("scale")
+    if title.get("surfaceFinish"):
+        checks.append("mounting-surface finish")
+    if extraction.get("dimensions"):
+        checks.append("critical dimensions")
+        tools.append("caliper / gauge")
+    tools.append("visual")
+    tool_label = " / ".join(dict.fromkeys(tools))
+    if checks:
+        inspection_ops_text = f"Verify {', '.join(checks)}."
+    else:
+        inspection_ops_text = "Final visual and assembly inspection."
+    return {
+        "id": f"op-{op_no}",
+        "opNo": op_no,
+        "operation": "Final inspection",
+        "workCentre": "Quality",
+        "machine": "Inspection bench",
+        "tool": tool_label,
+        "items": "",
+        "itemsUsed": [],
+        "torqueSpec": ", ".join(torques) if torques else "",
+        "reference": ", ".join(extraction.get("references") or []),
+        "setup": "—",
+        "time": "",
+        "inspection": "100% derived checklist",
+        "instructionText": inspection_ops_text,
+        "status": "Planned",
+        "type": "Quality",
+        "reason": inspection_ops_text,
+        "features": [],
+    }
+
+
 def generate_route(extraction: dict) -> dict:
-    notes = extraction.get("notes") or []
+    notes = list(extraction.get("notes") or [])
     bom = extraction.get("bom_items") or []
     bom_lookup = {int(b["itemNo"]): int(b.get("qty") or 0) for b in bom}
     title = extraction.get("title_block") or {}
     drawing_type = extraction.get("drawing_type") or title.get("drawingType") or "unknown"
+    assembly_notes, ctq_notes = partition_notes_for_route(notes)
+
+    # Prefer LLM Stage D route when present and non-empty
+    llm_ops = extraction.get("llmRouteOps") or extraction.get("llm_route_ops") or []
+    if isinstance(llm_ops, list) and len(llm_ops) >= 1:
+        ctq_norm = {
+            re.sub(r"\s+", " ", str(n.get("text") or "")).strip().lower()[:120]
+            for n in ctq_notes
+            if isinstance(n, dict) and (n.get("text") or "").strip()
+        }
+        operations = []
+        for op in llm_ops:
+            if not isinstance(op, dict):
+                continue
+            instr_probe = re.sub(
+                r"\s+",
+                " ",
+                str(op.get("instructionText") or op.get("instruction") or ""),
+            ).strip().lower()[:120]
+            # Drop Stage D echoes of CTQ lines (Quality tab owns those).
+            if instr_probe and any(
+                instr_probe == c or instr_probe in c or c in instr_probe
+                for c in ctq_norm
+                if len(c) >= 12
+            ):
+                continue
+            o = dict(op)
+            items_used = []
+            for it in o.get("itemsUsed") or []:
+                if not isinstance(it, dict):
+                    continue
+                try:
+                    ino = int(it.get("itemNo"))
+                except (TypeError, ValueError):
+                    continue
+                qty = it.get("qty")
+                if qty is None:
+                    qty = bom_lookup.get(ino)
+                items_used.append(
+                    {
+                        "itemNo": ino,
+                        "qty": qty,
+                        "description": it.get("description"),
+                    }
+                )
+            instr = sanitize_operator_instruction(
+                o.get("instructionText") or o.get("instruction") or ""
+            ) or (o.get("instructionText") or o.get("instruction") or "")
+            o["instructionText"] = instr
+            o["itemsUsed"] = items_used
+            o["items"] = ", ".join(
+                f"#{u['itemNo']}" + (f"×{u['qty']}" if u.get("qty") else "")
+                for u in items_used
+            )
+            o["features"] = [f"ITM-{u['itemNo']}" for u in items_used]
+            o["source"] = o.get("source") or "llm_route"
+            operations.append(o)
+        if operations:
+            operations.sort(key=lambda x: int(x.get("opNo") or 0))
+            for i, o in enumerate(operations):
+                op_no = (i + 1) * 10
+                o["opNo"] = op_no
+                o["id"] = f"op-{op_no}"
+            max_op = max(int(o.get("opNo") or 0) for o in operations)
+            operations.append(
+                _final_inspection_op(extraction, assembly_notes, max_op + 10, title)
+            )
+            return _route_payload(
+                extraction,
+                assembly_notes,
+                bom,
+                operations,
+                drawing_type,
+                title,
+                ctq_notes=ctq_notes,
+            )
+
+    # Milestone 1: ensure balloon assembly groups become notes if not already merged
+    groups = extraction.get("assemblyGroups") or extraction.get("assembly_groups") or []
+    if groups:
+        try:
+            from app.route_card.drawing_mind.assembly_groups import (
+                groups_to_synthetic_notes,
+                merge_notes_with_balloon_notes,
+            )
+
+            balloon_notes = groups_to_synthetic_notes(
+                groups, parts_list={"items": bom}
+            )
+            notes = merge_notes_with_balloon_notes(notes, balloon_notes)
+            assembly_notes, ctq_notes = partition_notes_for_route(notes)
+        except Exception:
+            pass
 
     operations = []
     op_no = 10
-    for note in notes:
+    for note in assembly_notes:
         text = note.get("text") or ""
         # Keep the drawing wording. CPU/view elaboration is used only when it
         # still contains that wording (never a free rewrite that drops the note).
@@ -151,7 +350,27 @@ def generate_route(extraction: dict) -> dict:
         hint_text = instruction_src or text
         name = _op_name(hint_text, note.get("stepNo") or 1)
         wc = _work_centre(hint_text, torque)
-        items_used = _items_payload(items, bom_lookup)
+        if note.get("itemsUsed"):
+            items_used = []
+            for it in note.get("itemsUsed") or []:
+                if not isinstance(it, dict):
+                    continue
+                try:
+                    ino = int(it.get("itemNo"))
+                except (TypeError, ValueError):
+                    continue
+                qty = it.get("qty")
+                if qty is None:
+                    qty = bom_lookup.get(ino)
+                items_used.append(
+                    {
+                        "itemNo": ino,
+                        "qty": qty,
+                        "description": it.get("description"),
+                    }
+                )
+        else:
+            items_used = _items_payload(items, bom_lookup)
         items_label = ", ".join(f"#{i['itemNo']}" + (f"×{i['qty']}" if i.get("qty") else "") for i in items_used)
         src_ref = note.get("sourceFilename") or ""
         if src_ref and src_ref not in refs:
@@ -198,56 +417,28 @@ def generate_route(extraction: dict) -> dict:
         )
         op_no += 10
 
-    # Build final inspection dynamically from actual extraction findings
-    torques = extraction.get("torque_specs") or []
-    checks = []
-    tools = []
-    if torques:
-        checks.append("torque points")
-        tools.append("Torque verifier")
-    has_connectors = any(n.get("connectors") for n in notes if isinstance(n, dict))
-    if has_connectors:
-        checks.append("connector engagement")
-    if title.get("weight"):
-        checks.append("weight")
-        tools.append("scale")
-    if title.get("surfaceFinish"):
-        checks.append("mounting-surface finish")
-    if extraction.get("dimensions"):
-        checks.append("critical dimensions")
-        tools.append("caliper / gauge")
-
-    tools.append("visual")
-    tool_label = " / ".join(dict.fromkeys(tools))
-
-    if checks:
-        inspection_ops_text = f"Verify {', '.join(checks)}."
-    else:
-        inspection_ops_text = "Final visual and assembly inspection."
-
-    operations.append(
-        {
-            "id": f"op-{op_no}",
-            "opNo": op_no,
-            "operation": "Final inspection",
-            "workCentre": "Quality",
-            "machine": "Inspection bench",
-            "tool": tool_label,
-            "items": "",
-            "itemsUsed": [],
-            "torqueSpec": ", ".join(torques) if torques else "",
-            "reference": ", ".join(extraction.get("references") or []),
-            "setup": "—",
-            "time": "",
-            "inspection": "100% derived checklist",
-            "instructionText": inspection_ops_text,
-            "status": "Planned",
-            "type": "Quality",
-            "reason": inspection_ops_text,
-            "features": [],
-        }
+    operations.append(_final_inspection_op(extraction, assembly_notes, op_no, title))
+    return _route_payload(
+        extraction,
+        assembly_notes,
+        bom,
+        operations,
+        drawing_type,
+        title,
+        ctq_notes=ctq_notes,
     )
 
+
+def _route_payload(
+    extraction: dict,
+    notes: list,
+    bom: list,
+    operations: list,
+    drawing_type: str,
+    title: dict,
+    ctq_notes: list | None = None,
+) -> dict:
+    torques = extraction.get("torque_specs") or []
     inspection = []
     idx = 1
     for tq in torques:
@@ -293,6 +484,19 @@ def generate_route(extraction: dict) -> dict:
                 }
             )
             idx += 1
+
+    # CTQ POINTS from GA → Quality & Inspection (not Manufacturing ops)
+    ctq_rows = ctq_notes_to_inspection(
+        ctq_notes if ctq_notes is not None else [],
+        start_idx=idx,
+    )
+    if not ctq_rows:
+        # Fallback: classify from extraction notes if caller did not pass ctq_notes
+        _, inferred_ctq = partition_notes_for_route(extraction.get("notes") or [])
+        ctq_rows = ctq_notes_to_inspection(inferred_ctq, start_idx=idx)
+    for row in ctq_rows:
+        inspection.append(row)
+        idx += 1
 
     # Dynamic fastener count
     fastener_kws = ("SCREW", "BOLT", "NUT", "WASHER", "FASTENER", "STUD", "RIVET", "STANDOFF", "PIN", "CSK", "HEX")

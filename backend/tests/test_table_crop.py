@@ -76,3 +76,42 @@ def test_wrong_page_rejected():
     data = _pdf_with_table_caption(pages=[[("TABLE 1", (72, 120))]])
     out = render_table_crop(data, table_id="1", page_no=2)
     assert out["available"] is False
+
+
+def test_figure_and_detail_crops():
+    from app.route_card.drawing_mind.table_crop import render_view_crop
+
+    data = _pdf_with_table_caption(
+        pages=[
+            [
+                ("FIGURE 1", (72, 80)),
+                ("DETAIL A", (72, 220)),
+                ("NOTES", (72, 400)),
+            ]
+        ]
+    )
+    fig = render_view_crop(data, kind="figure", ref_id="1", page_no=1)
+    assert fig["available"] is True
+    assert fig["label"] == "FIGURE 1"
+    det = render_view_crop(data, kind="detail", ref_id="A", page_no=1)
+    assert det["available"] is True
+    assert det["label"] == "DETAIL A"
+
+
+def test_named_interconnection_crop():
+    from app.route_card.drawing_mind.table_crop import render_view_crop
+
+    data = _pdf_with_table_caption(
+        pages=[
+            [
+                ("INTERCONNECTION LISTING", (72, 100)),
+                ("J1 pin 1 to J2 pin 1", (72, 130)),
+                ("FIGURE 9", (72, 420)),
+            ]
+        ]
+    )
+    out = render_view_crop(
+        data, kind="named", ref_id="INTERCONNECTION TABLE", page_no=1
+    )
+    assert out["available"] is True
+    assert "INTERCONNECTION" in out["label"]

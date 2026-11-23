@@ -191,8 +191,9 @@ def test_as_shown_without_measured_offsets_keeps_source():
     assert "5 mm gap from the top" not in low
     assert "from the left" not in low
     assert "5.0" not in elaborated
-    # Keep source wording when nothing was measured
-    assert note_text.upper() in elaborated.upper() or elaborated.upper() == note_text.upper()
+    # Source note is kept as placement context (sanitize may drop the '(From drawing: …)' suffix)
+    assert "ITEM 2" in elaborated.upper() and "ITEM 3" in elaborated.upper()
+    assert "ADHESIVE" in elaborated.upper() or "GLUE" in elaborated.upper()
     assert any("could not resolve placement offsets" in w.lower() for w in result.warnings)
 
 
@@ -225,6 +226,66 @@ def test_as_shown_without_spatial_warns():
         "spatial" in w.lower() or "balloon" in w.lower() or "offset" in w.lower() or "verify" in w.lower()
         for w in result.warnings
     ) or result.notes[0].get("elaboratedText")
+
+
+def test_rear_view_title_does_not_invent_rear_side():
+    """Bare REAR / REAR VIEW OCR must not become 'REAR side' on fix/paste/bond ops."""
+    from app.route_card.drawing_mind.spatial import (
+        is_strong_mounting_surface,
+        is_weak_surface_label,
+    )
+
+    assert is_weak_surface_label("REAR")
+    assert is_weak_surface_label("REAR VIEW")
+    assert is_weak_surface_label("FRONT")
+    assert not is_strong_mounting_surface("REAR")
+    assert is_strong_mounting_surface("REAR FACE")
+    assert is_strong_mounting_surface("DC OUT")
+
+    note_text = "FIX / PASTE ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE."
+    ga = {
+        "raw_text": note_text + "\nREAR VIEW\nALL DIMENSIONS ARE IN MM",
+        "title_block": {"unit": "mm"},
+        "notes": [
+            {
+                "sheet": 1,
+                "stepNo": 1,
+                "text": note_text,
+                "items": [2, 3],
+                "torque": [],
+                "connectors": [],
+                "standards": [],
+                "references": [],
+            }
+        ],
+        "bom_items": [],
+    }
+    pages = [
+        {
+            "page": 1,
+            "width": 800,
+            "height": 500,
+            "words": [
+                {"text": "REAR", "x0": 400, "y0": 40, "x1": 450, "y1": 58},
+                {"text": "VIEW", "x0": 455, "y0": 40, "x1": 510, "y1": 58},
+                {"text": "2", "x0": 80, "y0": 90, "x1": 95, "y1": 110},
+                {"text": "3", "x0": 80, "y0": 170, "x1": 95, "y1": 190},
+            ],
+        }
+    ]
+    mind = CpuSpatialMind()
+    result = mind.understand(
+        pdf_bytes=None,
+        ga_extraction=ga,
+        spatial_pages=pages,
+        source_drawing_id=1,
+        source_filename="rear-view.pdf",
+    )
+    elaborated = (result.notes[0].get("elaboratedText") or "").upper()
+    assert "REAR SIDE" not in elaborated
+    assert "ON THE REAR" not in elaborated
+    for p in result.placements:
+        assert not (p.surface or "").strip() or "DC OUT" in (p.surface or "").upper()
 
 
 def test_multi_ga_cross_ref_missing():
@@ -499,13 +560,14 @@ if __name__ == "__main__":
     test_item_order_from_note()
     test_sticker_elaboration()
     test_as_shown_without_spatial_warns()
+    test_rear_view_title_does_not_invent_rear_side()
     test_multi_ga_cross_ref_missing()
     test_pcb_pl_wl_link()
     test_item_pair_110_and_120()
     test_parse_detail_item_table_rows()
     test_detail_b_row_in_elaborated_text()
     test_wiring_ga_view_refs_sheet2_figure_table()
-    test_every_note_gets_pl_enrichment_without_inventing_pn()
+    test_every_note_gets_torque_enrichment_without_parts_appendix()
     test_assemble_verb_triggers_placement_path()
     print("OK — CPU drawing-mind feasibility checks passed.")
     print(

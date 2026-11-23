@@ -8,6 +8,7 @@ import { confirmDialog } from "primereact/confirmdialog";
 import SafeInputText from "@/components/SafeInputText";
 import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { Message } from "primereact/message";
+import { OverlayPanel } from "primereact/overlaypanel";
 import { ProgressBar } from "primereact/progressbar";
 import { TabPanel, TabView } from "primereact/tabview";
 import { Tag } from "primereact/tag";
@@ -27,7 +28,7 @@ import {
   downloadJson,
   exportPmfOarc,
   fetchDrawingFileBlob,
-  fetchDrawingTableCrop,
+  fetchDrawingViewCrop,
   fetchFavorites,
   fetchItemLinkReport,
   fetchMachinesQuietly,
@@ -55,6 +56,7 @@ import { Checkbox } from "primereact/checkbox";
 import ExcelPreviewDialog from "@/components/ExcelPreviewDialog";
 import OarcPreviewDialog from "@/components/OarcPreviewDialog";
 import OpTemplatePickerDialog from "@/components/OpTemplatePickerDialog";
+import PmfAnalyzeLoader from "@/components/PmfAnalyzeLoader";
 import RouteRemarksPanel from "@/components/RouteRemarksPanel";
 import AppShell from "@/components/AppShell";
 import PageHeader from "@/components/PageHeader";
@@ -72,8 +74,8 @@ import {
 } from "@/lib/itemLabels";
 import { normalizeInstructionCase, sanitizeOperatorInstruction } from "@/lib/instructionCase";
 import {
-  collectTableViewHints,
-  resolveDrawingIdForTableHint,
+  collectViewCropHints,
+  resolveDrawingIdForViewHint,
 } from "@/lib/tableViewHints";
 import InstructionClickEdit from "@/components/InstructionClickEdit";
 import "@fontsource/rubik/400.css";
@@ -327,6 +329,8 @@ export default function RouteCardGenerationAlt() {
   const [tableCrops, setTableCrops] = useState([]); // available crops for open instruction
   const [tableCropsLoading, setTableCropsLoading] = useState(false);
   const [tableCropView, setTableCropView] = useState(null); // { label, src, filename, page }
+  const [viewPopoverCrop, setViewPopoverCrop] = useState(null);
+  const viewPopoverRef = useRef(null);
   const [savingFormat, setSavingFormat] = useState(null);
   const [analysisPayload, setAnalysisPayload] = useState(null);
   const [oarcPreviewOpen, setOarcPreviewOpen] = useState(false);
@@ -335,6 +339,7 @@ export default function RouteCardGenerationAlt() {
   const [mindInfo, setMindInfo] = useState(null);
   const [crossRefs, setCrossRefs] = useState([]);
   const [reviewFlags, setReviewFlags] = useState([]);
+  const [showLowReviewFlags, setShowLowReviewFlags] = useState(false);
   const [itemLinkReport, setItemLinkReport] = useState(null);
   const [recentItems, setRecentItems] = useState([]);
   const [favorites, setFavorites] = useState([]);
@@ -415,7 +420,10 @@ export default function RouteCardGenerationAlt() {
     else if (st === "ied_complete") setReviewStatus("ied_complete");
     else if (st === "draft") setReviewStatus("draft");
     else setReviewStatus("ready");
-    if (payload.reviewFlags) setReviewFlags(payload.reviewFlags);
+    if (payload.reviewFlags) {
+      setReviewFlags(payload.reviewFlags);
+      setShowLowReviewFlags(false);
+    }
     if (payload.itemLinkReport) setItemLinkReport(payload.itemLinkReport);
     const tasks = payload.analysisTasks || [];
     setTaskProgress(Object.fromEntries(tasks.map((t) => [t.key, t.value ?? 100])));
@@ -1002,46 +1010,61 @@ export default function RouteCardGenerationAlt() {
 
   const loadTableCropsForInstruction = useCallback(
     async (draft, viewRefs = []) => {
-      const mergedRefs = [
-        ...(viewRefs || []),
-        ...((mindInfo && mindInfo.viewRefs) || []),
-      ];
-      const hints = collectTableViewHints(draft, mergedRefs);
-      if (!hints.length) {
-        setTableCrops([]);
-        return;
-      }
+      // Only this op's text + op.viewRefs — never session-wide mindInfo.viewRefs
+      // (that listed every FIGURE/TABLE/DETAIL from the whole GA on every OP).
+      const hints = collectViewCropHints(draft, viewRefs || []);
+      setTableCrops([]);
+      if (!hints.length) return;
+
       setTableCropsLoading(true);
       try {
         const results = [];
         for (const hint of hints) {
-          const did = resolveDrawingIdForTableHint(hint, sessionDrawingsForCrop);
-          if (!did) continue;
-          try {
-            let crop = await fetchDrawingTableCrop(did, {
-              table: hint.tableId,
-              page: hint.sheet || undefined,
-            });
-            // Single-page sheet PDFs often use sheet no in the filename only
-            if (!crop?.available && hint.sheet) {
-              crop = await fetchDrawingTableCrop(did, { table: hint.tableId });
-            }
-            if (crop?.available && crop.imageBase64) {
-              results.push({
-                ...crop,
-                src: `data:${crop.mime || "image/jpeg"};base64,${crop.imageBase64}`,
+          const preferred = resolveDrawingIdForViewHint(hint, sessionDrawingsForCrop);
+          const tryIds = [
+            ...(preferred ? [preferred] : []),
+            ...((sessionDrawingsForCrop || [])
+              .map((d) => Number(d.id))
+              .filter((id) => id && id !== preferred) || []),
+          ];
+          let found = null;
+          for (const did of tryIds) {
+            try {
+              let crop = await fetchDrawingViewCrop(did, {
+                kind: hint.kind,
+                id: hint.refId,
+                page: hint.sheet || undefined,
               });
+              // Single-page sheet PDFs often use sheet no in the filename only
+              if (!crop?.available && hint.sheet) {
+                crop = await fetchDrawingViewCrop(did, {
+                  kind: hint.kind,
+                  id: hint.refId,
+                });
+              }
+              // Gated: only keep high-confidence available crops
+              if (crop?.available && crop.imageBase64) {
+                found = {
+                  ...crop,
+                  kind: crop.kind || hint.kind,
+                  refId: hint.refId,
+                  label: crop.label || hint.label,
+                  src: `data:${crop.mime || "image/jpeg"};base64,${crop.imageBase64}`,
+                };
+                break;
+              }
+            } catch {
+              /* gated — skip unavailable */
             }
-          } catch {
-            /* gated — skip unavailable */
           }
+          if (found) results.push(found);
         }
         setTableCrops(results);
       } finally {
         setTableCropsLoading(false);
       }
     },
-    [mindInfo, sessionDrawingsForCrop],
+    [sessionDrawingsForCrop],
   );
 
   const openSuggestedInstruction = (op) => {
@@ -1273,6 +1296,15 @@ export default function RouteCardGenerationAlt() {
   const unresolvedBlocking = (reviewFlags || []).filter(
     (f) => !f.resolved && ["high", "medium"].includes((f.severity || "").toLowerCase()),
   );
+  const reviewFlagsPrimary = (reviewFlags || []).filter((f) =>
+    ["high", "medium"].includes((f.severity || "").toLowerCase()),
+  );
+  const reviewFlagsLow = (reviewFlags || []).filter(
+    (f) => (f.severity || "").toLowerCase() === "low",
+  );
+  const visibleReviewFlags = showLowReviewFlags
+    ? [...reviewFlagsPrimary, ...reviewFlagsLow]
+    : reviewFlagsPrimary;
   const currentUser = getUser();
   const userRole = currentUser?.role;
   const isIedUser = userRole === "ied";
@@ -2419,9 +2451,26 @@ export default function RouteCardGenerationAlt() {
                   </div>
                   {(reviewFlags || []).length > 0 && (
                     <div className="mb-3">
-                      <h4 style={{ marginBottom: "0.5rem" }}>Needs review</h4>
+                      <div className="flex align-items-center justify-content-between gap-2 flex-wrap" style={{ marginBottom: "0.5rem" }}>
+                        <h4 style={{ margin: 0 }}>Needs review</h4>
+                        {reviewFlagsLow.length > 0 && (
+                          <Button
+                            type="button"
+                            text
+                            size="small"
+                            className="p-0"
+                            label={
+                              showLowReviewFlags
+                                ? "Hide diagnostics"
+                                : `${reviewFlagsLow.length} diagnostic note${reviewFlagsLow.length === 1 ? "" : "s"}`
+                            }
+                            icon={showLowReviewFlags ? "pi pi-chevron-up" : "pi pi-chevron-down"}
+                            onClick={() => setShowLowReviewFlags((v) => !v)}
+                          />
+                        )}
+                      </div>
                       <ul style={{ paddingLeft: "1.1rem", margin: 0 }}>
-                        {reviewFlags.map((f) => (
+                        {visibleReviewFlags.map((f) => (
                           <li key={f.id} style={{ marginBottom: 6 }}>
                             <label className="flex align-items-start gap-2" style={{ cursor: "pointer" }}>
                               <Checkbox
@@ -2445,12 +2494,28 @@ export default function RouteCardGenerationAlt() {
                             </label>
                           </li>
                         ))}
+                        {!showLowReviewFlags &&
+                          reviewFlagsPrimary.length === 0 &&
+                          reviewFlagsLow.length > 0 && (
+                            <li style={{ marginBottom: 6, listStyle: "none", paddingLeft: 0 }}>
+                              <span style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+                                Only low-priority drawing-mind diagnostics — expand above if needed.
+                              </span>
+                            </li>
+                          )}
                       </ul>
                     </div>
                   )}
                   {itemLinkReport?.rows?.length > 0 && (
                     <div className="mb-3">
                       <h4 style={{ marginBottom: "0.5rem" }}>PL ↔ GA items</h4>
+                      {(itemLinkReport.summary?.qtyMismatchCount > 0) && (
+                        <Message
+                          severity="warn"
+                          className="w-full mb-2"
+                          text={`PL qty ≠ extracted callout qty for ${itemLinkReport.summary.qtyMismatchCount} item(s).`}
+                        />
+                      )}
                       <DataTable
                         value={itemLinkReport.rows}
                         size="small"
@@ -2462,7 +2527,9 @@ export default function RouteCardGenerationAlt() {
                       >
                         <Column field="itemNo" header="Item" style={{ width: 70 }} />
                         <Column field="description" header="Description" />
-                        <Column field="status" header="Status" style={{ width: 100 }} />
+                        <Column field="plQty" header="PL Qty" style={{ width: 70 }} />
+                        <Column field="extractedQty" header="Extracted Qty" style={{ width: 90 }} />
+                        <Column field="status" header="Status" style={{ width: 110 }} />
                       </DataTable>
                     </div>
                   )}
@@ -2656,26 +2723,31 @@ export default function RouteCardGenerationAlt() {
             : ""}
           . Open the existing extraction or run generate again.
         </p>
-        <ul className="rca-prior-list" style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.8rem" }}>
-          {(priorDialog.matches || []).slice(0, 5).map((m) => (
-            <li key={m.sessionId} style={{ marginBottom: "0.35rem" }}>
-              <button
-                type="button"
-                className="p-link"
-                style={{ fontSize: "0.8rem" }}
-                onClick={() => {
-                  setPriorDialog((s) => ({ ...s, visible: false }));
-                  openSessionById(m.sessionId);
-                }}
-              >
-                Session {m.sessionId}
-                {m.partNumber ? ` · ${m.partNumber}` : ""}
-                {m.matchedFilenames?.length ? ` · ${m.matchedFilenames[0]}` : ""}
-                {m.routeStatus ? ` · ${m.routeStatus}` : ""}
-              </button>
-            </li>
-          ))}
-        </ul>
+        {priorDialog.matches?.[0] ? (
+          <div className="rca-prior-latest" style={{ fontSize: "0.8rem" }}>
+            <button
+              type="button"
+              className="p-link"
+              style={{ fontSize: "0.8rem" }}
+              onClick={() => {
+                const sid = priorDialog.matches[0].sessionId;
+                setPriorDialog((s) => ({ ...s, visible: false }));
+                if (sid) openSessionById(sid);
+              }}
+            >
+              Session {priorDialog.matches[0].sessionId}
+              {priorDialog.matches[0].partNumber
+                ? ` · ${priorDialog.matches[0].partNumber}`
+                : ""}
+              {priorDialog.matches[0].matchedFilenames?.length
+                ? ` · ${priorDialog.matches[0].matchedFilenames[0]}`
+                : ""}
+              {priorDialog.matches[0].routeStatus
+                ? ` · ${priorDialog.matches[0].routeStatus}`
+                : ""}
+            </button>
+          </div>
+        ) : null}
       </Dialog>
 
       <Dialog
@@ -2716,7 +2788,11 @@ export default function RouteCardGenerationAlt() {
           className="w-full"
           value={plantDialog.draft || null}
           options={plants.map((p) => ({
-            label: p.label || `${p.code}${p.name ? ` — ${p.name}` : ""}`,
+            label:
+              p.label ||
+              (p.sbuName
+                ? `${p.code} - ${p.sbuName}`
+                : p.code),
             value: p.code,
           }))}
           onChange={(e) => setPlantDialog((s) => ({ ...s, draft: e.value || "" }))}
@@ -2754,6 +2830,8 @@ export default function RouteCardGenerationAlt() {
           });
           setTableCrops([]);
           setTableCropView(null);
+          setViewPopoverCrop(null);
+          viewPopoverRef.current?.hide?.();
         }}
         className="oarc-instr-dialog rca-instr-dialog"
         style={{ width: "min(94vw, 42rem)" }}
@@ -2775,6 +2853,8 @@ export default function RouteCardGenerationAlt() {
                 });
                 setTableCrops([]);
                 setTableCropView(null);
+                setViewPopoverCrop(null);
+                viewPopoverRef.current?.hide?.();
               }}
             />
             <Button
@@ -2795,41 +2875,146 @@ export default function RouteCardGenerationAlt() {
           value={instrDialog.draft}
           onChange={(e) => setInstrDialog((s) => ({ ...s, draft: e.target.value }))}
           itemLookup={plItemLookup}
+          viewCrops={tableCrops}
+          onOpenViewCrop={(crop, el) => {
+            setViewPopoverCrop(crop);
+            const ev = { currentTarget: el, target: el };
+            viewPopoverRef.current?.toggle?.(ev);
+          }}
           resetKey={`${instrDialog.visible}:${instrDialog.opKey || ""}`}
           rows={6}
         />
         {tableCropsLoading ? (
           <p className="oarc-instr-dialog__hint" style={{ marginTop: "0.5rem" }}>
-            Checking drawing for table snapshot…
+            Checking drawing for referenced view snapshot…
           </p>
         ) : null}
-        {tableCrops.length > 0 ? (
-          <div className="oarc-instr-dialog__meta" aria-label="Drawing table snapshots">
-            <span className="oarc-instr-dialog__meta-label">Tables:</span>
-            <div className="oarc-instr-dialog__chips">
-              {tableCrops.map((crop) => (
+        <OverlayPanel
+          ref={viewPopoverRef}
+          className="instr-view-popover"
+          dismissable
+          showCloseIcon={false}
+          onHide={() => setViewPopoverCrop(null)}
+        >
+          {viewPopoverCrop?.src ? (
+            <>
+              <div className="instr-view-popover__head">
+                <i className="pi pi-image" aria-hidden />
+                <span className="instr-view-popover__head-title">
+                  {viewPopoverCrop.label || "Drawing view"}
+                </span>
                 <Button
-                  key={`${crop.drawingId}-${crop.label}`}
                   type="button"
-                  label={crop.label}
-                  icon="pi pi-info-circle"
+                  icon="pi pi-window-maximize"
+                  rounded
+                  text
                   size="small"
-                  outlined
-                  className="p-button-sm"
-                  onClick={() =>
+                  aria-label="View full size"
+                  onClick={() => {
                     setTableCropView({
-                      label: crop.label,
-                      src: crop.src,
-                      filename: crop.filename,
-                      page: crop.page,
-                      confidence: crop.confidence,
-                    })
-                  }
+                      label: viewPopoverCrop.label,
+                      src: viewPopoverCrop.src,
+                      filename: viewPopoverCrop.filename,
+                      page: viewPopoverCrop.page,
+                      confidence: viewPopoverCrop.confidence,
+                    });
+                    viewPopoverRef.current?.hide?.();
+                  }}
                 />
-              ))}
-            </div>
-          </div>
-        ) : null}
+                <Button
+                  type="button"
+                  icon="pi pi-times"
+                  rounded
+                  text
+                  size="small"
+                  aria-label="Close"
+                  onClick={() => viewPopoverRef.current?.hide?.()}
+                />
+              </div>
+              <div className="instr-view-popover__body">
+                <img
+                  src={viewPopoverCrop.src}
+                  alt={viewPopoverCrop.label || "Drawing view crop"}
+                  className="instr-view-popover__img"
+                />
+              </div>
+              <div className="instr-view-popover__foot">
+                <span className="instr-view-popover__pager">
+                  {(() => {
+                    const idx = Math.max(
+                      0,
+                      tableCrops.findIndex(
+                        (c) =>
+                          c === viewPopoverCrop ||
+                          (c.kind === viewPopoverCrop.kind &&
+                            String(c.refId || "") === String(viewPopoverCrop.refId || "") &&
+                            c.src === viewPopoverCrop.src)
+                      )
+                    );
+                    const n = tableCrops.length || 1;
+                    return (
+                      <>
+                        <Button
+                          type="button"
+                          icon="pi pi-chevron-left"
+                          rounded
+                          text
+                          size="small"
+                          disabled={n <= 1}
+                          aria-label="Previous view"
+                          onClick={() => {
+                            if (n <= 1) return;
+                            const next = tableCrops[(idx - 1 + n) % n];
+                            setViewPopoverCrop(next);
+                          }}
+                        />
+                        <span>
+                          {idx + 1} / {n}
+                        </span>
+                        <Button
+                          type="button"
+                          icon="pi pi-chevron-right"
+                          rounded
+                          text
+                          size="small"
+                          disabled={n <= 1}
+                          aria-label="Next view"
+                          onClick={() => {
+                            if (n <= 1) return;
+                            const next = tableCrops[(idx + 1) % n];
+                            setViewPopoverCrop(next);
+                          }}
+                        />
+                      </>
+                    );
+                  })()}
+                </span>
+                <Button
+                  type="button"
+                  label="View full size"
+                  icon="pi pi-external-link"
+                  link
+                  size="small"
+                  className="p-0"
+                  onClick={() => {
+                    setTableCropView({
+                      label: viewPopoverCrop.label,
+                      src: viewPopoverCrop.src,
+                      filename: viewPopoverCrop.filename,
+                      page: viewPopoverCrop.page,
+                      confidence: viewPopoverCrop.confidence,
+                    });
+                    viewPopoverRef.current?.hide?.();
+                  }}
+                />
+              </div>
+            </>
+          ) : (
+            <p className="oarc-instr-dialog__hint" style={{ padding: "0.75rem" }}>
+              No snapshot available.
+            </p>
+          )}
+        </OverlayPanel>
         {(instrDialog.itemsUsed || []).length > 0 ? (
           <div className="oarc-instr-dialog__meta" aria-label="Items from Parts List">
             <span className="oarc-instr-dialog__meta-label">Items:</span>
@@ -2850,7 +3035,7 @@ export default function RouteCardGenerationAlt() {
             ? `${tableCropView.label}${
                 tableCropView.filename ? ` — ${tableCropView.filename}` : ""
               }${tableCropView.page ? ` (sheet ${tableCropView.page})` : ""}`
-            : "Table"
+            : "Drawing view"
         }
         visible={Boolean(tableCropView)}
         onHide={() => setTableCropView(null)}
@@ -2872,12 +3057,12 @@ export default function RouteCardGenerationAlt() {
           <div className="rca-table-crop">
             <img
               src={tableCropView.src}
-              alt={tableCropView.label || "Table crop"}
+              alt={tableCropView.label || "Drawing view crop"}
               className="rca-table-crop__img"
             />
             <p className="oarc-instr-dialog__hint" style={{ marginTop: "0.5rem" }}>
-              Snapshot from the uploaded drawing (not OCR). Shown only when the table caption was
-              found uniquely.
+              Snapshot from the uploaded drawing. Shown only when the caption was located with high
+              confidence (never invented).
             </p>
           </div>
         ) : null}
@@ -3061,6 +3246,10 @@ export default function RouteCardGenerationAlt() {
           </div>
         )}
       </Dialog>
+      <PmfAnalyzeLoader
+        visible={analyzing}
+        onCancel={() => stopAnalysis()}
+      />
     </AppShell>
   );
 }
