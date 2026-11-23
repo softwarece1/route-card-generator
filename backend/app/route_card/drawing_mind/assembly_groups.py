@@ -642,89 +642,185 @@ def _merge_child_lists(
     return _merge_children_prefer_parsed_qty(a, b)
 
 
+def _fold_orphan_into_target(
+    target: dict[str, Any],
+    orphan: dict[str, Any],
+) -> None:
+    """Attach a fastener-only / continuation orphan into an assembly parent group."""
+    children = [c for c in (orphan.get("children") or []) if isinstance(c, dict)]
+    parent = orphan.get("parentItemNo")
+    fold_children = list(children)
+    if parent is not None:
+        try:
+            pq = int(orphan.get("parentQty") or 0)
+        except (TypeError, ValueError):
+            pq = 0
+        if pq < 1:
+            parsed = parse_callout_cluster(str(orphan.get("rawText") or ""))
+            if parsed:
+                try:
+                    pq = int(parsed.get("parentQty") or 0)
+                except (TypeError, ValueError):
+                    pq = 0
+                if pq < 1:
+                    for ch in parsed.get("children") or []:
+                        try:
+                            if int(ch.get("itemNo")) == int(parent):
+                                pq = int(ch.get("qty") or 0)
+                                break
+                        except (TypeError, ValueError):
+                            continue
+        fold_children = [{"itemNo": int(parent), "qty": max(pq, 1)}] + fold_children
+    target["children"] = _merge_child_lists(target.get("children"), fold_children)
+    raw_a = str(target.get("rawText") or "").strip()
+    raw_b = str(orphan.get("rawText") or "").strip()
+    if raw_b and raw_b not in raw_a:
+        target["rawText"] = f"{raw_a}, {raw_b}".strip(" ,") if raw_a else raw_b
+    lines_a = list(target.get("calloutLines") or [])
+    lines_b = list(orphan.get("calloutLines") or [])
+    if raw_b and raw_b not in lines_a and raw_b not in lines_b:
+        lines_b = lines_b + [raw_b]
+    if lines_b:
+        merged_lines = list(lines_a)
+        for ln in lines_b:
+            if ln not in merged_lines:
+                merged_lines.append(ln)
+        target["calloutLines"] = merged_lines
+
+
 def merge_continuation_groups(
     groups: list[dict[str, Any]],
     *,
     parts_list: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Fold next-line fastener-only / orphan clusters into the prior parent group.
+    """Fold fastener-only / continuation clusters into the nearest assembly parent.
 
-    VLM/OCR often emit line2 ``340x8, 350x8`` as its own group; filter_weak would
-    drop it. Merge those children into the previous non-fastener parent on the
-    same page instead.
+    VLM often emits line2 ``400x8, 410x8`` as its own group (sometimes *before*
+    the parent in JSON). Attach to the nearest same-page non-fastener parent
+    (prefer previous), so filter_weak does not drop the line.
     """
     pl_lookup = _pl_lookup(parts_list)
-    out: list[dict[str, Any]] = []
     warns: list[str] = []
+    items = [g for g in (groups or []) if isinstance(g, dict)]
 
-    def _is_fastener_parent(g: dict[str, Any]) -> bool:
+    def _is_fastener_orphan(g: dict[str, Any]) -> bool:
         parent = g.get("parentItemNo")
-        if parent is None or not pl_lookup:
+        children = [c for c in (g.get("children") or []) if isinstance(c, dict)]
+        if parent is None:
+            return False
+        if not children and parent is not None:
+            # Bare single callout — only fold if fastener-like
+            if not pl_lookup:
+                return False
+            try:
+                return _is_fastener_like(int(parent), pl_lookup)
+            except (TypeError, ValueError):
+                return False
+        if not pl_lookup:
+            # No PL: treat short all-qty rows as orphans (washer pairs)
+            raw = str(g.get("rawText") or "")
+            toks = [t.strip() for t in raw.split(",") if t.strip()]
+            if len(toks) <= 2 and raw_has_qty_markers(raw):
+                return True
             return False
         try:
             p = int(parent)
         except (TypeError, ValueError):
             return False
-        children = [c for c in (g.get("children") or []) if isinstance(c, dict)]
         if not _is_fastener_like(p, pl_lookup):
             return False
-        if not children:
-            return True
         return all(
             _is_fastener_like(int(c["itemNo"]), pl_lookup)
             for c in children
             if c.get("itemNo") is not None
         )
 
-    for g in groups or []:
-        if not isinstance(g, dict):
-            continue
-        children = [c for c in (g.get("children") or []) if isinstance(c, dict)]
-        parent = g.get("parentItemNo")
-        page = g.get("sourcePage")
-        if out and (_is_fastener_parent(g) or (not children and parent is not None)):
-            prev = out[-1]
-            prev_page = prev.get("sourcePage")
-            if prev_page is not None and page is not None and prev_page != page:
-                out.append(g)
-                continue
-            # Fold: orphan parent + its kids become children of the prior assembly parent
-            fold_children = list(children)
-            if parent is not None:
+    def _is_assembly_parent(g: dict[str, Any]) -> bool:
+        if _is_fastener_orphan(g):
+            return False
+        if g.get("parentItemNo") is None:
+            return False
+        if not (g.get("children") or []):
+            return False
+        if pl_lookup:
+            try:
+                return not _is_fastener_like(int(g["parentItemNo"]), pl_lookup)
+            except (TypeError, ValueError):
+                return True
+        return True
+
+    assembly_idxs = [i for i, g in enumerate(items) if _is_assembly_parent(g)]
+    absorbed: set[int] = set()
+    _SIZE_RE = re.compile(r"M\d+(?:\.\d+)?", re.I)
+
+    def _item_sizes(ino: int) -> set[str]:
+        hit = pl_lookup.get(int(ino)) or {}
+        text = f"{hit.get('description') or ''} {hit.get('partNumber') or ''}"
+        return {m.group(0).upper() for m in _SIZE_RE.finditer(text)}
+
+    def _orphan_item_nos(g: dict[str, Any]) -> set[int]:
+        nos: set[int] = set()
+        try:
+            if g.get("parentItemNo") is not None:
+                nos.add(int(g["parentItemNo"]))
+        except (TypeError, ValueError):
+            pass
+        for ch in g.get("children") or []:
+            if isinstance(ch, dict) and ch.get("itemNo") is not None:
                 try:
-                    pq = int(g.get("parentQty") or 0)
+                    nos.add(int(ch["itemNo"]))
                 except (TypeError, ValueError):
-                    pq = 0
-                if pq < 1:
-                    # Recover qty from rawText (e.g. "400x8, 410x8")
-                    parsed = parse_callout_cluster(str(g.get("rawText") or ""))
-                    if parsed:
-                        try:
-                            pq = int(parsed.get("parentQty") or 0)
-                        except (TypeError, ValueError):
-                            pq = 0
-                        if pq < 1:
-                            for ch in parsed.get("children") or []:
-                                try:
-                                    if int(ch.get("itemNo")) == int(parent):
-                                        pq = int(ch.get("qty") or 0)
-                                        break
-                                except (TypeError, ValueError):
-                                    continue
-                fold_children = [
-                    {"itemNo": int(parent), "qty": max(pq, 1)}
-                ] + fold_children
-            prev["children"] = _merge_child_lists(prev.get("children"), fold_children)
-            raw_a = str(prev.get("rawText") or "").strip()
-            raw_b = str(g.get("rawText") or "").strip()
-            if raw_b and raw_b not in raw_a:
-                prev["rawText"] = f"{raw_a}, {raw_b}".strip(" ,") if raw_a else raw_b
-            warns.append(
-                f"merged continuation callout into parent={prev.get('parentItemNo')} "
-                f"from orphan parent={parent}"
-            )
+                    continue
+        return nos
+
+    def _child_nos(g: dict[str, Any]) -> set[int]:
+        nos: set[int] = set()
+        for ch in g.get("children") or []:
+            if isinstance(ch, dict) and ch.get("itemNo") is not None:
+                try:
+                    nos.add(int(ch["itemNo"]))
+                except (TypeError, ValueError):
+                    continue
+        return nos
+
+    for i, g in enumerate(items):
+        if not _is_fastener_orphan(g):
             continue
-        out.append(g)
+        page = g.get("sourcePage")
+        orphan_nos = _orphan_item_nos(g)
+        orphan_sizes: set[str] = set()
+        for n in orphan_nos:
+            orphan_sizes |= _item_sizes(n)
+        cands: list[tuple[int, int, int, int, int]] = []
+        for j in assembly_idxs:
+            ag = items[j]
+            ap = ag.get("sourcePage")
+            if page is not None and ap is not None and ap != page:
+                continue
+            child_nos = _child_nos(ag)
+            # Prefer parents that do not already list these fasteners (true continuation)
+            already = 1 if (orphan_nos & child_nos) else 0
+            # Prefer fastener-size family match (M3 washers → parent with M3 screws)
+            child_sizes: set[str] = set()
+            for n in child_nos:
+                child_sizes |= _item_sizes(n)
+            size_miss = 0 if (orphan_sizes and child_sizes and (orphan_sizes & child_sizes)) else 1
+            if not orphan_sizes or not child_sizes:
+                size_miss = 0  # no signal — don't penalize
+            prefer_prev = 0 if j < i else 1
+            cands.append((already, size_miss, prefer_prev, abs(j - i), j))
+        if not cands:
+            continue
+        cands.sort()
+        j = cands[0][4]
+        _fold_orphan_into_target(items[j], g)
+        absorbed.add(i)
+        warns.append(
+            f"merged continuation callout into parent={items[j].get('parentItemNo')} "
+            f"from orphan parent={g.get('parentItemNo')}"
+        )
+
+    out = [g for i, g in enumerate(items) if i not in absorbed]
     return out, warns
 
 
@@ -1132,18 +1228,50 @@ def merge_bom_with_balloon_items(
 
 
 def dedupe_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one group per parent; union children and prefer richer rawText/qty."""
     best: dict[int, dict[str, Any]] = {}
     for g in groups:
+        if not isinstance(g, dict):
+            continue
         parent = g.get("parentItemNo")
         if parent is None:
             continue
-        key = int(parent)
+        try:
+            key = int(parent)
+        except (TypeError, ValueError):
+            continue
         prev = best.get(key)
-        if not prev or (
-            len(g.get("children") or []) > len(prev.get("children") or [])
-            or float(g.get("confidence") or 0) > float(prev.get("confidence") or 0)
+        if not prev:
+            best[key] = dict(g)
+            continue
+        merged = dict(prev)
+        merged["children"] = _merge_child_lists(prev.get("children"), g.get("children"))
+        # Prefer higher parentQty / confidence / denser rawText
+        try:
+            pq_g = int(g.get("parentQty") or 0)
+            pq_p = int(prev.get("parentQty") or 0)
+            if pq_g > pq_p:
+                merged["parentQty"] = pq_g
+        except (TypeError, ValueError):
+            pass
+        raw_g = str(g.get("rawText") or "")
+        raw_p = str(prev.get("rawText") or "")
+        if raw_has_qty_markers(raw_g) and (
+            not raw_has_qty_markers(raw_p) or len(raw_g) > len(raw_p)
         ):
-            best[key] = g
+            merged["rawText"] = raw_g
+        elif len(raw_g) > len(raw_p):
+            merged["rawText"] = raw_g
+        if float(g.get("confidence") or 0) > float(prev.get("confidence") or 0):
+            merged["confidence"] = g.get("confidence")
+        lines: list[str] = []
+        for src in (prev.get("calloutLines") or [], g.get("calloutLines") or []):
+            for ln in src:
+                if ln and ln not in lines:
+                    lines.append(ln)
+        if lines:
+            merged["calloutLines"] = lines
+        best[key] = merged
     return [best[k] for k in sorted(best)]
 
 

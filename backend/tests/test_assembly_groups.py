@@ -499,6 +499,51 @@ def test_merge_continuation_fastener_line_into_parent():
     assert len(kept) == 1
 
 
+def test_merge_orphan_emitted_before_parent():
+    """VLM may list 400/410 before 450 — still attach to nearest assembly parent."""
+    orphan = {
+        "parentItemNo": 400,
+        "children": [{"itemNo": 410, "qty": 8}],
+        "rawText": "400x8, 410x8",
+        "confidence": 0.9,
+        "sourcePage": 1,
+    }
+    parent = {
+        "parentItemNo": 450,
+        "children": [{"itemNo": 300, "qty": 8}],
+        "rawText": "450, 300x8",
+        "confidence": 0.9,
+        "sourcePage": 1,
+    }
+    other = {
+        "parentItemNo": 80,
+        "children": [{"itemNo": 520, "qty": 4}, {"itemNo": 250, "qty": 8}],
+        "rawText": "80, 520x4, 250x8",
+        "confidence": 0.9,
+        "sourcePage": 1,
+    }
+    orphan340 = {
+        "parentItemNo": 340,
+        "children": [{"itemNo": 350, "qty": 8}],
+        "rawText": "340x8, 350x8",
+        "confidence": 0.9,
+        "sourcePage": 1,
+    }
+    # Order mirrors resp(2): assemblies then fastener orphans (or orphans first)
+    merged, _ = merge_continuation_groups(
+        [orphan, parent, other, orphan340], parts_list=PL
+    )
+    by_p = {g["parentItemNo"]: g for g in merged}
+    assert 400 not in by_p and 340 not in by_p
+    assert 450 in by_p and 80 in by_p
+    kids450 = {c["itemNo"]: c["qty"] for c in by_p[450]["children"]}
+    kids80 = {c["itemNo"]: c["qty"] for c in by_p[80]["children"]}
+    assert kids450[400] == 8 and kids450[410] == 8
+    assert kids80[340] == 8 and kids80[350] == 8
+    # Stacked balloons stay separate
+    assert 520 not in kids450 and 300 not in kids80
+
+
 def test_scan_multiline_blob():
     blob = "noise\n450, 300x8\n400x8, 410x8\nmore"
     found = scan_text_for_clusters(blob, parts_list=PL)
@@ -576,6 +621,7 @@ if __name__ == "__main__":
     test_parse_hyphen_item_qty_section_style()
     test_parse_parent_with_qty_marker()
     test_merge_continuation_fastener_line_into_parent()
+    test_merge_orphan_emitted_before_parent()
     test_scan_multiline_blob()
     test_stacked_balloons_are_separate_points()
     test_normalize_vlm_merges_multiline_rawtext()

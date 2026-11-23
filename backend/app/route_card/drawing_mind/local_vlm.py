@@ -1433,6 +1433,7 @@ class LocalVlmMind(DrawingMind):
                 extract_assembly_groups_from_page,
                 filter_weak_groups,
                 groups_to_synthetic_notes,
+                merge_continuation_groups,
                 merge_notes_with_balloon_notes,
                 scan_text_for_clusters,
                 validate_assembly_group,
@@ -1479,24 +1480,27 @@ class LocalVlmMind(DrawingMind):
                 except (OllamaError, ValueError, json.JSONDecodeError) as exc:
                     warnings.append(f"VLM Stage C page {page_no}: {exc}")
 
-            # Soft OCR/raw-text salvage when vision found nothing new
-            if not vlm_groups:
-                blob = (ga_extraction.get("raw_text") or "") + "\n" + "\n".join(
-                    str(n.get("text") or "") for n in notes
+            # OCR/raw-text salvage — always run; dedupe unions children with VLM
+            blob = (ga_extraction.get("raw_text") or "") + "\n" + "\n".join(
+                str(n.get("text") or "") for n in notes
+            )
+            for g in scan_text_for_clusters(blob, parts_list=parts_list):
+                ng = validate_assembly_group(
+                    g,
+                    pl_nos,
+                    source_page=int(g.get("sourcePage") or 1),
+                    source_drawing_id=source_drawing_id,
+                    source_filename=source_filename,
                 )
-                for g in scan_text_for_clusters(blob):
-                    ng = validate_assembly_group(
-                        g,
-                        pl_nos,
-                        source_page=int(g.get("sourcePage") or 1),
-                        source_drawing_id=source_drawing_id,
-                        source_filename=source_filename,
-                    )
-                    if ng:
-                        ng.pop("warnings", None)
-                        vlm_groups.append(ng)
+                if ng:
+                    ng.pop("warnings", None)
+                    vlm_groups.append(ng)
 
             assembly_groups = dedupe_groups(list(cpu_groups) + vlm_groups)
+            assembly_groups, mwarns = merge_continuation_groups(
+                assembly_groups, parts_list=parts_list
+            )
+            warnings.extend(f"VLM Stage C: {w}" for w in mwarns if w)
             assembly_groups, fwarns = filter_weak_groups(
                 assembly_groups, parts_list=parts_list
             )

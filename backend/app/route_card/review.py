@@ -23,14 +23,18 @@ _WARN_SKIP_RE = re.compile(
     r"(?:"
     r"BOM enriched with|"
     r"Stage C filter:\s*dropped fastener|"
-    r"VLM Stage C page\s+\d+:\s*dropped (?:fastener-only|weak) group|"
+    r"VLM Stage C(?:\s+page\s+\d+)?:\s*dropped (?:fastener-only|weak) group|"
+    r"VLM Stage C:\s*merged continuation|"
     r"merged continuation callout|"
     r"balloon assembly group|"
+    r"Stage C found \d+ balloon|"
     r"extracted \d+ verbatim note line|"
     r"Stage D LLM route produced|"
     r"OP\s+\d+:\s*work centre unresolved|"
     r"Ambiguous work centre match|"
-    r"token gate conflict"
+    r"token gate conflict|"
+    r"Items .+ from Parts List not|"
+    r"were listed in Parts List but lacked"
     r")",
     re.I,
 )
