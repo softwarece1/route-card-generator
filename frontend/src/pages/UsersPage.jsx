@@ -6,8 +6,9 @@ import { IconField } from "primereact/iconfield";
 import { InputIcon } from "primereact/inputicon";
 import { InputText } from "primereact/inputtext";
 import SafeInputText from "@/components/SafeInputText";
+import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { Message } from "primereact/message";
-import { Navigate } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import PageHeader from "@/components/PageHeader";
 import TableComponent, { TableActions, TableStatusBadge } from "@/components/TableComponent";
@@ -17,10 +18,13 @@ import { generateCompliantPassword, getPasswordErrors } from "@/lib/passwordPoli
 import { toast } from "@/lib/toast";
 import { fetchDepartments } from "@/services/authApi";
 import {
+  approveSignup,
   createManagedUser,
   fetchAdminUsers,
   fetchDeptHeads,
   fetchDeptUsers,
+  fetchSignupApprovals,
+  rejectSignup,
   resetManagedUserPassword,
   updateManagedUser,
 } from "@/services/routeCardApi";
@@ -187,11 +191,16 @@ export default function UsersPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
   const isDeptHead = user?.role === "dept_head";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") === "pending" ? "pending" : "users";
 
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [users, setUsers] = useState([]);
+  const [pending, setPending] = useState([]);
   const [dept, setDept] = useState("");
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pendingLoading, setPendingLoading] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
@@ -215,6 +224,11 @@ export default function UsersPage() {
   const [dialogError, setDialogError] = useState("");
   const [headOptions, setHeadOptions] = useState([]);
 
+  const [decideOpen, setDecideOpen] = useState(false);
+  const [decideMode, setDecideMode] = useState("approve");
+  const [decideTarget, setDecideTarget] = useState(null);
+  const [decideRemark, setDecideRemark] = useState("");
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -230,9 +244,41 @@ export default function UsersPage() {
     }
   }, [isAdmin, user?.dept]);
 
+  const loadPending = useCallback(async () => {
+    setPendingLoading(true);
+    try {
+      const res = await fetchSignupApprovals();
+      setPending(res.items || []);
+    } catch (err) {
+      setPending([]);
+      setError(err.message || "Could not load pending signups");
+    } finally {
+      setPendingLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (isAdmin || isDeptHead) load();
-  }, [isAdmin, isDeptHead, load]);
+    if (isAdmin || isDeptHead) {
+      load();
+      loadPending();
+    }
+  }, [isAdmin, isDeptHead, load, loadPending]);
+
+  useEffect(() => {
+    if (searchParams.get("tab") === "pending") {
+      setActiveTab("pending");
+    }
+  }, [searchParams]);
+
+  const selectTab = (tab) => {
+    setActiveTab(tab);
+    if (tab === "pending") {
+      setSearchParams({ tab: "pending" }, { replace: true });
+      loadPending();
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -507,15 +553,50 @@ export default function UsersPage() {
 
   const pageDescription = useMemo(() => {
     if (isAdmin) {
-      return "Add SBU heads, engineers, or IED users; assign reporting officers; reset passwords.";
+      return "Add SBU heads, engineers, or IED users; approve engineer signups; reset passwords.";
     }
     if (isDeptHead) {
       return dept
-        ? `Manage your direct reports in ${dept} — add engineers, edit details, and reset passwords.`
-        : "Manage your direct-report engineers — add users, edit details, and reset passwords.";
+        ? `Manage reports in ${dept} and approve pending engineer signups.`
+        : "Manage your engineers and approve pending signups.";
     }
     return "";
   }, [isAdmin, isDeptHead, dept]);
+
+  const openDecide = (row, mode) => {
+    setDecideTarget(row);
+    setDecideMode(mode);
+    setDecideRemark("");
+    setDialogError("");
+    setDecideOpen(true);
+  };
+
+  const submitDecide = async () => {
+    if (!decideTarget) return;
+    if (decideMode === "reject" && !String(decideRemark || "").trim()) {
+      setDialogError("Remark is required to reject");
+      return;
+    }
+    setSaving(true);
+    setDialogError("");
+    try {
+      if (decideMode === "approve") {
+        await approveSignup(decideTarget.id, decideRemark.trim());
+        toast.success(`Approved ${decideTarget.empId}`);
+      } else {
+        await rejectSignup(decideTarget.id, decideRemark.trim());
+        toast.success(`Rejected ${decideTarget.empId}`);
+      }
+      setDecideOpen(false);
+      setDecideTarget(null);
+      await loadPending();
+      await load();
+    } catch (err) {
+      setDialogError(err.message || "Could not update signup");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (!isAdmin && !isDeptHead) {
     return <Navigate to="/generator" replace />;
@@ -536,20 +617,53 @@ export default function UsersPage() {
                 icon="pi pi-refresh"
                 size="small"
                 outlined
-                onClick={() => load()}
+                onClick={() => {
+                  load();
+                  loadPending();
+                }}
               />
-              <Button
-                type="button"
-                label={isAdmin ? "Add user" : "Add user"}
-                icon="pi pi-user-plus"
-                size="small"
-                onClick={openCreate}
-              />
+              {activeTab === "users" ? (
+                <Button
+                  type="button"
+                  label="Add user"
+                  icon="pi pi-user-plus"
+                  size="small"
+                  onClick={openCreate}
+                />
+              ) : null}
             </>
           }
         />
         {error ? <Message severity="error" text={error} className="w-full mb-3" /> : null}
 
+        <div className="rc-users__tabs-row">
+          <div className="rc-users__tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "users"}
+              className={`rc-users__tab${activeTab === "users" ? " rc-users__tab--active" : ""}`}
+              onClick={() => selectTab("users")}
+            >
+              Directory
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "pending"}
+              className={`rc-users__tab${activeTab === "pending" ? " rc-users__tab--active" : ""}`}
+              onClick={() => selectTab("pending")}
+            >
+              Pending signups
+              {pending.length > 0 ? (
+                <span className="rc-users__tab-badge">{pending.length}</span>
+              ) : null}
+            </button>
+          </div>
+        </div>
+
+        {activeTab === "users" ? (
+          <>
         <div className="rc-users__toolbar">
           <IconField iconPosition="left" className="rc-users__search">
             <InputIcon className="pi pi-search" />
@@ -613,6 +727,25 @@ export default function UsersPage() {
               ),
             },
             {
+              header: "Status",
+              style: { width: "7.5rem" },
+              body: (row) => {
+                const st = row.approvalStatus || (row.isActive ? "approved" : "inactive");
+                if (st === "pending") {
+                  return <TableStatusBadge value="Pending" tone="warn" />;
+                }
+                if (st === "rejected") {
+                  return <TableStatusBadge value="Rejected" tone="danger" />;
+                }
+                return (
+                  <TableStatusBadge
+                    value={row.isActive ? "Active" : "Inactive"}
+                    tone={row.isActive ? "success" : "neutral"}
+                  />
+                );
+              },
+            },
+            {
               header: "Reports to",
               style: { width: "10rem" },
               body: (row) =>
@@ -671,6 +804,120 @@ export default function UsersPage() {
             },
           ]}
         />
+          </>
+        ) : (
+          <TableComponent
+            value={pending}
+            loading={pendingLoading}
+            dataKey="id"
+            paginator
+            rows={12}
+            emptyMessage="No pending engineer signups."
+            columns={[
+              { type: "index", header: "#", style: { width: "3.25rem" } },
+              { field: "empId", header: "Emp ID", sortable: true, style: { width: "8.5rem" } },
+              { field: "name", header: "Name", sortable: true },
+              { field: "dept", header: "SBU", sortable: true, style: { width: "9rem" } },
+              {
+                header: "Requested",
+                style: { width: "11rem" },
+                body: (row) => {
+                  const raw = row.requestedAt || row.createdAt;
+                  if (!raw) return "—";
+                  try {
+                    return new Date(raw).toLocaleString();
+                  } catch {
+                    return raw;
+                  }
+                },
+              },
+              {
+                header: "Actions",
+                style: { width: "10rem" },
+                body: (row) => (
+                  <TableActions>
+                    <Button
+                      type="button"
+                      label="Approve"
+                      icon="pi pi-check"
+                      size="small"
+                      onClick={() => openDecide(row, "approve")}
+                    />
+                    <Button
+                      type="button"
+                      label="Reject"
+                      icon="pi pi-times"
+                      size="small"
+                      outlined
+                      severity="danger"
+                      onClick={() => openDecide(row, "reject")}
+                    />
+                  </TableActions>
+                ),
+              },
+            ]}
+          />
+        )}
+
+        <Dialog
+          header={
+            decideMode === "approve"
+              ? `Approve ${decideTarget?.empId || "signup"}`
+              : `Reject ${decideTarget?.empId || "signup"}`
+          }
+          visible={decideOpen}
+          style={{ width: "min(28rem, 94vw)" }}
+          className="rc-users-dialog p-confirm-dialog-sm"
+          modal
+          onHide={() => !saving && setDecideOpen(false)}
+          footer={
+            <div className="rc-users__dialog-footer">
+              <Button
+                type="button"
+                label="Cancel"
+                outlined
+                size="small"
+                disabled={saving}
+                onClick={() => setDecideOpen(false)}
+              />
+              <Button
+                type="button"
+                label={decideMode === "approve" ? "Approve" : "Reject"}
+                size="small"
+                severity={decideMode === "reject" ? "danger" : undefined}
+                loading={saving}
+                disabled={saving}
+                onClick={submitDecide}
+              />
+            </div>
+          }
+        >
+          <div className="rc-users__form">
+            {decideTarget ? (
+              <p style={{ margin: 0, fontSize: "0.85rem" }}>
+                {decideTarget.name} ({decideTarget.empId})
+                {decideTarget.dept ? ` · ${decideTarget.dept}` : ""}
+              </p>
+            ) : null}
+            <label>
+              Remark{decideMode === "reject" ? " (required)" : " (optional)"}
+              <SafeInputTextarea
+                profile="multiline"
+                value={decideRemark}
+                onChange={(e) => setDecideRemark(e.target.value)}
+                rows={3}
+                autoResize
+                disabled={saving}
+                placeholder={
+                  decideMode === "reject"
+                    ? "Reason for rejection"
+                    : "Optional note for the employee"
+                }
+              />
+            </label>
+            {dialogError ? <Message severity="error" text={dialogError} className="w-full" /> : null}
+          </div>
+        </Dialog>
 
         <Dialog
           header="Add user"

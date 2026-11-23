@@ -56,6 +56,9 @@ def create_notification(
     n = RcNotification(user=user, title=title, body=body or "", link=link or "")
     commit()
     out = notification_dict(n)
+    unread = select(
+        x for x in RcNotification if x.user.id == user.id and x.read_at is None
+    ).count()
     _fire_webhook(
         {
             **out,
@@ -63,6 +66,12 @@ def create_notification(
             "userId": user.id,
         }
     )
+    try:
+        from app.realtime.publish import publish_notification
+
+        publish_notification(user.id, out, unread_count=unread)
+    except Exception as exc:
+        logger.debug("realtime notify skip: %s", exc)
     return out
 
 

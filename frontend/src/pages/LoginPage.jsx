@@ -119,11 +119,15 @@ export default function LoginPage() {
         return;
       }
       const detail = err?.response?.data?.detail;
-      setFormError(
+      const code = typeof detail === "object" && detail ? detail.code : "";
+      let msg =
         typeof detail === "string"
           ? detail
-          : detail?.message || err?.message || "Sign in failed"
-      );
+          : detail?.message || err?.message || "Sign in failed";
+      if (code === "SIGNUP_PENDING" || code === "SIGNUP_REJECTED") {
+        msg = detail.message || msg;
+      }
+      setFormError(msg);
       if (captchaRequired) loadCaptcha();
     } finally {
       setLoading(false);

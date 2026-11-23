@@ -370,6 +370,62 @@ def run_migrations():
 
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS route_card.auth_sessions (
+                id SERIAL PRIMARY KEY,
+                "user" INTEGER NOT NULL
+                    REFERENCES route_card.users(id) ON DELETE CASCADE,
+                access_jti VARCHAR(64) NOT NULL UNIQUE,
+                user_agent VARCHAR(512) NOT NULL DEFAULT '',
+                ip VARCHAR(64) NOT NULL DEFAULT '',
+                expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                revoked_at TIMESTAMP WITHOUT TIME ZONE,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                last_seen_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_active
+            ON route_card.auth_sessions ("user", revoked_at);
+            """
+        )
+
+        # Self-service signup approval (engineer → dept_head / admin)
+        cursor.execute(
+            """
+            ALTER TABLE route_card.users
+            ADD COLUMN IF NOT EXISTS approval_status VARCHAR(32) NOT NULL DEFAULT 'approved';
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.users
+            ADD COLUMN IF NOT EXISTS approval_remark TEXT NOT NULL DEFAULT '';
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.users
+            ADD COLUMN IF NOT EXISTS approval_decided_at TIMESTAMP WITHOUT TIME ZONE;
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.users
+            ADD COLUMN IF NOT EXISTS approval_decided_by INTEGER
+                REFERENCES route_card.users(id) ON DELETE SET NULL;
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_users_approval_status_dept
+            ON route_card.users (approval_status, dept);
+            """
+        )
+
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS route_card.user_favorites (
                 id SERIAL PRIMARY KEY,
                 "user" INTEGER NOT NULL

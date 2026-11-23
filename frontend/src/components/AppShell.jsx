@@ -8,6 +8,7 @@ import { getUser } from "@/lib/auth";
 import { logout } from "@/services/authApi";
 import ThemeToggle from "@/components/ThemeToggle";
 import ChangePasswordDialog from "@/components/ChangePasswordDialog";
+import { connectNotificationsWs } from "@/lib/notificationsWs";
 import {
   fetchNotifications,
   markAllNotificationsRead,
@@ -155,7 +156,7 @@ export default function AppShell({ active = "generator", children }) {
     });
   }, []);
 
-  const loadNotifs = useCallback(async () => {
+  const refreshNotifs = useCallback(async () => {
     try {
       const data = await fetchNotifications();
       setNotifications(data.items || []);
@@ -166,10 +167,28 @@ export default function AppShell({ active = "generator", children }) {
   }, []);
 
   useEffect(() => {
-    loadNotifs();
-    const t = setInterval(loadNotifs, 20000);
-    return () => clearInterval(t);
-  }, [loadNotifs]);
+    const client = connectNotificationsWs({
+      onHello: (msg) => {
+        setNotifications(msg.items || []);
+        setUnread(msg.unreadCount || 0);
+      },
+      onNotification: (msg) => {
+        const item = msg.item;
+        if (item) {
+          setNotifications((prev) => {
+            const rest = (prev || []).filter((n) => n.id !== item.id);
+            return [item, ...rest];
+          });
+        }
+        if (typeof msg.unreadCount === "number") {
+          setUnread(msg.unreadCount);
+        } else {
+          setUnread((u) => u + 1);
+        }
+      },
+    });
+    return () => client.close();
+  }, []);
 
   useEffect(() => {
     if ("scrollRestoration" in window.history) {
@@ -265,7 +284,7 @@ export default function AppShell({ active = "generator", children }) {
               aria-label="Notifications"
               onClick={() => {
                 setNotifOpen(true);
-                loadNotifs();
+                refreshNotifs();
               }}
             >
               {unread > 0 ? <Badge value={unread} severity="danger" /> : null}
@@ -333,7 +352,7 @@ export default function AppShell({ active = "generator", children }) {
             size="small"
             onClick={async () => {
               await markAllNotificationsRead();
-              loadNotifs();
+              refreshNotifs();
             }}
           />
         </div>
@@ -364,7 +383,7 @@ export default function AppShell({ active = "generator", children }) {
                   await markNotificationRead(n.id);
                   if (n.link) navigate(n.link);
                   setNotifOpen(false);
-                  loadNotifs();
+                  refreshNotifs();
                 }}
               >
                 <strong>{n.title}</strong>

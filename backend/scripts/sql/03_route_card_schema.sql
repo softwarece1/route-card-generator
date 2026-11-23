@@ -39,6 +39,22 @@ ALTER TABLE route_card.users
 ALTER TABLE route_card.users
     ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
 
+ALTER TABLE route_card.users
+    ADD COLUMN IF NOT EXISTS approval_status VARCHAR(32) NOT NULL DEFAULT 'approved';
+
+ALTER TABLE route_card.users
+    ADD COLUMN IF NOT EXISTS approval_remark TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE route_card.users
+    ADD COLUMN IF NOT EXISTS approval_decided_at TIMESTAMP WITHOUT TIME ZONE;
+
+ALTER TABLE route_card.users
+    ADD COLUMN IF NOT EXISTS approval_decided_by INTEGER
+        REFERENCES route_card.users(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS ix_users_approval_status_dept
+    ON route_card.users (approval_status, dept);
+
 CREATE TABLE IF NOT EXISTS route_card.password_history (
     id SERIAL PRIMARY KEY,
     "user" INTEGER NOT NULL
@@ -217,6 +233,23 @@ CREATE TABLE IF NOT EXISTS route_card.operation_template_steps (
 
 CREATE INDEX IF NOT EXISTS ix_operation_template_steps_template
     ON route_card.operation_template_steps (template, sort_order);
+
+-- ---------- Auth sessions (httpOnly access JWT jti) ----------
+CREATE TABLE IF NOT EXISTS route_card.auth_sessions (
+    id SERIAL PRIMARY KEY,
+    "user" INTEGER NOT NULL
+        REFERENCES route_card.users(id) ON DELETE CASCADE,
+    access_jti VARCHAR(64) NOT NULL UNIQUE,
+    user_agent VARCHAR(512) NOT NULL DEFAULT '',
+    ip VARCHAR(64) NOT NULL DEFAULT '',
+    expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    revoked_at TIMESTAMP WITHOUT TIME ZONE,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_active
+    ON route_card.auth_sessions ("user", revoked_at);
 
 -- Grants (harmless if already granted)
 GRANT ALL ON SCHEMA route_card TO route_card;

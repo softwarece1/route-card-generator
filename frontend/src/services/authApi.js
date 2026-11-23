@@ -50,7 +50,7 @@ export async function login(empId, password, captchaId, captchaAnswer, options =
     terminateExistingSession: Boolean(options.terminateExistingSession),
     resumeToken: options.resumeToken || undefined,
   });
-  setAuth(data.access_token, data.user);
+  setAuth(null, data.user);
   return data;
 }
 
@@ -59,7 +59,7 @@ export async function takeoverSession(resumeToken) {
   const { data } = await http.post('/auth/login/takeover', {
     resumeToken: (resumeToken || '').trim(),
   });
-  setAuth(data.access_token, data.user);
+  setAuth(null, data.user);
   return data;
 }
 
@@ -88,12 +88,13 @@ export async function signup({ empId, name, dept, password }) {
     cipher,
     alg,
   });
-  setAuth(data.access_token, data.user);
+  // Pending approval — no cookie / no local session
   return data;
 }
 
 export async function fetchMe() {
   const { data } = await http.get('/auth/me');
+  if (data) setAuth(null, data);
   return data;
 }
 
@@ -128,21 +129,14 @@ export async function changePassword({ currentPassword, newPassword }) {
     newPassword,
   });
   if (data?.user) {
-    const token = localStorage.getItem('rc_token') || '';
-    setAuth(token, data.user);
+    setAuth(null, data.user);
   }
   return data;
 }
 
 export async function logout() {
-  const token = localStorage.getItem('rc_token') || '';
   try {
-    if (token) {
-      await http.post('/auth/logout', null, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 8_000,
-      });
-    }
+    await http.post('/auth/logout', null, { timeout: 8_000 });
   } catch {
     /* still clear local auth */
   }

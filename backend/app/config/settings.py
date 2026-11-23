@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     AUTH_ENABLED: bool = True
     # RSA private key PEM for decrypting login/signup credentials (empty = auto-generate under backend/data/)
     AUTH_RSA_PRIVATE_KEY_PATH: str = ""
+    # httpOnly access cookie (LAN HTTP → COOKIE_SECURE=false)
+    AUTH_COOKIE_NAME: str = "rc_access"
+    # Empty = auto: Secure only when APP_ENV is prod/production
+    COOKIE_SECURE: str = ""
+    # Extra CORS/CSRF origins for LAN static IP (comma-separated), e.g. http://172.16.0.10:8003
+    CORS_EXTRA_ORIGINS: str = ""
 
     # Optional outbound webhook for in-app notification events (offline LAN)
     # Empty = disabled. POST JSON {title, body, link, userEmpId, createdAt}
@@ -126,13 +132,43 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "http://localhost:8003",
+        "http://127.0.0.1:8003",
     ]
+    # Built SPA directory for same-origin LAN deploy (empty = skip StaticFiles)
+    # Example: ../frontend/dist relative to backend cwd, or absolute path
+    FRONTEND_DIST: str = ""
     # Encryption key for server‑side file‑at‑rest encryption (base64‑encoded 32‑byte key).
     # Set via environment variable FILE_ENCRYPTION_KEY. Empty means encryption disabled.
     FILE_ENCRYPTION_KEY: str = ""
     # ... existing settings unchanged ...
 
 settings = Settings()
+
+
+def cookie_secure() -> bool:
+    """Secure cookie flag: explicit COOKIE_SECURE, else True only in prod."""
+    raw = (getattr(settings, "COOKIE_SECURE", "") or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return (getattr(settings, "APP_ENV", "dev") or "dev").strip().lower() in {
+        "prod",
+        "production",
+    }
+
+
+def cors_allow_origins() -> list[str]:
+    """CORS / CSRF origins: settings list + CORS_EXTRA_ORIGINS."""
+    origins = [str(o).strip().rstrip("/") for o in (settings.CORS_ORIGINS or []) if str(o).strip()]
+    extra = (getattr(settings, "CORS_EXTRA_ORIGINS", "") or "").strip()
+    if extra:
+        for part in extra.split(","):
+            o = part.strip().rstrip("/")
+            if o and o not in origins:
+                origins.append(o)
+    return origins
 
 
 def captcha_required() -> bool:

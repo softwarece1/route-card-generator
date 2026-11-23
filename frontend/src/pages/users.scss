@@ -1,3 +1,52 @@
+.rc-users__tabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.rc-users__tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.rc-users__tab {
+  appearance: none;
+  border: 1px solid var(--pmf-border, #d0d5dd);
+  background: var(--pmf-surface, #fff);
+  color: var(--pmf-text, #1f2937);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+
+  &--active {
+    border-color: var(--pmf-primary, #2563eb);
+    color: var(--pmf-primary, #2563eb);
+    background: color-mix(in srgb, var(--pmf-primary, #2563eb) 10%, transparent);
+  }
+}
+
+.rc-users__tab-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pmf-danger, #b91c1c);
+  color: #fff;
+}
+
 .rc-users__toolbar {
   display: flex;
   align-items: center;

@@ -3156,6 +3156,8 @@ def _user_rows(
                 "dept": u.dept or "",
                 "role": u.role,
                 "isActive": u.is_active,
+                "approvalStatus": (getattr(u, "approval_status", None) or "approved"),
+                "approvalRemark": (getattr(u, "approval_remark", None) or ""),
                 "createdAt": u.created_at.isoformat() if u.created_at else None,
                 "sessionCount": session_count,
                 "analyzedCount": analyzed,
@@ -3198,7 +3200,165 @@ def _public_user_row(u: RcUser) -> dict:
         "role": u.role,
         "isActive": u.is_active,
         "mustChangePassword": bool(getattr(u, "must_change_password", False)),
+        "approvalStatus": (getattr(u, "approval_status", None) or "approved"),
+        "approvalRemark": (getattr(u, "approval_remark", None) or ""),
         **_reports_to_fields(u),
+    }
+
+
+def _pending_signup_row(u: RcUser) -> dict:
+    return {
+        "id": u.id,
+        "empId": u.emp_id,
+        "name": u.name,
+        "dept": u.dept or "",
+        "role": u.role,
+        "isActive": u.is_active,
+        "approvalStatus": getattr(u, "approval_status", None) or "pending",
+        "approvalRemark": getattr(u, "approval_remark", None) or "",
+        "createdAt": u.created_at.isoformat() if u.created_at else None,
+        "requestedAt": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
+def _assert_can_decide_signup(actor: dict | None, target: RcUser) -> None:
+    if not actor:
+        raise HTTPException(401, "Not authenticated")
+    actor_role = (actor.get("role") or "").strip().lower()
+    if actor_role == "admin":
+        return
+    if actor_role != "dept_head":
+        raise HTTPException(403, "Department head or admin access required")
+    actor_dept = (actor.get("dept") or "").strip()
+    if not actor_dept:
+        raise HTTPException(400, "Your account has no department assigned")
+    if (target.dept or "").strip() != actor_dept:
+        raise HTTPException(403, "Signup is not for your department")
+    if target.role != "engineer":
+        raise HTTPException(403, "Only engineer signups can be approved here")
+
+
+@db_session
+def list_signup_approvals(actor: dict | None) -> dict:
+    if not actor:
+        raise HTTPException(401, "Not authenticated")
+    role = (actor.get("role") or "").strip().lower()
+    if role not in {"admin", "dept_head"}:
+        raise HTTPException(403, "Department head or admin access required")
+    q = select(
+        u
+        for u in RcUser
+        if u.role == "engineer" and u.approval_status == "pending"
+    )
+    if role == "dept_head":
+        dept = (actor.get("dept") or "").strip()
+        if not dept:
+            return {"items": [], "total": 0}
+        rows = [
+            _pending_signup_row(u)
+            for u in q
+            if (u.dept or "") == dept
+        ]
+    else:
+        rows = [_pending_signup_row(u) for u in q]
+    rows.sort(key=lambda r: r.get("requestedAt") or "", reverse=True)
+    return {"items": rows, "total": len(rows)}
+
+
+@db_session
+def approve_signup(actor: dict | None, user_id: int, remark: str | None = None) -> dict:
+    from app.input_safe import require_safe
+    from app.route_card.notifications import create_notification
+
+    if not actor:
+        raise HTTPException(401, "Not authenticated")
+    target = RcUser.get(id=int(user_id))
+    if not target:
+        raise HTTPException(404, "User not found")
+    if (getattr(target, "approval_status", None) or "") != "pending":
+        raise HTTPException(400, "Signup is not pending approval")
+    _assert_can_decide_signup(actor, target)
+
+    remark_n = require_safe((remark or "").strip(), "text", field="remark") if (remark or "").strip() else ""
+
+    actor_role = (actor.get("role") or "").strip().lower()
+    actor_entity = RcUser.get(id=int(actor["id"])) if actor.get("id") else None
+    boss = None
+    if actor_role == "dept_head" and actor_entity:
+        boss = actor_entity
+    else:
+        heads = select(
+            u
+            for u in RcUser
+            if u.is_active
+            and u.role == "dept_head"
+            and u.dept == (target.dept or "")
+        ).order_by(RcUser.name)[:1]
+        boss = heads[0] if heads else None
+
+    target.is_active = True
+    target.approval_status = "approved"
+    target.approval_remark = remark_n
+    target.approval_decided_at = datetime.utcnow()
+    if actor_entity:
+        target.approval_decided_by = actor_entity
+    if boss:
+        target.reports_to = boss
+    commit()
+
+    create_notification(
+        user_id=target.id,
+        title="Signup approved",
+        body=(
+            "Your account was approved. You can sign in now."
+            + (f" Remark: {remark_n}" if remark_n else "")
+        ),
+        link="/login",
+    )
+    return _pending_signup_row(target) | {
+        "approvalStatus": "approved",
+        "isActive": True,
+        "reportsToId": boss.id if boss else None,
+    }
+
+
+@db_session
+def reject_signup(actor: dict | None, user_id: int, remark: str | None = None) -> dict:
+    from app.input_safe import require_safe
+    from app.route_card.notifications import create_notification
+
+    if not actor:
+        raise HTTPException(401, "Not authenticated")
+    target = RcUser.get(id=int(user_id))
+    if not target:
+        raise HTTPException(404, "User not found")
+    if (getattr(target, "approval_status", None) or "") != "pending":
+        raise HTTPException(400, "Signup is not pending approval")
+    _assert_can_decide_signup(actor, target)
+
+    remark_n = require_safe((remark or "").strip(), "text", field="remark")
+    if not remark_n:
+        raise HTTPException(400, "Remark is required to reject a signup")
+
+    actor_entity = RcUser.get(id=int(actor["id"])) if actor.get("id") else None
+    target.is_active = False
+    target.approval_status = "rejected"
+    target.approval_remark = remark_n
+    target.approval_decided_at = datetime.utcnow()
+    if actor_entity:
+        target.approval_decided_by = actor_entity
+    commit()
+
+    create_notification(
+        user_id=target.id,
+        title="Signup rejected",
+        body=f"Your signup was rejected. Remark: {remark_n}",
+        link="/login",
+    )
+    return _pending_signup_row(target) | {
+        "approvalStatus": "rejected",
+        "isActive": False,
+        "approvalRemark": remark_n,
     }
 
 

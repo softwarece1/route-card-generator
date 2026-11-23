@@ -247,6 +247,10 @@ class ManagedUserResetPassword(BaseModel):
     password: str = Field(..., min_length=4, max_length=128)
 
 
+class SignupApprovalDecide(BaseModel):
+    remark: Optional[str] = Field(None, max_length=2000)
+
+
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field

@@ -25,6 +25,7 @@ from app.route_card.schemas import (
     OpTemplateDuplicate,
     OpTemplateUpdate,
     RouteCardUpdate,
+    SignupApprovalDecide,
 )
 
 router = APIRouter(prefix="/api/v1/route-card", tags=["route-card"])
@@ -256,6 +257,30 @@ def admin_update_user_role(
     _admin: dict = Depends(require_admin),
 ):
     return service.update_admin_user_role(_admin, user_id, body.role)
+
+
+@router.get("/signup-approvals")
+def list_signup_approvals(current_user: dict = Depends(require_dept_head_or_admin)):
+    """Pending self-service engineer signups for dept_head (own dept) or admin (all)."""
+    return service.list_signup_approvals(current_user)
+
+
+@router.post("/signup-approvals/{user_id}/approve")
+def approve_signup(
+    user_id: int,
+    current_user: dict = Depends(require_dept_head_or_admin),
+    body: SignupApprovalDecide = SignupApprovalDecide(),
+):
+    return service.approve_signup(current_user, user_id, body.remark)
+
+
+@router.post("/signup-approvals/{user_id}/reject")
+def reject_signup(
+    user_id: int,
+    body: SignupApprovalDecide,
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    return service.reject_signup(current_user, user_id, body.remark)
 
 
 @router.get("/admin/extractions")

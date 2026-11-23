@@ -7,15 +7,23 @@ from app.config.settings import settings
 db = Database()
 
 
+_db_ready = False
+
+
 def connect_to_db():
-    db.bind(
-        provider="postgres",
-        user=settings.DB_USER,
-        password=settings.DB_PASSWORD,
-        host=settings.DB_HOST,
-        port=settings.DB_PORT,
-        database=settings.DB_NAME,
-    )
+    global _db_ready
+    if _db_ready and db.provider is not None:
+        return
+
+    if db.provider is None:
+        db.bind(
+            provider="postgres",
+            user=settings.DB_USER,
+            password=settings.DB_PASSWORD,
+            host=settings.DB_HOST,
+            port=settings.DB_PORT,
+            database=settings.DB_NAME,
+        )
 
     with db_session:
         conn = db.get_connection()
@@ -36,7 +44,13 @@ def connect_to_db():
     # Register entities before mapping
     from app.route_card import models as route_card_models  # noqa: F401
 
-    db.generate_mapping(create_tables=True)
+    try:
+        db.generate_mapping(create_tables=True)
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "already" not in msg and "mapping" not in msg:
+            raise
+    _db_ready = True
 
     # Idempotent plant WC import + dept_head/IED users (needs mapping)
     try:

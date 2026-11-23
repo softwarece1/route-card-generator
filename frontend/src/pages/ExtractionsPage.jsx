@@ -14,7 +14,7 @@ import TableComponent, {
   TablePrimarySub,
   TableStatusBadge,
 } from "@/components/TableComponent";
-import { getToken, getUser } from "@/lib/auth";
+import { getUser } from "@/lib/auth";
 import { mapPayloadToOrderPrefill } from "@/lib/pmfOrderPrefill";
 import { printOarcPdf } from "@/lib/oarcPrint";
 import {
@@ -332,8 +332,7 @@ export default function ExtractionsPage() {
 
   const downloadDoc = (sessionId, role, filename) => {
     const url = sessionDocumentFileUrl(sessionId, role);
-    const token = getToken();
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    fetch(url, { credentials: "include" })
       .then((r) => {
         if (!r.ok) throw new Error("Download failed");
         return r.blob();

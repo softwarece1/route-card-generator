@@ -17,6 +17,12 @@ class RcUser(db.Entity):
     is_active = Required(bool, default=True)
     must_change_password = Required(bool, default=False)
     created_at = Required(datetime, default=datetime.utcnow)
+    # Self-signup: pending | approved | rejected (managed/seeded users = approved)
+    approval_status = Required(str, default="approved")
+    approval_remark = Optional(str, default="")
+    approval_decided_at = Optional(datetime)
+    approval_decided_by = Optional("RcUser", reverse="signup_approvals_decided")
+    signup_approvals_decided = Set("RcUser", reverse="approval_decided_by")
     # Engineer → dept_head (same dept). Null for admin / dept_head / ied.
     reports_to = Optional("RcUser", reverse="direct_reports")
     direct_reports = Set("RcUser", reverse="reports_to")
@@ -31,6 +37,23 @@ class RcUser(db.Entity):
     few_shot_examples = Set("RcFewShotExample")
     password_history = Set("RcPasswordHistory")
     route_remarks = Set("RcRouteRemark")
+    auth_sessions = Set("RcAuthSession")
+
+
+class RcAuthSession(db.Entity):
+    """Server-side login session (JWT jti) — distinct from workflow RcSession."""
+
+    _table_ = ("route_card", "auth_sessions")
+
+    id = PrimaryKey(int, auto=True)
+    user = Required(RcUser)
+    access_jti = Required(str, unique=True)
+    user_agent = Optional(str, default="")
+    ip = Optional(str, default="")
+    expires_at = Required(datetime)
+    revoked_at = Optional(datetime)
+    created_at = Required(datetime, default=datetime.utcnow)
+    last_seen_at = Required(datetime, default=datetime.utcnow)
 
 
 class RcPlant(db.Entity):

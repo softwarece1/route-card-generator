@@ -741,6 +741,37 @@ export async function resetManagedUserPassword(userId, password) {
   }
 }
 
+export async function fetchSignupApprovals() {
+  try {
+    const { data } = await http.get(`${BASE}/signup-approvals`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not load pending signups'));
+  }
+}
+
+export async function approveSignup(userId, remark = '') {
+  try {
+    const { data } = await http.post(`${BASE}/signup-approvals/${userId}/approve`, {
+      remark: remark || '',
+    });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not approve signup'));
+  }
+}
+
+export async function rejectSignup(userId, remark) {
+  try {
+    const { data } = await http.post(`${BASE}/signup-approvals/${userId}/reject`, {
+      remark: remark || '',
+    });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not reject signup'));
+  }
+}
+
 export async function listOperationTemplates({ scope = 'own', dept } = {}) {
   try {
     const params = { scope };

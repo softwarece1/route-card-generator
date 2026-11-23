@@ -31,6 +31,7 @@ def test_cors_headers_strict():
     response = client.get("/health", headers={"Origin": origin})
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == origin
+    assert response.headers.get("access-control-allow-credentials") == "true"
 
     # Request from untrusted origin
     untrusted = "http://evil-attacker.com"
@@ -201,18 +202,40 @@ def test_upload_file_hardening():
 
 def test_jwt_session_idle_and_revocation():
     """Verify JWT contains jti, revocation prevents access, and logout invalidates token."""
-    from app.auth import create_access_token, decode_token, _revoked_tokens
-    token = create_access_token(emp_id="999999", role="engineer", user_id=999)
+    from app.auth import create_access_token, decode_token
+    from app.auth.sessions import is_jti_active
+    from app.database.connection import connect_to_db
+    from app.route_card.models import RcUser
+    from app.security import hash_password
+    from pony.orm import db_session, commit
+
+    connect_to_db()
+    with db_session:
+        u = RcUser.get(emp_id="999998")
+        if not u:
+            u = RcUser(
+                emp_id="999998",
+                name="JWT Revoke Test",
+                dept="Software",
+                password_hash=hash_password("TestSecurePass2026!#"),
+                role="engineer",
+                is_active=True,
+            )
+        else:
+            u.is_active = True
+        commit()
+        uid = u.id
+
+    token = create_access_token(emp_id="999998", role="engineer", user_id=uid)
     payload = decode_token(token)
     assert "jti" in payload
     assert len(payload["jti"]) > 10
+    assert is_jti_active(payload["jti"], uid)
 
-    # Test logout endpoint
     resp = client.post("/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
-    assert payload["jti"] in _revoked_tokens
+    assert not is_jti_active(payload["jti"], uid)
 
-    # Accessing protected route with revoked token should be rejected
     resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
     assert "revoked" in resp.json()["detail"].lower()
@@ -334,12 +357,12 @@ def test_login_captcha_scenarios():
         commit()
 
     # Clear any prior active session so first login is not a concurrent conflict
-    from app.auth import _active_sessions, _pending_session_takeovers
+    from app.auth.sessions import _pending_session_takeovers, revoke_user_sessions
 
     with db_session:
         test_user = RcUser.get(emp_id="999999")
         if test_user:
-            _active_sessions.pop(test_user.id, None)
+            revoke_user_sessions(test_user.id)
 
     r4 = client.get("/api/v1/auth/captcha")
     c4 = r4.json()

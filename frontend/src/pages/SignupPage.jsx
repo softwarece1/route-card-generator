@@ -41,6 +41,7 @@ export default function SignupPage() {
   const [passwordTouched, setPasswordTouched] = useState(false);
   const [passwordServerError, setPasswordServerError] = useState("");
   const [formError, setFormError] = useState("");
+  const [pendingSuccess, setPendingSuccess] = useState(null);
 
   const [departments, setDepartments] = useState([]);
   const [deptsLoading, setDeptsLoading] = useState(true);
@@ -128,13 +129,19 @@ export default function SignupPage() {
 
     setLoading(true);
     try {
-      await signup({
+      const data = await signup({
         empId: empId.trim(),
         name: name.trim(),
         dept,
         password,
       });
-      navigate("/generator", { replace: true });
+      setPendingSuccess({
+        message:
+          data?.message ||
+          "Signup submitted. Awaiting department head approval. You can sign in after it is approved.",
+        empId: data?.user?.empId || empId.trim(),
+        dept: data?.user?.dept || dept,
+      });
     } catch (err) {
       const detail = err?.response?.data?.detail;
       const msg = typeof detail === "string" ? detail : err?.message || "Could not create account";
@@ -166,11 +173,41 @@ export default function SignupPage() {
         </aside>
 
         <div className="rc-login__card">
+          {pendingSuccess ? (
+            <div className="rc-login__form">
+              <div className="rc-login__brand">
+                <AuthLogo size={36} />
+                <h1>Awaiting approval</h1>
+                <p>Your signup was sent to the department head</p>
+              </div>
+              <div className="rc-login__form-error" style={{ color: "inherit", background: "transparent" }}>
+                {pendingSuccess.message}
+              </div>
+              <p className="rc-login__hint" style={{ marginTop: "0.75rem" }}>
+                Employee ID <strong>{pendingSuccess.empId}</strong>
+                {pendingSuccess.dept ? (
+                  <>
+                    {" "}
+                    · Dept <strong>{pendingSuccess.dept}</strong>
+                  </>
+                ) : null}
+              </p>
+              <Button
+                type="button"
+                label="Go to sign in"
+                className="rc-login__cta"
+                onClick={() => navigate("/login", { replace: true })}
+              />
+              <p className="rc-login__hint">
+                <Link to="/about">About the app</Link>
+              </p>
+            </div>
+          ) : (
           <form className="rc-login__form" onSubmit={onSubmit} noValidate>
             <div className="rc-login__brand">
               <AuthLogo size={36} />
               <h1>Create account</h1>
-              <p>Register using your employee details</p>
+              <p>Choose your department — signup is sent for department head approval</p>
             </div>
 
             {formError ? <div className="rc-login__form-error">{formError}</div> : null}
@@ -362,7 +399,7 @@ export default function SignupPage() {
 
             <Button
               type="submit"
-              label={loading ? "Creating account..." : "Create account"}
+              label={loading ? "Sending..." : "Send for approval"}
               className="rc-login__cta"
               loading={loading}
               disabled={loading}
@@ -374,6 +411,7 @@ export default function SignupPage() {
               <Link to="/about">About the app</Link>
             </p>
           </form>
+          )}
         </div>
       </div>
     </div>
