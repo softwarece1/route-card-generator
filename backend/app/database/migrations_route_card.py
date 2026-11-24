@@ -379,15 +379,184 @@ def run_migrations():
                 ip VARCHAR(64) NOT NULL DEFAULT '',
                 expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
                 revoked_at TIMESTAMP WITHOUT TIME ZONE,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
                 last_seen_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
             );
+            """
+        )
+        # Legacy auth_sessions (jti / ip_address / last_activity_at) → current model.
+        # CREATE TABLE IF NOT EXISTS does not alter an already-existing older table.
+        cursor.execute(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card'
+                      AND table_name = 'auth_sessions'
+                      AND column_name = 'jti'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card'
+                      AND table_name = 'auth_sessions'
+                      AND column_name = 'access_jti'
+                ) THEN
+                    ALTER TABLE route_card.auth_sessions
+                        RENAME COLUMN jti TO access_jti;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card'
+                      AND table_name = 'auth_sessions'
+                      AND column_name = 'ip_address'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card'
+                      AND table_name = 'auth_sessions'
+                      AND column_name = 'ip'
+                ) THEN
+                    ALTER TABLE route_card.auth_sessions
+                        RENAME COLUMN ip_address TO ip;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card'
+                      AND table_name = 'auth_sessions'
+                      AND column_name = 'last_activity_at'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card'
+                      AND table_name = 'auth_sessions'
+                      AND column_name = 'last_seen_at'
+                ) THEN
+                    ALTER TABLE route_card.auth_sessions
+                        RENAME COLUMN last_activity_at TO last_seen_at;
+                END IF;
+            END $$;
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.auth_sessions
+            ADD COLUMN IF NOT EXISTS access_jti VARCHAR(64);
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.auth_sessions
+            ADD COLUMN IF NOT EXISTS user_agent VARCHAR(512) NOT NULL DEFAULT '';
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.auth_sessions
+            ADD COLUMN IF NOT EXISTS ip VARCHAR(64) NOT NULL DEFAULT '';
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.auth_sessions
+            ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITHOUT TIME ZONE;
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.auth_sessions
+            ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITHOUT TIME ZONE;
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.auth_sessions
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITHOUT TIME ZONE
+                NOT NULL DEFAULT NOW();
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.auth_sessions
+            ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP WITHOUT TIME ZONE
+                NOT NULL DEFAULT NOW();
+            """
+        )
+        # Backfill / tighten access_jti when added empty on a broken legacy table
+        cursor.execute(
+            """
+            UPDATE route_card.auth_sessions
+            SET access_jti = 'legacy-' || id::text
+            WHERE access_jti IS NULL OR btrim(access_jti) = '';
+            """
+        )
+        cursor.execute(
+            """
+            DO $$
+            BEGIN
+                BEGIN
+                    ALTER TABLE route_card.auth_sessions
+                        ALTER COLUMN access_jti SET NOT NULL;
+                EXCEPTION WHEN others THEN
+                    NULL;
+                END;
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'auth_sessions_access_jti_key'
+                ) THEN
+                    BEGIN
+                        ALTER TABLE route_card.auth_sessions
+                            ADD CONSTRAINT auth_sessions_access_jti_key UNIQUE (access_jti);
+                    EXCEPTION WHEN others THEN
+                        NULL;
+                    END;
+                END IF;
+            END $$;
             """
         )
         cursor.execute(
             """
             CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_active
             ON route_card.auth_sessions ("user", revoked_at);
+            """
+        )
+        # Legacy partial unique index keys on is_active; keep column in sync with revoked_at.
+        cursor.execute(
+            """
+            ALTER TABLE route_card.auth_sessions
+            ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_sessions_one_active_user
+            ON route_card.auth_sessions ("user") WHERE is_active;
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE route_card.auth_sessions
+            SET is_active = FALSE
+            WHERE revoked_at IS NOT NULL AND is_active IS TRUE;
+            """
+        )
+        # Only one active row per user (legacy index). Ensure no duplicates before login.
+        cursor.execute(
+            """
+            WITH ranked AS (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY "user"
+                           ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST, id DESC
+                       ) AS rn
+                FROM route_card.auth_sessions
+                WHERE is_active IS TRUE
+            )
+            UPDATE route_card.auth_sessions s
+            SET is_active = FALSE,
+                revoked_at = COALESCE(s.revoked_at, NOW())
+            FROM ranked r
+            WHERE s.id = r.id AND r.rn > 1;
             """
         )
 
@@ -821,6 +990,117 @@ def run_migrations():
             """
             ALTER TABLE route_card.analyze_jobs
             ADD COLUMN IF NOT EXISTS plant VARCHAR(32) NULL;
+            """
+        )
+
+        # Shared company reference library (PS / DS / SS = categories)
+        # Pony maps Required(RcRefFolder) → column name "folder" (not folder_id).
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.ref_folders (
+                id SERIAL PRIMARY KEY,
+                code VARCHAR(16) NOT NULL UNIQUE,
+                name VARCHAR(255) NOT NULL DEFAULT '',
+                created_by VARCHAR(128) NOT NULL DEFAULT '',
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.ref_documents (
+                id SERIAL PRIMARY KEY,
+                folder INTEGER NOT NULL
+                    REFERENCES route_card.ref_folders(id) ON DELETE CASCADE,
+                doc_code VARCHAR(32) NOT NULL,
+                original_filename VARCHAR(255) NOT NULL,
+                object_path TEXT NOT NULL,
+                storage_backend VARCHAR(64) NOT NULL DEFAULT 'minio',
+                content_type VARCHAR(128) NOT NULL DEFAULT 'application/pdf',
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                uploaded_by VARCHAR(128) NOT NULL DEFAULT '',
+                version_number INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (folder, doc_code)
+            );
+            """
+        )
+        # Repair early migration that used folder_id (breaks Pony FK "folder")
+        cursor.execute(
+            """
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'route_card'
+                  AND table_name = 'ref_documents'
+                  AND column_name = 'folder_id'
+              ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'route_card'
+                  AND table_name = 'ref_documents'
+                  AND column_name = 'folder'
+              ) THEN
+                ALTER TABLE route_card.ref_documents
+                  RENAME COLUMN folder_id TO folder;
+              END IF;
+            END $$;
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.ref_documents
+            ADD COLUMN IF NOT EXISTS version_number INTEGER NOT NULL DEFAULT 1;
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.ref_document_versions (
+                id SERIAL PRIMARY KEY,
+                document INTEGER NOT NULL
+                    REFERENCES route_card.ref_documents(id) ON DELETE CASCADE,
+                version_number INTEGER NOT NULL,
+                original_filename VARCHAR(255) NOT NULL,
+                object_path TEXT NOT NULL,
+                storage_backend VARCHAR(64) NOT NULL DEFAULT 'minio',
+                content_type VARCHAR(128) NOT NULL DEFAULT 'application/pdf',
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                uploaded_by VARCHAR(128) NOT NULL DEFAULT '',
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (document, version_number)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_ref_documents_doc_code
+            ON route_card.ref_documents (doc_code);
+            """
+        )
+        # Backfill v1 rows for docs that have no version history yet
+        cursor.execute(
+            """
+            INSERT INTO route_card.ref_document_versions (
+                document, version_number, original_filename, object_path,
+                storage_backend, content_type, size_bytes, uploaded_by, created_at
+            )
+            SELECT
+                d.id,
+                COALESCE(d.version_number, 1),
+                d.original_filename,
+                d.object_path,
+                d.storage_backend,
+                COALESCE(d.content_type, 'application/pdf'),
+                d.size_bytes,
+                COALESCE(d.uploaded_by, ''),
+                d.created_at
+            FROM route_card.ref_documents d
+            WHERE NOT EXISTS (
+                SELECT 1 FROM route_card.ref_document_versions v
+                WHERE v.document = d.id
+            );
             """
         )
 

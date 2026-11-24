@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     COOKIE_SECURE: str = ""
     # Extra CORS/CSRF origins for LAN static IP (comma-separated), e.g. http://172.16.0.10:8003
     CORS_EXTRA_ORIGINS: str = ""
+    # Allow clients that open the UI via IP / loopback (http://<server-ip>:5174).
+    # Covers RFC1918 and non-RFC1918 corporate IPs (e.g. 172.195.x.x). Domain names
+    # still require CORS_ORIGINS / CORS_EXTRA_ORIGINS.
+    CORS_ALLOW_PRIVATE_NETWORK: bool = True
 
     # Optional outbound webhook for in-app notification events (offline LAN)
     # Empty = disabled. POST JSON {title, body, link, userEmpId, createdAt}
@@ -169,6 +173,45 @@ def cors_allow_origins() -> list[str]:
             if o and o not in origins:
                 origins.append(o)
     return origins
+
+
+# Loopback + any IPv4/IPv6 literal host (optional :port). Server IP access often uses
+# addresses outside RFC1918 (e.g. http://172.195.126.179:5174).
+_IP_ORIGIN_RE = (
+    r"^https?://("
+    r"localhost|"
+    r"127\.0\.0\.1|"
+    r"\[::1\]|"
+    r"(?:\d{1,3}\.){3}\d{1,3}|"
+    r"\[[0-9a-fA-F:]+\]"
+    r")(?::\d+)?$"
+)
+
+
+def cors_allow_private_network() -> bool:
+    return bool(getattr(settings, "CORS_ALLOW_PRIVATE_NETWORK", True))
+
+
+def cors_origin_regex() -> str | None:
+    """Starlette CORSMiddleware allow_origin_regex for IP / loopback UI hosts."""
+    if not cors_allow_private_network():
+        return None
+    return _IP_ORIGIN_RE
+
+
+def origin_is_allowed(origin: str | None) -> bool:
+    """True when Origin/Referer is allowlisted or an IP/loopback UI host."""
+    o = (origin or "").strip().rstrip("/")
+    if not o:
+        return False
+    allow = {a.rstrip("/") for a in cors_allow_origins()}
+    if o in allow:
+        return True
+    if not cors_allow_private_network():
+        return False
+    import re
+
+    return bool(re.match(_IP_ORIGIN_RE, o, flags=re.I))
 
 
 def captcha_required() -> bool:

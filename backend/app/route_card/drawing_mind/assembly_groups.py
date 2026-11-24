@@ -28,12 +28,21 @@ STAGE_C_PROMPT = """You are viewing a GA assembly drawing page with balloon / it
 Parts List item numbers that exist for this job (use ONLY these numbers):
 {pl_items}
 
+READING ORDER: the sheet is zoned like a drawing border.
+Columns 1, 2, 3 … run left to right. Rows A, B, C … run top to bottom.
+Scan zone A1, then across the top row, then row B left to right, and so on.
+Return groups in that order. Do not skip a balloon because it is small.
+
 Find every balloon/callout cluster on the page. Typical forms:
 - 480, 230x4, 340x4, 350x4, 260x2  → parent 480; children 230×4, 340×4, 350×4, 260×2
 - 40, 430x80, 380x80, 390x80  → parent 40; children with subscript qtys
 - 50x4, 430x8, 380x8, 390x8  → parent 50 qty 4; children with subscript qtys
 - 230-4  or  45-1, 13-2, 14-2  → hyphen item-qty (same meaning as xN)
-- (460)  → reference-only callout (already assembled / shown elsewhere)
+- a balloon that is only one number, or only (460) / (470) → individual item.
+  Assemble that item alone. children must be []. It is NOT the parent of a
+  comma list printed nearby.
+- comma-separated list → FIRST number is the item being made; every later
+  number is a sub-item used to make that first item.
 
 BALLOON POINTS (critical — stacked leaders are separate):
 - Each leader/balloon on the drawing is its OWN group/point. If one balloon
@@ -61,8 +70,7 @@ Return JSON only:
     {{
       "parentItemNo": 480,
       "children": [{{"itemNo": 230, "qty": 4}}, {{"itemNo": 340, "qty": 4}}],
-      "references": [460],
-      "rawText": "480, 230x4, 340x4",
+      "rawText": "480, 230x4, 340x4, 350x4, 260x2",
       "confidence": 0.85
     }}
   ],
@@ -71,6 +79,83 @@ Return JSON only:
 
 If no callout clusters are visible, return {{"groups": [], "warnings": []}}.
 """
+
+# One zone tile (row letter × column band). Subscripts are large enough to read.
+ZONE_C_PROMPT = """You are reading ONE zone of a GA assembly drawing. This image is only that zone.
+
+ZONE
+- Row {row} — {row_hint}
+  Rows are lettered A, B, C, D from the TOP of the sheet downward.
+- Columns {col_lo}–{col_hi} — {col_hint}
+  Columns are numbered 1, 2, 3 … from the LEFT of the sheet.
+- Read every balloon in this crop from LEFT to RIGHT, then TOP to BOTTOM.
+  Do not skip a callout. A short stack of item numbers on a leader still counts.
+
+A balloon is a leader with item numbers. A small subscript sits under or beside
+each number (x4, x8, x40, x80, x2, ×8, or 230-4). That subscript belongs ONLY
+to the number it sits under. Never move it onto the neighbour.
+
+GROUPING
+1. One leader = one group. A separate leader below is a NEW group, even if the
+   item numbers look similar.
+2. SINGLE item — the balloon shows only one number, or only (470) / (460):
+   individual item, no sub-items. Return children: [] and "individual": true.
+   Assemble that item only. Do not pull numbers from a comma list next to it.
+3. COMMA list — "480, 230, 340" or "50x4, 430x8, 380x8, 390x8":
+   the FIRST number is the item being made. Every later number is a sub-item
+   used to make that first item.
+4. If the first number has its own subscript (50x4, 40x40, 80x4, 530x10),
+   that value is parentQty (how many of the parent). Do not copy it onto children.
+5. A second line on the SAME leader (same arrow, directly underneath) stays in
+   that group. Example: "450, 300x8" with "400x8, 410x8" under it is ONE group,
+   parent 450, children 300×8, 400×8, 410×8.
+6. "(470)" or "(460)" printed near a comma list is its OWN single-item balloon.
+   It is not the parent of the list above it.
+
+QUANTITIES — copy every digit you see
+- x40 is forty, never 4. x80 is eighty, never 8. x8 is eight, never 80 and never 4.
+  x2 is two, never 4. x10 is ten, never 1.
+- If no subscript is visible under an item, qty is 1. Do not invent 4 or 8.
+- Write the same multipliers in rawText, e.g. "40x40, 430x80, 380x80, 390x80"
+  or "480, 230x4, 340x4, 350x4, 260x2".
+
+IGNORE notes, the title block, SECTION titles, dimensions, and anything that is
+not a balloon. Do not invent item numbers that are not visible in this crop.
+Parts List numbers (use only to reject a number you cannot see; do not add rows):
+{pl_items}
+
+Return JSON only, groups in left-to-right then top-to-bottom order:
+{{
+  "groups": [
+    {{
+      "parentItemNo": 50,
+      "parentQty": 4,
+      "individual": false,
+      "children": [
+        {{"itemNo": 430, "qty": 8}},
+        {{"itemNo": 380, "qty": 8}},
+        {{"itemNo": 390, "qty": 8}}
+      ],
+      "rawText": "50x4, 430x8, 380x8, 390x8",
+      "confidence": 0.9
+    }}
+  ],
+  "warnings": []
+}}
+If this zone has no balloons, return {{"groups": [], "warnings": []}}.
+"""
+
+_ROW_HINTS = {
+    "A": "top band of the sheet",
+    "B": "upper-middle band",
+    "C": "lower-middle band",
+    "D": "bottom band of the sheet",
+}
+_COL_HINTS = {
+    (1, 4): "left side of the sheet",
+    (5, 8): "middle of the sheet",
+    (9, 12): "right side of the sheet",
+}
 
 QTY_REPAIR_PROMPT = """You are reading subscript / multiplier quantities next to balloon item numbers
 on a GA assembly drawing page.
@@ -704,6 +789,9 @@ def merge_continuation_groups(
     items = [g for g in (groups or []) if isinstance(g, dict)]
 
     def _is_fastener_orphan(g: dict[str, Any]) -> bool:
+        # A lone balloon is an assemble step, not a continuation line.
+        if g.get("individual"):
+            return False
         parent = g.get("parentItemNo")
         children = [c for c in (g.get("children") or []) if isinstance(c, dict)]
         if parent is None:
@@ -905,6 +993,18 @@ def validate_assembly_group(
                 out["parentQty"] = pq
         except (TypeError, ValueError):
             pass
+    # Single-item balloon: assemble that item, no sub-items.
+    if children:
+        out["individual"] = False
+    elif group.get("individual"):
+        out["individual"] = True
+    if group.get("zone"):
+        out["zone"] = str(group.get("zone"))
+    if group.get("readOrder") is not None:
+        try:
+            out["readOrder"] = int(group.get("readOrder"))
+        except (TypeError, ValueError):
+            pass
     return out
 
 
@@ -969,6 +1069,9 @@ def filter_weak_groups(
         children = [c for c in (g.get("children") or []) if isinstance(c, dict)]
         parent = g.get("parentItemNo")
         if not children:
+            if g.get("individual"):
+                out.append(g)
+                continue
             warns.append(f"dropped weak group parent={parent} (no children)")
             continue
         if parent is not None and pl_lookup:
@@ -1149,16 +1252,21 @@ def bom_items_from_assembly_groups(
         pl_qty = None
         if hit.get("qty") is not None:
             try:
-                pl_qty = int(hit.get("qty") or 0) or None
+                raw_q = hit.get("qty")
+                pl_qty = int(raw_q) if float(raw_q) == int(float(raw_q)) else float(raw_q)
             except (TypeError, ValueError):
                 pl_qty = None
+        on_pl = bool(hit)
         by_no[ino] = {
             "itemNo": ino,
-            "qty": pl_qty if pl_qty is not None else ext_qty,
+            # Never fall back display qty to balloon totals — that caused PL 1 → 20.
+            "qty": pl_qty,
             "extractedQty": ext_qty,
             "partNumber": hit.get("partNumber") or hit.get("part_number") or "",
             "description": hit.get("description") or "",
             "source": "balloon",
+            "onDrawing": True,
+            "gaPresence": "present" if on_pl else "ga_only",
             "qtyMatch": (pl_qty == ext_qty) if pl_qty is not None else None,
         }
     return [by_no[k] for k in sorted(by_no)]
@@ -1227,8 +1335,78 @@ def merge_bom_with_balloon_items(
     return [by_no[i] for i in order]
 
 
+def _is_zone_reading(g: dict[str, Any]) -> bool:
+    return str(g.get("source") or "") == "zone_vlm"
+
+
+def _qty_marker_count(g: dict[str, Any]) -> int:
+    return len(_QTY_MARKER_RE.findall(str(g.get("rawText") or "")))
+
+
+def _prefer_group_reading(prev: dict[str, Any], nxt: dict[str, Any]) -> dict[str, Any]:
+    """Pick one consistent balloon reading.
+
+    A zone-scan reading wins over OCR/full-page text, and two zone readings
+    are not mixed item-by-item (that is how x40 and x8 collapse into 4 and 80
+    on different children of the same parent).
+    """
+    prev_zone = _is_zone_reading(prev)
+    nxt_zone = _is_zone_reading(nxt)
+    if prev_zone != nxt_zone:
+        return dict(prev if prev_zone else nxt)
+    if prev_zone and nxt_zone:
+        prev_kids = prev.get("children") or []
+        nxt_kids = nxt.get("children") or []
+        # A comma group beats a lone balloon of the same item.
+        if prev_kids and not nxt_kids:
+            return dict(prev)
+        if nxt_kids and not prev_kids:
+            return dict(nxt)
+        prev_score = (_qty_marker_count(prev), float(prev.get("confidence") or 0))
+        nxt_score = (_qty_marker_count(nxt), float(nxt.get("confidence") or 0))
+        return dict(prev if prev_score >= nxt_score else nxt)
+
+    merged = dict(prev)
+    merged["children"] = _merge_child_lists(prev.get("children"), nxt.get("children"))
+    try:
+        pq_g = int(nxt.get("parentQty") or 0)
+        pq_p = int(prev.get("parentQty") or 0)
+        if pq_g > pq_p:
+            merged["parentQty"] = pq_g
+    except (TypeError, ValueError):
+        pass
+    raw_g = str(nxt.get("rawText") or "")
+    raw_p = str(prev.get("rawText") or "")
+    if raw_has_qty_markers(raw_g) and (
+        not raw_has_qty_markers(raw_p) or len(raw_g) > len(raw_p)
+    ):
+        merged["rawText"] = raw_g
+    elif len(raw_g) > len(raw_p):
+        merged["rawText"] = raw_g
+    if float(nxt.get("confidence") or 0) > float(prev.get("confidence") or 0):
+        merged["confidence"] = nxt.get("confidence")
+    lines: list[str] = []
+    for src in (prev.get("calloutLines") or [], nxt.get("calloutLines") or []):
+        for ln in src:
+            if ln and ln not in lines:
+                lines.append(ln)
+    if lines:
+        merged["calloutLines"] = lines
+    # Keep confirmed border cell when present on either reading
+    for src in (nxt, prev):
+        dz = str(src.get("drawingZone") or "").strip()
+        if re.fullmatch(r"[A-Ha-h]-\d{1,2}", dz):
+            merged["drawingZone"] = f"{dz[0].upper()}{dz[1:]}"
+            break
+    return merged
+
+
 def dedupe_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep one group per parent; union children and prefer richer rawText/qty."""
+    """Keep one group per parent.
+
+    Zone readings stay intact. Other sources still union children and prefer
+    the richer rawText / qty.
+    """
     best: dict[int, dict[str, Any]] = {}
     for g in groups:
         if not isinstance(g, dict):
@@ -1244,35 +1422,29 @@ def dedupe_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not prev:
             best[key] = dict(g)
             continue
-        merged = dict(prev)
-        merged["children"] = _merge_child_lists(prev.get("children"), g.get("children"))
-        # Prefer higher parentQty / confidence / denser rawText
-        try:
-            pq_g = int(g.get("parentQty") or 0)
-            pq_p = int(prev.get("parentQty") or 0)
-            if pq_g > pq_p:
-                merged["parentQty"] = pq_g
-        except (TypeError, ValueError):
-            pass
-        raw_g = str(g.get("rawText") or "")
-        raw_p = str(prev.get("rawText") or "")
-        if raw_has_qty_markers(raw_g) and (
-            not raw_has_qty_markers(raw_p) or len(raw_g) > len(raw_p)
-        ):
-            merged["rawText"] = raw_g
-        elif len(raw_g) > len(raw_p):
-            merged["rawText"] = raw_g
-        if float(g.get("confidence") or 0) > float(prev.get("confidence") or 0):
-            merged["confidence"] = g.get("confidence")
-        lines: list[str] = []
-        for src in (prev.get("calloutLines") or [], g.get("calloutLines") or []):
-            for ln in src:
-                if ln and ln not in lines:
-                    lines.append(ln)
-        if lines:
-            merged["calloutLines"] = lines
-        best[key] = merged
+        best[key] = _prefer_group_reading(prev, g)
     return [best[k] for k in sorted(best)]
+
+
+def sort_groups_reading_order(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Zone order: row A→D, column 1→12, then the order returned inside the tile."""
+
+    def _key(g: dict[str, Any]) -> tuple:
+        zone = str(g.get("zone") or "")
+        m = re.match(r"([A-Z])(\d+)$", zone)
+        try:
+            parent = int(g.get("parentItemNo") or 0)
+        except (TypeError, ValueError):
+            parent = 0
+        try:
+            order = int(g.get("readOrder") or 0)
+        except (TypeError, ValueError):
+            order = 0
+        if m:
+            return (0, m.group(1), int(m.group(2)), order, parent)
+        return (1, "Z", 0, order, parent)
+
+    return sorted([g for g in groups if isinstance(g, dict)], key=_key)
 
 
 def group_to_instruction(group: dict[str, Any], pl_lookup: dict[int, dict] | None = None) -> str:
@@ -1284,6 +1456,13 @@ def group_to_instruction(group: dict[str, Any], pl_lookup: dict[int, dict] | Non
     parent_bit = f"Item No. {parent}"
     if parent_desc:
         parent_bit += f" ({parent_desc[:48]})"
+    try:
+        pq = int(group.get("parentQty") or 0)
+    except (TypeError, ValueError):
+        pq = 0
+    if pq > 1:
+        parent_bit = f"{pq} × {parent_bit}"
+    sheet = f" (sheet {group.get('sourcePage')})." if group.get("sourcePage") else "."
     parts = []
     for ch in group.get("children") or []:
         ino = ch.get("itemNo")
@@ -1295,11 +1474,15 @@ def group_to_instruction(group: dict[str, Any], pl_lookup: dict[int, dict] | Non
         if desc:
             bit += f" ({desc[:40]})"
         parts.append(bit)
-    child_bit = ", ".join(parts) if parts else "hardware as shown"
+    if not parts:
+        return (
+            f"Assemble {parent_bit} as indicated by the single-item balloon "
+            f"on the drawing{sheet}"
+        )
+    child_bit = ", ".join(parts)
     return (
         f"Assemble {parent_bit} using {child_bit} as indicated by the balloon "
-        f"callout on the drawing"
-        + (f" (sheet {group.get('sourcePage')})." if group.get("sourcePage") else ".")
+        f"callout on the drawing{sheet}"
     )
 
 
@@ -1347,26 +1530,33 @@ def groups_to_synthetic_notes(
                 }
             )
         text = group_to_instruction(g, pl_lookup)
-        notes.append(
-            {
-                "sheet": int(g.get("sourcePage") or 1),
-                "stepNo": step,
-                "text": text,
-                "items": items,
-                "itemsUsed": items_used,
-                "torque": [],
-                "connectors": [],
-                "standards": [],
-                "references": [g.get("sourceFilename")] if g.get("sourceFilename") else [],
-                "sourceDrawingId": g.get("sourceDrawingId"),
-                "sourceFilename": g.get("sourceFilename") or "",
-                "assemblyGroup": True,
-                "balloonRaw": g.get("rawText") or "",
-                "mindEngine": "local_vlm_stage_c",
-                "mindConfidence": float(g.get("confidence") or 0.7),
-                "elaborated": False,
-            }
-        )
+        refs = [g.get("sourceFilename")] if g.get("sourceFilename") else []
+        dz_raw = str(g.get("drawingZone") or "").strip()
+        # Confirmed border cell only (e.g. A-8) — never Stage C tile ids
+        drawing_zone = ""
+        if re.fullmatch(r"[A-Ha-h]-\d{1,2}", dz_raw):
+            drawing_zone = f"{dz_raw[0].upper()}{dz_raw[1:]}"
+        note: dict[str, Any] = {
+            "sheet": int(g.get("sourcePage") or 1),
+            "stepNo": step,
+            "text": text,
+            "items": items,
+            "itemsUsed": items_used,
+            "torque": [],
+            "connectors": [],
+            "standards": [],
+            "references": refs,
+            "sourceDrawingId": g.get("sourceDrawingId"),
+            "sourceFilename": g.get("sourceFilename") or "",
+            "assemblyGroup": True,
+            "balloonRaw": g.get("rawText") or "",
+            "mindEngine": "local_vlm_stage_c",
+            "mindConfidence": float(g.get("confidence") or 0.7),
+            "elaborated": False,
+        }
+        if drawing_zone:
+            note["drawingZone"] = drawing_zone
+        notes.append(note)
         step += 1
     return notes
 
@@ -1425,6 +1615,135 @@ def group_item_nos(groups: list[dict[str, Any]]) -> set[str]:
             except (TypeError, ValueError):
                 continue
     return nos
+
+
+def _zone_prompt(tile: dict[str, Any], parts_list: dict[str, Any] | None) -> str:
+    row = str(tile.get("row") or "A")
+    col_lo = int(tile.get("colFrom") or 1)
+    col_hi = int(tile.get("colTo") or col_lo)
+    return ZONE_C_PROMPT.format(
+        row=row,
+        row_hint=_ROW_HINTS.get(row, f"row {row} from the top"),
+        col_lo=col_lo,
+        col_hi=col_hi,
+        col_hint=_COL_HINTS.get((col_lo, col_hi), f"columns {col_lo}–{col_hi}"),
+        pl_items=format_pl_ids_csv(parts_list),
+    )
+
+
+def extract_assembly_groups_by_zone(
+    *,
+    pdf_bytes: bytes,
+    page_no: int,
+    parts_list: dict[str, Any] | None,
+    model: str,
+    base_url: str,
+    timeout: float,
+    max_tokens: int,
+    cancel_event=None,
+    source_drawing_id: int | None = None,
+    source_filename: str = "",
+    system: str | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Vision-read balloons zone by zone (row A→D, columns 1→12).
+
+    Each tile is a tight crop so subscript digits (40, 80, 8, 2) stay legible.
+    Groups come back in that reading order. A single-item balloon is kept.
+    """
+    from app.route_card.analyze_jobs import check_cancelled
+    from app.route_card.drawing_mind.page_images import render_callout_zones
+
+    warns: list[str] = []
+    pl_nos = pl_item_set(parts_list)
+    try:
+        tiles = render_callout_zones(pdf_bytes, page_no, cancel_event=cancel_event)
+    except Exception as exc:
+        return [], [f"zone render skipped: {exc}"]
+    if not tiles:
+        return [], ["zone scan found no ink tiles"]
+
+    system_prompt = system or (
+        "You read balloon callouts inside one drawing zone. "
+        "Copy subscript quantities digit-for-digit (x40 is 40, x80 is 80, x8 is 8, x2 is 2). "
+        "A single item is assembled alone. A comma list: the first item is made from the rest. "
+        "Reply with JSON only — no markdown fences."
+    )
+    groups: list[dict[str, Any]] = []
+    for tile_i, tile in enumerate(tiles):
+        check_cancelled(cancel_event)
+        zone = str(tile.get("zone") or "")
+        label = f"{tile.get('row')}{tile.get('colFrom')}-{tile.get('colTo')}"
+        try:
+            raw = chat_vision(
+                prompt=_zone_prompt(tile, parts_list),
+                images_b64=[tile["b64"]],
+                model=model,
+                base_url=base_url,
+                timeout=timeout,
+                temperature=0.0,
+                system=system_prompt,
+                cancel_event=cancel_event,
+                image_mime=str(tile.get("mime") or "image/jpeg"),
+                max_tokens=max_tokens,
+            )
+            data = _parse_json(raw)
+        except Exception as exc:
+            warns.append(f"zone {label} skipped: {exc}")
+            continue
+        for w in data.get("warnings") or []:
+            if isinstance(w, str) and w.strip():
+                warns.append(f"zone {label}: {w.strip()}")
+        tile_groups: list[dict[str, Any]] = []
+        for gi, g in enumerate(data.get("groups") or []):
+            if not isinstance(g, dict):
+                continue
+            g = dict(g)
+            g["zone"] = zone
+            g["readOrder"] = tile_i * 100 + gi
+            g["source"] = "zone_vlm"
+            raw_text = str(g.get("rawText") or "")
+            kids = g.get("children") or []
+            # Model flag, or a raw string that is only one item / (item).
+            if g.get("individual") or (
+                not kids and re.fullmatch(r"\(?\d{1,4}\)?", raw_text.strip())
+            ):
+                g["individual"] = True
+                g["children"] = []
+            elif raw_has_qty_markers(raw_text) or "\n" in raw_text or ";" in raw_text:
+                g = apply_rawtext_qty_preference(g)
+                g["zone"] = zone
+                g["readOrder"] = tile_i * 100 + gi
+                g["source"] = "zone_vlm"
+            ng = validate_assembly_group(
+                g,
+                pl_nos,
+                source_page=page_no,
+                source_drawing_id=source_drawing_id,
+                source_filename=source_filename,
+            )
+            if not ng:
+                continue
+            warns.extend(ng.pop("warnings", []) or [])
+            ng["source"] = "zone_vlm"
+            ng["zone"] = zone
+            ng["readOrder"] = tile_i * 100 + gi
+            tile_groups.append(ng)
+        # Wrap-lines inside this tile only (450 with 400/410). Do not reach
+        # into another zone.
+        tile_groups, mwarns = merge_continuation_groups(
+            tile_groups, parts_list=parts_list
+        )
+        warns.extend(f"zone {label}: {w}" for w in mwarns if w)
+        groups.extend(tile_groups)
+
+    groups, fwarns = filter_weak_groups(groups, parts_list=parts_list)
+    warns.extend(fwarns)
+    groups = sort_groups_reading_order(groups)
+    if groups:
+        warns.append(
+            f"zone scan page {page_no}: {len(tiles)} tile(s), {len(groups)} balloon(s)"
+        )
+    return groups, warns
 
 
 def extract_assembly_groups_from_page(

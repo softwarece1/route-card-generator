@@ -110,6 +110,14 @@ function navItemsForRole(role) {
       id: "workcenters",
     });
   }
+  // Engineers + admin / dept_head: browse / view / download; manage is page-gated
+  base.push({
+    to: "/reference-sheets",
+    end: false,
+    icon: "pi pi-book",
+    label: "Reference sheets",
+    id: "refdocs",
+  });
   base.push({
     to: "/operation-templates",
     end: false,

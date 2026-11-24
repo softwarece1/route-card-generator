@@ -11,11 +11,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.route_card.drawing_mind.assembly_groups import (
+    ZONE_C_PROMPT,
     bom_items_from_assembly_groups,
     callout_qty_totals,
+    dedupe_groups,
     filter_weak_groups,
     generate_llm_route_ops,
     group_item_nos,
+    group_to_instruction,
     groups_to_synthetic_notes,
     merge_bom_with_balloon_items,
     merge_continuation_groups,
@@ -24,11 +27,12 @@ from app.route_card.drawing_mind.assembly_groups import (
     parse_callout_cluster,
     repair_group_quantities,
     scan_text_for_clusters,
+    sort_groups_reading_order,
     split_stacked_balloon_clusters,
     validate_assembly_group,
     validate_llm_route_ops,
 )
-from app.route_card.partslist_parser import enrich_bom_with_pl
+from app.route_card.partslist_parser import rebuild_bom_from_pl
 from app.route_card.review import build_item_link_report, collect_drawing_item_refs
 from app.route_card.route_generator import generate_route
 
@@ -393,17 +397,31 @@ def test_bom_enrichment_from_assembly_groups():
     assert by_no[230]["description"]
 
     ga = [
-        {"itemNo": 10, "qty": 20, "partNumber": "", "description": "ARRAY"},
-        {"itemNo": 20, "qty": 1, "partNumber": "", "description": ""},
+        {"itemNo": 10, "qty": 20, "partNumber": "", "description": "ARRAY", "source": "ga"},
+        {"itemNo": 20, "qty": 1, "partNumber": "", "description": "", "source": "ga"},
     ]
     merged = merge_bom_with_balloon_items(ga, balloon)
-    merged = enrich_bom_with_pl(merged, PL)
-    nos = {b["itemNo"] for b in merged}
-    assert 10 in nos and 230 in nos and 430 in nos and 480 in nos
+    merged = rebuild_bom_from_pl(
+        PL,
+        existing_bom=merged,
+        extracted_by_item=callout_qty_totals([g480, g40]),
+    )
+    # Full PL in item-no order; GA balloon qty must never overwrite PL qty
+    assert [b["itemNo"] for b in merged if b.get("source") == "pl"] == sorted(PL_NOS)
+    row10 = next(b for b in merged if b["itemNo"] == 10)
+    assert row10["qty"] == 1  # PL qty — not GA's 20
+    assert row10["gaPresence"] == "present"
+    assert row10["extractedQty"] == 20  # GA signal preserved for match
+    assert row10["qtyMatch"] is False
     row230 = next(b for b in merged if b["itemNo"] == 230)
     assert row230["qty"] == 4  # PL authoritative
     assert row230["extractedQty"] == 4
     assert row230["qtyMatch"] is True
+    # PL item never seen on GA
+    row90 = next(b for b in merged if b["itemNo"] == 90)
+    assert row90["qty"] == 1
+    assert row90["gaPresence"] == "not_present"
+    assert row90["extractedQty"] is None
 
     route = generate_route(
         {
@@ -576,6 +594,85 @@ def test_stacked_balloons_are_separate_points():
     assert 80 not in kids450 and 520 not in kids450
     assert 340 in kids80 and 350 in kids80 and 520 in kids80
     assert g450.get("calloutLines") and len(g450["calloutLines"]) >= 2
+
+
+def test_filter_keeps_individual_balloon():
+    single = {
+        "parentItemNo": 470,
+        "children": [],
+        "rawText": "(470)",
+        "confidence": 0.9,
+        "individual": True,
+    }
+    kept, warns = filter_weak_groups([single], parts_list=PL)
+    assert len(kept) == 1
+    assert kept[0]["parentItemNo"] == 470
+    assert not any("470" in w and "no children" in w for w in warns)
+    text = group_to_instruction(kept[0], {})
+    assert "470" in text
+    assert "using" not in text
+
+
+def test_dedupe_keeps_zone_qtys_intact():
+    """OCR must not rewrite a zone reading (x40/x80) into a mix of 4 and 80."""
+    zone = {
+        "parentItemNo": 40,
+        "parentQty": 40,
+        "children": [
+            {"itemNo": 430, "qty": 80},
+            {"itemNo": 380, "qty": 80},
+            {"itemNo": 390, "qty": 80},
+        ],
+        "rawText": "40x40, 430x80, 380x80, 390x80",
+        "confidence": 0.9,
+        "source": "zone_vlm",
+        "zone": "A9",
+        "readOrder": 2,
+    }
+    ocr = {
+        "parentItemNo": 40,
+        "children": [
+            {"itemNo": 430, "qty": 1},
+            {"itemNo": 380, "qty": 4},
+            {"itemNo": 390, "qty": 4},
+        ],
+        "rawText": "40, 430x1, 380x4, 390x4",
+        "confidence": 0.99,
+        "source": "ocr_scan",
+    }
+    merged = dedupe_groups([ocr, zone])
+    assert len(merged) == 1
+    kids = {c["itemNo"]: c["qty"] for c in merged[0]["children"]}
+    assert kids == {430: 80, 380: 80, 390: 80}
+    assert merged[0]["parentQty"] == 40
+
+
+def test_reading_order_is_row_then_column():
+    groups = [
+        {"parentItemNo": 80, "zone": "C9", "readOrder": 0, "children": []},
+        {"parentItemNo": 480, "zone": "A9", "readOrder": 0, "children": []},
+        {"parentItemNo": 50, "zone": "A9", "readOrder": 1, "children": []},
+        {"parentItemNo": 10, "children": []},
+    ]
+    ordered = [g["parentItemNo"] for g in sort_groups_reading_order(groups)]
+    assert ordered[:3] == [480, 50, 80]
+    assert ordered[-1] == 10
+
+
+def test_zone_prompt_states_qty_and_grouping_rules():
+    text = ZONE_C_PROMPT.format(
+        row="A",
+        row_hint="top band of the sheet",
+        col_lo=9,
+        col_hi=12,
+        col_hint="right side of the sheet",
+        pl_items="40, 50, 430",
+    )
+    assert "Columns 9–12" in text or "Columns 9-12" in text
+    assert "LEFT to RIGHT" in text
+    assert "x40 is forty" in text
+    assert "individual" in text
+    assert "FIRST number" in text
 
 
 def test_normalize_vlm_merges_multiline_rawtext():

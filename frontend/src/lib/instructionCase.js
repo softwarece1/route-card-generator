@@ -85,6 +85,8 @@ export function normalizeInstructionCase(text) {
   };
 
   let out = raw;
+  // Keep PL / item names inside (…) exactly as written (usually ALL CAPS).
+  out = out.replace(/\([^)]*\)/g, protect);
   out = out.replace(PART_GROUP_RE, protect);
   out = out.replace(CONNECTOR_RE, protect);
   out = out.replace(ACRONYM_RE, protect);
@@ -106,7 +108,10 @@ export function normalizeInstructionCase(text) {
 
   tokens.forEach((tok, i) => {
     let restored = tok;
-    if (KEEP_ACRONYMS.has(String(tok || "").toUpperCase())) {
+    if (/^\([^)]*\)$/.test(tok || "")) {
+      // Parenthetical PL descriptions — do not normalize casing
+      restored = tok;
+    } else if (KEEP_ACRONYMS.has(String(tok || "").toUpperCase())) {
       restored = String(tok).toUpperCase();
     } else if (/^[JPCX]\d{1,3}$/i.test(tok || "")) {
       restored = tok[0].toUpperCase() + tok.slice(1);

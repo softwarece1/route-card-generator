@@ -36,6 +36,8 @@ import {
   fetchPlants,
   fetchPriorExtractions,
   fetchRecent,
+  fetchRefDocCatalog,
+  fetchRefDocumentBlob,
   fetchReviewFlags,
   fetchSessionDocumentBlob,
   fetchWorkCenterCatalog,
@@ -44,6 +46,7 @@ import {
   learnFormatTemplate,
   recallIedReview,
   relinkSessionWorkCentres,
+  resolveRefDocs,
   resolveReviewFlag,
   saveRouteDraft,
   shareRouteToIed,
@@ -72,12 +75,18 @@ import {
   collectMentionedItemNos,
   formatItemChip,
 } from "@/lib/itemLabels";
+import {
+  extractRefCandidateCodes,
+  indexFoundRefDocs,
+  renderTextWithRefDocLinks,
+} from "@/lib/refDocLinks";
 import { normalizeInstructionCase, sanitizeOperatorInstruction } from "@/lib/instructionCase";
 import {
   collectViewCropHints,
   resolveDrawingIdForViewHint,
 } from "@/lib/tableViewHints";
 import InstructionClickEdit from "@/components/InstructionClickEdit";
+import "@/pages/reference-sheets.scss";
 import "@fontsource/rubik/400.css";
 import "@fontsource/rubik/500.css";
 import "@fontsource/rubik/600.css";
@@ -179,6 +188,73 @@ function levelSeverity(level) {
   if (t.includes("import")) return "warning";
   if (t.includes("std") || t.includes("standard") || t.includes("normal")) return "info";
   return "secondary";
+}
+
+/** PL qty vs GA balloon/callout qty — true match, false mismatch, null unknown. */
+function bomQtyMatchState(row) {
+  if (!row || typeof row !== "object") return null;
+  const presence = String(row.gaPresence || "").toLowerCase();
+  if (presence === "not_present" || row.onDrawing === false) return null;
+  if (row.qtyMatch === true) return true;
+  if (row.qtyMatch === false) return false;
+  const pl = row.qty;
+  const ga = row.extractedQty;
+  if (pl == null || pl === "" || ga == null || ga === "") return null;
+  const plN = Number(pl);
+  const gaN = Number(ga);
+  if (!Number.isFinite(plN) || !Number.isFinite(gaN)) return null;
+  return plN === gaN;
+}
+
+function bomGaPresence(row) {
+  if (!row || typeof row !== "object") return "unknown";
+  const p = String(row.gaPresence || "").toLowerCase();
+  if (p === "present" || p === "not_present" || p === "ga_only") return p;
+  if (row.onDrawing === false) return "not_present";
+  if (row.onDrawing === true) return "present";
+  if (row.extractedQty != null && row.extractedQty !== "") return "present";
+  return "unknown";
+}
+
+function formatBomQty(value) {
+  if (value == null || value === "") return "—";
+  const n = Number(value);
+  return Number.isFinite(n) ? String(n) : String(value);
+}
+
+/**
+ * BOM / PL table: always 4 digits (0010).
+ * GA balloons still use short form (10, 60, 450) — matching is numeric.
+ */
+function formatBomItemNo(rowOrValue) {
+  if (rowOrValue != null && typeof rowOrValue === "object") {
+    if (rowOrValue.itemNoDisplay) return String(rowOrValue.itemNoDisplay);
+    rowOrValue = rowOrValue.itemNo;
+  }
+  if (rowOrValue == null || rowOrValue === "") return "—";
+  const n = Number(rowOrValue);
+  if (!Number.isFinite(n) || n <= 0) return String(rowOrValue);
+  return String(Math.trunc(n)).padStart(4, "0");
+}
+
+function formatBomDescription(row) {
+  const d = row?.description;
+  if (d == null || d === "") return "—";
+  return String(d).toUpperCase();
+}
+
+/** Stable PL item-no order (backend already sorts; keep client defensive). */
+function sortBomByItemNo(rows) {
+  return [...(rows || [])].sort((a, b) => {
+    const an = Number(a?.itemNo);
+    const bn = Number(b?.itemNo);
+    const aOk = Number.isFinite(an);
+    const bOk = Number.isFinite(bn);
+    if (aOk && bOk) return an - bn;
+    if (aOk) return -1;
+    if (bOk) return 1;
+    return 0;
+  });
 }
 
 /** Work-centre / op-type chip color */
@@ -341,6 +417,9 @@ export default function RouteCardGenerationAlt() {
   const [reviewFlags, setReviewFlags] = useState([]);
   const [showLowReviewFlags, setShowLowReviewFlags] = useState(false);
   const [itemLinkReport, setItemLinkReport] = useState(null);
+  const [refFolderCodes, setRefFolderCodes] = useState([]);
+  const [refDocsFound, setRefDocsFound] = useState([]);
+  const [refDocPreview, setRefDocPreview] = useState(null);
   const [recentItems, setRecentItems] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [sheetDialogOpen, setSheetDialogOpen] = useState(false);
@@ -396,7 +475,7 @@ export default function RouteCardGenerationAlt() {
       setSessionId(payload.sessionId);
     }
     setDrawingInfo(payload.drawingInfo || {});
-    setBomItems(payload.bomItems || []);
+    setBomItems(sortBomByItemNo(payload.bomItems || []));
     setFeatureCounts(payload.featureCounts || []);
     setIntelDims(payload.intelligenceDimensions || []);
     setIntelReqs(payload.intelligenceRequirements || []);
@@ -520,17 +599,115 @@ export default function RouteCardGenerationAlt() {
 
   const plItemLookup = useMemo(() => {
     const map = {};
-    for (const it of partsListSummary?.items || []) {
-      if (it?.itemNo == null) continue;
-      map[String(it.itemNo)] = it;
-    }
+    const index = (it) => {
+      if (it?.itemNo == null) return;
+      const n = Number(it.itemNo);
+      if (!Number.isFinite(n) || n <= 0) {
+        map[String(it.itemNo)] = { ...map[String(it.itemNo)], ...it };
+        return;
+      }
+      const unpadded = String(Math.trunc(n));
+      const padded = unpadded.padStart(4, "0");
+      // Index both GA short form (60) and PL form (0060)
+      map[unpadded] = { ...map[unpadded], ...it };
+      map[padded] = { ...map[padded], ...it };
+      if (it.itemNoDisplay) map[String(it.itemNoDisplay)] = map[padded];
+    };
+    for (const it of partsListSummary?.items || []) index(it);
     for (const it of bomItems || []) {
-      if (it?.itemNo == null || !it.description) continue;
-      const key = String(it.itemNo);
-      map[key] = { ...map[key], ...it };
+      if (!it?.description && it?.itemNo == null) continue;
+      index(it);
     }
     return map;
   }, [partsListSummary, bomItems]);
+
+  const refDocsByCode = useMemo(() => indexFoundRefDocs(refDocsFound), [refDocsFound]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cat = await fetchRefDocCatalog();
+        if (!cancelled) setRefFolderCodes(cat?.folderCodes || []);
+      } catch {
+        if (!cancelled) setRefFolderCodes([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!refFolderCodes.length) {
+      setRefDocsFound([]);
+      return;
+    }
+    const chunks = [];
+    for (const n of extractedNotes || []) {
+      chunks.push(n?.text || "", n?.elaboratedText || "");
+    }
+    for (const op of suggestedOps || []) {
+      chunks.push(op?.instructionText || "", op?.reason || "");
+    }
+    for (const op of routeOps || []) {
+      chunks.push(op?.instructionText || "", op?.reason || "");
+    }
+    const codes = extractRefCandidateCodes(chunks.join("\n"), refFolderCodes);
+    if (!codes.length) {
+      setRefDocsFound([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await resolveRefDocs(codes);
+        if (!cancelled) setRefDocsFound(res?.found || []);
+      } catch {
+        if (!cancelled) setRefDocsFound([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [extractedNotes, suggestedOps, routeOps, refFolderCodes]);
+
+  useEffect(
+    () => () => {
+      if (refDocPreview?.url) URL.revokeObjectURL(refDocPreview.url);
+    },
+    [refDocPreview?.url],
+  );
+
+  const openRefDoc = useCallback(async (row) => {
+    if (!row?.documentId && !row?.id) return;
+    const documentId = row.documentId ?? row.id;
+    try {
+      if (refDocPreview?.url) URL.revokeObjectURL(refDocPreview.url);
+      const blob = await fetchRefDocumentBlob(documentId);
+      const url = URL.createObjectURL(blob);
+      setRefDocPreview({
+        url,
+        title: row.code || row.docCode || `Doc ${documentId}`,
+        filename: row.name || row.originalFilename || `${row.code || "sheet"}.pdf`,
+        documentId,
+      });
+    } catch (e) {
+      toast.error(e.message || "Could not open reference sheet");
+    }
+  }, [refDocPreview?.url]);
+
+  const downloadRefDoc = useCallback(async (row) => {
+    if (!row?.documentId && !row?.id) return;
+    const documentId = row.documentId ?? row.id;
+    try {
+      const blob = await fetchRefDocumentBlob(documentId);
+      const name = row.name || row.originalFilename || `${row.code || row.docCode || "sheet"}.pdf`;
+      triggerBlobDownload(blob, name);
+    } catch (e) {
+      toast.error(e.message || "Could not download reference sheet");
+    }
+  }, []);
 
   const ensureSession = async () => {
     // Ref, not state: a multi-file batch must reuse the session created by the first file.
@@ -2012,11 +2189,20 @@ export default function RouteCardGenerationAlt() {
                                     ) : null}
                                   </div>
                                   <p className="rca-note__text">
-                                    {annotateItemMentions(n.text || "—", plItemLookup)}
+                                    {renderTextWithRefDocLinks(n.text || "—", {
+                                      itemLookup: plItemLookup,
+                                      foundByCode: refDocsByCode,
+                                      onOpenRefDoc: openRefDoc,
+                                    })}
                                   </p>
                                   {n.elaboratedText && n.elaboratedText !== n.text ? (
                                     <p className="rca-note__source">
-                                      Elaborated: {annotateItemMentions(n.elaboratedText, plItemLookup)}
+                                      Elaborated:{" "}
+                                      {renderTextWithRefDocLinks(n.elaboratedText, {
+                                        itemLookup: plItemLookup,
+                                        foundByCode: refDocsByCode,
+                                        onOpenRefDoc: openRefDoc,
+                                      })}
                                     </p>
                                   ) : null}
                                   {n.insight ? (
@@ -2055,8 +2241,17 @@ export default function RouteCardGenerationAlt() {
                           </div>
                         ))}
                       </div>
+                      {bomItems.some((r) => bomQtyMatchState(r) === false) ? (
+                        <Message
+                          severity="warn"
+                          className="w-full mb-2"
+                          text={`PL qty ≠ GA qty for ${
+                            bomItems.filter((r) => bomQtyMatchState(r) === false).length
+                          } item(s) — mismatched rows are highlighted.`}
+                        />
+                      ) : null}
                       <DataTable
-                        className="rca-data-table"
+                        className="rca-data-table rca-bom-table"
                         value={bomItems}
                         size="small"
                         paginator
@@ -2065,11 +2260,135 @@ export default function RouteCardGenerationAlt() {
                         paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
                         currentPageReportTemplate="{first}-{last} of {totalRecords}"
                         emptyMessage="No BOM items extracted."
+                        rowClassName={(row) => {
+                          const presence = bomGaPresence(row);
+                          if (presence === "not_present") return "rca-bom-row--absent";
+                          if (presence === "ga_only") return "rca-bom-row--ga-only";
+                          const m = bomQtyMatchState(row);
+                          if (m === false) return "rca-bom-row--mismatch";
+                          if (m === true) return "rca-bom-row--match";
+                          return "";
+                        }}
                       >
-                        <Column field="itemNo" header="Item" style={{ width: "6rem" }} />
-                        <Column field="qty" header="Qty" style={{ width: "5rem" }} />
+                        <Column
+                          field="itemNo"
+                          header="Item"
+                          style={{ width: "5rem" }}
+                          body={(row) => formatBomItemNo(row)}
+                        />
+                        <Column
+                          field="qty"
+                          header="PL qty"
+                          style={{ width: "4.5rem" }}
+                          body={(row) => formatBomQty(row.qty)}
+                        />
+                        <Column
+                          field="extractedQty"
+                          header={
+                            <span title="Quantity summed from GA balloon / callout extraction">
+                              GA qty
+                            </span>
+                          }
+                          style={{ width: "4.5rem" }}
+                          body={(row) => {
+                            if (bomGaPresence(row) === "not_present") return "—";
+                            return formatBomQty(row.extractedQty);
+                          }}
+                        />
+                        <Column
+                          header="On GA"
+                          style={{ width: "7rem" }}
+                          body={(row) => {
+                            const p = bomGaPresence(row);
+                            if (p === "present") {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="Present"
+                                  severity="success"
+                                />
+                              );
+                            }
+                            if (p === "not_present") {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="Not present"
+                                  severity="secondary"
+                                />
+                              );
+                            }
+                            if (p === "ga_only") {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="GA only"
+                                  severity="warning"
+                                />
+                              );
+                            }
+                            return <Tag value="—" severity="secondary" />;
+                          }}
+                        />
+                        <Column
+                          header="Match"
+                          style={{ width: "6.5rem" }}
+                          body={(row) => {
+                            const presence = bomGaPresence(row);
+                            if (presence === "not_present") {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="Not on GA"
+                                  severity="secondary"
+                                />
+                              );
+                            }
+                            if (presence === "ga_only") {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="No PL"
+                                  severity="warning"
+                                />
+                              );
+                            }
+                            const m = bomQtyMatchState(row);
+                            if (m === true) {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="Match"
+                                  severity="success"
+                                  icon="pi pi-check-circle"
+                                />
+                              );
+                            }
+                            if (m === false) {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="Mismatch"
+                                  severity="danger"
+                                  icon="pi pi-times-circle"
+                                />
+                              );
+                            }
+                            return <Tag value="—" severity="secondary" />;
+                          }}
+                        />
                         <Column field="partNumber" header="Part No." />
-                        <Column field="description" header="Description" />
+                        <Column
+                          field="description"
+                          header="Description"
+                          body={(row) => formatBomDescription(row)}
+                        />
+                        <Column
+                          field="unit"
+                          header="Unit"
+                          style={{ width: "4rem" }}
+                          body={(row) => (row.unit ? String(row.unit).toUpperCase() : "—")}
+                        />
                       </DataTable>
                     </>
                   )}
@@ -2127,11 +2446,6 @@ export default function RouteCardGenerationAlt() {
                         {(suggestedOps || []).map((op) => {
                           const rawInstr = op.instructionText || op.reason || "";
                           const annotated = annotateItemMentions(rawInstr, plItemLookup);
-                          const preview = annotated
-                            ? annotated.length > 120
-                              ? `${annotated.slice(0, 117)}…`
-                              : annotated
-                            : "—";
                           const mentioned = collectMentionedItemNos(rawInstr);
                           return (
                           <article className="rca-op" key={op.id || op.opNo}>
@@ -2148,7 +2462,13 @@ export default function RouteCardGenerationAlt() {
                                 <Tag value="Elaborated" severity="success" className="mr-1" />
                               ) : null}
                               <p className="rca-op__instr" title={annotated || undefined}>
-                                {preview}
+                                {rawInstr.trim()
+                                  ? renderTextWithRefDocLinks(rawInstr, {
+                                      itemLookup: plItemLookup,
+                                      foundByCode: refDocsByCode,
+                                      onOpenRefDoc: openRefDoc,
+                                    })
+                                  : "—"}
                               </p>
                               <Button
                                 type="button"
@@ -2198,6 +2518,12 @@ export default function RouteCardGenerationAlt() {
                                 <div>
                                   <dt>Reference</dt>
                                   <dd>{op.reference}</dd>
+                                </div>
+                              ) : null}
+                              {op.drawingZone ? (
+                                <div>
+                                  <dt>Zone</dt>
+                                  <dd>{op.drawingZone}</dd>
                                 </div>
                               ) : null}
                               {op.inspection ? (
@@ -2525,11 +2851,107 @@ export default function RouteCardGenerationAlt() {
                         paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
                         currentPageReportTemplate="{first}-{last} of {totalRecords}"
                       >
-                        <Column field="itemNo" header="Item" style={{ width: 70 }} />
-                        <Column field="description" header="Description" />
-                        <Column field="plQty" header="PL Qty" style={{ width: 70 }} />
-                        <Column field="extractedQty" header="Extracted Qty" style={{ width: 90 }} />
-                        <Column field="status" header="Status" style={{ width: 110 }} />
+                        <Column
+                          field="itemNo"
+                          header="Item"
+                          style={{ width: 70 }}
+                          body={(row) => formatBomItemNo(row)}
+                        />
+                        <Column
+                          field="description"
+                          header="Description"
+                          body={(row) => formatBomDescription(row)}
+                        />
+                        <Column field="plQty" header="PL qty" style={{ width: 70 }} />
+                        <Column
+                          field="extractedQty"
+                          header={
+                            <span title="Quantity summed from GA balloon / callout extraction">
+                              GA qty
+                            </span>
+                          }
+                          style={{ width: 70 }}
+                        />
+                        <Column
+                          header="Match"
+                          style={{ width: 110 }}
+                          body={(row) => {
+                            if (row.qtyMatch === true) {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="Match"
+                                  severity="success"
+                                  icon="pi pi-check-circle"
+                                />
+                              );
+                            }
+                            if (row.qtyMatch === false) {
+                              return (
+                                <Tag
+                                  className="rca-bom-match-tag"
+                                  value="Mismatch"
+                                  severity="danger"
+                                  icon="pi pi-times-circle"
+                                />
+                              );
+                            }
+                            return (
+                              <Tag
+                                value={row.status || "—"}
+                                severity={
+                                  String(row.status || "").toLowerCase().includes("only")
+                                    ? "warning"
+                                    : "secondary"
+                                }
+                              />
+                            );
+                          }}
+                        />
+                      </DataTable>
+                    </div>
+                  )}
+                  {refDocsFound.length > 0 && (
+                    <div className="mb-3">
+                      <h4 style={{ marginBottom: "0.5rem" }}>Documents / refs</h4>
+                      <p className="rca-section-note" style={{ marginBottom: "0.5rem" }}>
+                        Reference sheets mentioned in notes or operations (only when uploaded).
+                      </p>
+                      <DataTable value={refDocsFound} size="small" paginator={false}>
+                        <Column field="code" header="Code" style={{ width: "6rem" }} />
+                        <Column
+                          field="folderName"
+                          header="Folder"
+                          style={{ width: "8rem" }}
+                          body={(row) => row.folderName || row.folderCode || "—"}
+                        />
+                        <Column field="name" header="File" />
+                        <Column
+                          header=""
+                          style={{ width: "7rem" }}
+                          body={(row) => (
+                            <div className="flex gap-1">
+                              <Button
+                                type="button"
+                                icon="pi pi-eye"
+                                rounded
+                                text
+                                size="small"
+                                aria-label={`Open ${row.code}`}
+                                onClick={() => openRefDoc(row)}
+                              />
+                              <Button
+                                type="button"
+                                icon="pi pi-download"
+                                rounded
+                                text
+                                size="small"
+                                aria-label={`Download ${row.code}`}
+                                onClick={() => downloadRefDoc(row)}
+                              />
+                            </div>
+                          )}
+                        />
                       </DataTable>
                     </div>
                   )}
@@ -2881,6 +3303,8 @@ export default function RouteCardGenerationAlt() {
             const ev = { currentTarget: el, target: el };
             viewPopoverRef.current?.toggle?.(ev);
           }}
+          foundByCode={refDocsByCode}
+          onOpenRefDoc={openRefDoc}
           resetKey={`${instrDialog.visible}:${instrDialog.opKey || ""}`}
           rows={6}
         />
@@ -3246,6 +3670,59 @@ export default function RouteCardGenerationAlt() {
           </div>
         )}
       </Dialog>
+      <Dialog
+        header={refDocPreview?.title || "Reference sheet"}
+        visible={Boolean(refDocPreview?.url)}
+        style={{ width: "min(96vw, 56rem)" }}
+        modal
+        dismissableMask
+        onHide={() => {
+          if (refDocPreview?.url) URL.revokeObjectURL(refDocPreview.url);
+          setRefDocPreview(null);
+        }}
+        footer={
+          <div className="flex justify-content-end gap-2">
+            <Button
+              type="button"
+              label="Download"
+              icon="pi pi-download"
+              size="small"
+              outlined
+              disabled={!refDocPreview?.documentId}
+              onClick={() =>
+                downloadRefDoc({
+                  documentId: refDocPreview.documentId,
+                  name: refDocPreview.filename,
+                  code: refDocPreview.title,
+                })
+              }
+            />
+            <Button
+              type="button"
+              label="Close"
+              size="small"
+              onClick={() => {
+                if (refDocPreview?.url) URL.revokeObjectURL(refDocPreview.url);
+                setRefDocPreview(null);
+              }}
+            />
+          </div>
+        }
+      >
+        {refDocPreview?.url ? (
+          <object
+            data={refDocPreview.url}
+            type="application/pdf"
+            className="rc-refdocs__preview-frame"
+            aria-label={refDocPreview.title}
+          >
+            <a href={refDocPreview.url} download={refDocPreview.filename || "sheet.pdf"}>
+              Download PDF
+            </a>
+          </object>
+        ) : null}
+      </Dialog>
+
       <PmfAnalyzeLoader
         visible={analyzing}
         onCancel={() => stopAnalysis()}

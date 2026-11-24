@@ -344,3 +344,12 @@ class OarcToSapRequest(BaseModel):
         default_factory=dict,
         alias="Document Verification",
     )
+
+
+class RefFolderCreate(BaseModel):
+    code: str
+    name: str = ""
+
+
+class RefFolderUpdate(BaseModel):
+    name: str = ""

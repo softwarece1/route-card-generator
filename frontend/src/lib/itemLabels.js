@@ -13,12 +13,30 @@ const ITEM_HEAD =
 const ITEM_LIST_CONT = /^\s*(?:,|&|\/|and)\s*(\d{1,4})\b/i;
 
 /**
- * @param {Record<string, object>} itemLookup keyed by item number string
+ * PL stores items as 4-digit (0010); GA balloons use short form (10, 60, 450).
+ * Match on numeric value — try unpadded + zero-padded keys.
+ * @param {Record<string, object>|null|undefined} itemLookup
+ * @param {number|string} itemNo
+ * @returns {object}
+ */
+export function lookupPlItem(itemLookup, itemNo) {
+  if (!itemLookup || itemNo == null || itemNo === "") return {};
+  const raw = String(itemNo).trim();
+  if (itemLookup[raw]) return itemLookup[raw];
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return {};
+  const unpadded = String(Math.trunc(n));
+  const padded = unpadded.padStart(4, "0");
+  return itemLookup[unpadded] || itemLookup[padded] || itemLookup[String(n)] || {};
+}
+
+/**
+ * @param {Record<string, object>} itemLookup keyed by item number string (60 and/or 0060)
  * @param {number|string} itemNo
  * @returns {{ name: string, partNo: string, label: string }}
  */
 export function resolveItemLabel(itemLookup, itemNo) {
-  const hit = (itemLookup && itemLookup[String(itemNo)]) || {};
+  const hit = lookupPlItem(itemLookup, itemNo);
   const name = normalizeInstructionCase(String(hit.description || hit.designation || "").trim());
   const partNo = String(hit.partNumber || hit.part_number || "").trim();
   const bits = [name, partNo].filter(Boolean);
@@ -115,12 +133,15 @@ export function annotateItemMentions(text, itemLookup = {}) {
 export function formatItemChip(item, itemLookup = {}) {
   const no = item?.itemNo;
   if (no == null) return "";
+  // GA / ops chips use short form (60), not PL padding (0060)
+  const n = Number(no);
+  const displayNo = Number.isFinite(n) && n > 0 ? String(Math.trunc(n)) : String(no);
   const fromItem = {
     description: item.description,
     designation: item.designation,
     partNumber: item.partNumber || item.part_number,
   };
-  const hit = itemLookup[String(no)] || {};
+  const hit = lookupPlItem(itemLookup, no);
   const name = normalizeInstructionCase(
     String(fromItem.description || fromItem.designation || hit.description || hit.designation || "").trim()
   );
@@ -130,6 +151,6 @@ export function formatItemChip(item, itemLookup = {}) {
     item.qty != null && item.qty !== ""
       ? ` ×${item.qty}`
       : "";
-  if (bits.length) return `#${no}${qty} (${bits.join(", ")})`;
-  return `#${no}${qty}`;
+  if (bits.length) return `#${displayNo}${qty} (${bits.join(", ")})`;
+  return `#${displayNo}${qty}`;
 }

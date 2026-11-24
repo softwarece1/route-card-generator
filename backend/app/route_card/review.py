@@ -254,16 +254,26 @@ def build_item_link_report(parsed: dict, parts_list: dict | None, mind: dict | N
     for n in sorted(pl_nos | ga_refs, key=lambda x: int(x) if x.isdigit() else 0):
         desc = ""
         pl_qty = None
-        meta = item_map.get(n) or item_map.get(str(n).zfill(2)) or {}
+        # PL itemMap may be keyed as "60" and/or "0060"; GA refs are unpadded
+        meta = (
+            item_map.get(n)
+            or (item_map.get(str(int(n))) if n.isdigit() else None)
+            or (item_map.get(str(n).zfill(4)) if n.isdigit() else None)
+            or {}
+        )
         if isinstance(meta, dict):
             desc = meta.get("description") or ""
             if meta.get("qty") is not None:
                 try:
-                    pl_qty = int(meta.get("qty"))
+                    from app.route_card.partslist_parser import _coerce_pl_qty
+
+                    pl_qty = _coerce_pl_qty(meta.get("qty"))
                 except (TypeError, ValueError):
                     pl_qty = None
 
-        bom = bom_by_no.get(n) or {}
+        bom = bom_by_no.get(n) or (
+            bom_by_no.get(str(int(n))) if n.isdigit() else {}
+        ) or {}
         extracted_qty = None
         if bom.get("extractedQty") is not None:
             try:

@@ -5,6 +5,9 @@
 
 import { createElement } from "react";
 import { annotateItemMentions } from "@/lib/itemLabels";
+import { canonicalRefCode } from "@/lib/refDocLinks";
+
+const REF_DOC_MENTION_RE = /\b([A-Za-z]{1,6})\s*[-_]?\s*(\d{2,6})\b/g;
 
 const TABLE_OPEN = /Open\s+TABLE\s*(?:NO\.?\s*)?([0-9]{1,2}|[A-Z])\b/gi;
 const TABLE_FOLLOW = /(?:Follow|Use|See|as\s+per)\s+TABLE\s*(?:NO\.?\s*)?([0-9]{1,2}|[A-Z])\b/gi;
@@ -199,58 +202,119 @@ function kindFromMention(fullMatch, idGroup, namedGroup) {
 }
 
 /**
- * Render instruction text with PL labels and gated view-ref (i) buttons.
- * No crop → no (i). Never invents.
+ * Render instruction text with PL labels, gated view-ref (i) buttons,
+ * and clickable reference-sheet links when found in the library.
  *
  * @param {string} text
- * @param {{ itemLookup?: object, viewCrops?: object[], onOpenViewCrop?: (crop: object, el: HTMLElement) => void }} opts
+ * @param {{
+ *   itemLookup?: object,
+ *   viewCrops?: object[],
+ *   onOpenViewCrop?: (crop: object, el: HTMLElement) => void,
+ *   foundByCode?: Record<string, object>,
+ *   onOpenRefDoc?: (row: object, el?: HTMLElement) => void,
+ * }} opts
  * @returns {import("react").ReactNode}
  */
 export function renderInstructionWithViewInfo(text, opts = {}) {
-  const { itemLookup = {}, viewCrops = [], onOpenViewCrop } = opts;
+  const {
+    itemLookup = {},
+    viewCrops = [],
+    onOpenViewCrop,
+    foundByCode = {},
+    onOpenRefDoc,
+  } = opts;
   const annotated = annotateItemMentions(text, itemLookup) || String(text || "");
   if (!annotated) return annotated;
+
+  /** @type {{ start: number, end: number, kind: string, payload: object }[]} */
+  const spans = [];
+
+  VIEW_MENTION_RE.lastIndex = 0;
+  let m;
+  while ((m = VIEW_MENTION_RE.exec(annotated))) {
+    const { kind, refId } = kindFromMention(m[0], m[1], m[2]);
+    const crop = findAvailableViewCrop(viewCrops, kind, refId);
+    spans.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      kind: "view",
+      payload: { text: m[0], crop },
+    });
+  }
+
+  if (foundByCode && Object.keys(foundByCode).length && typeof onOpenRefDoc === "function") {
+    REF_DOC_MENTION_RE.lastIndex = 0;
+    while ((m = REF_DOC_MENTION_RE.exec(annotated))) {
+      const code = canonicalRefCode(m[1], m[2]);
+      const row = code ? foundByCode[code] : null;
+      if (!row) continue;
+      spans.push({
+        start: m.index,
+        end: m.index + m[0].length,
+        kind: "ref",
+        payload: { text: m[0], row },
+      });
+    }
+  }
+
+  spans.sort((a, b) => a.start - b.start || b.end - a.end);
 
   const nodes = [];
   let last = 0;
   let key = 0;
-  VIEW_MENTION_RE.lastIndex = 0;
-  let m;
-  while ((m = VIEW_MENTION_RE.exec(annotated))) {
-    const start = m.index;
-    const end = start + m[0].length;
-    if (start > last) {
-      nodes.push(annotated.slice(last, start));
-    }
-    nodes.push(annotated.slice(start, end));
-    const { kind, refId } = kindFromMention(m[0], m[1], m[2]);
-    const crop = findAvailableViewCrop(viewCrops, kind, refId);
-    if (crop && typeof onOpenViewCrop === "function") {
+  for (const span of spans) {
+    if (span.start < last) continue; // overlap — keep earlier/longer
+    if (span.start > last) nodes.push(annotated.slice(last, span.start));
+    if (span.kind === "ref") {
+      const { text: label, row } = span.payload;
       nodes.push(
         createElement(
           "button",
           {
-            key: `view-i-${key++}`,
+            key: `ref-${key++}`,
             type: "button",
-            className: "instr-view-info-btn",
-            title: `View ${crop.label || refId}`,
-            "aria-label": `View drawing snapshot for ${crop.label || refId}`,
+            className: "rca-refdoc-link",
+            title: `Open ${row.code || label}`,
+            "aria-label": `Open reference sheet ${row.code || label}`,
             onClick: (e) => {
               e.preventDefault();
               e.stopPropagation();
-              onOpenViewCrop(crop, e.currentTarget);
+              onOpenRefDoc(row, e.currentTarget);
             },
             onMouseDown: (e) => e.stopPropagation(),
             onKeyDown: (e) => e.stopPropagation(),
           },
-          createElement("i", { className: "pi pi-info-circle", "aria-hidden": true })
-        )
+          label,
+        ),
       );
+    } else {
+      const { text: label, crop } = span.payload;
+      nodes.push(label);
+      if (crop && typeof onOpenViewCrop === "function") {
+        nodes.push(
+          createElement(
+            "button",
+            {
+              key: `view-i-${key++}`,
+              type: "button",
+              className: "instr-view-info-btn",
+              title: `View ${crop.label || label}`,
+              "aria-label": `View drawing snapshot for ${crop.label || label}`,
+              onClick: (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onOpenViewCrop(crop, e.currentTarget);
+              },
+              onMouseDown: (e) => e.stopPropagation(),
+              onKeyDown: (e) => e.stopPropagation(),
+            },
+            createElement("i", { className: "pi pi-info-circle", "aria-hidden": true }),
+          ),
+        );
+      }
     }
-    last = end;
+    last = span.end;
   }
-  if (last < annotated.length) {
-    nodes.push(annotated.slice(last));
-  }
+  if (last < annotated.length) nodes.push(annotated.slice(last));
   return nodes.length ? nodes : annotated;
 }

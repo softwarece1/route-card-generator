@@ -142,6 +142,43 @@ def test_item_order_from_note():
     assert _item_order_from_note("STICK ITEM 3 AND 2 AS SHOWN", [2, 3]) == [3, 2]
 
 
+def test_label_fixing_known_part_gets_detailed_placement():
+    """Temporary: 1121 857 498 34 Label Fixing always gets 5 mm / DC OUT shop wording."""
+    note_text = "STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE."
+    ga = {
+        "raw_text": note_text + "\nALL DIMENSIONS ARE IN MM\n1121 857 498 34",
+        "title_block": {"unit": "mm", "drawingNumber": "1121 857 498 34"},
+        "notes": [
+            {
+                "sheet": 1,
+                "stepNo": 1,
+                "text": note_text,
+                "items": [2, 3],
+                "torque": [],
+                "connectors": [],
+                "standards": [],
+                "references": [],
+            }
+        ],
+        "bom_items": [],
+    }
+    mind = CpuSpatialMind()
+    # No spatial pages — must still elaborate for this known PN
+    result = mind.understand(
+        pdf_bytes=None,
+        ga_extraction=ga,
+        spatial_pages=None,
+        source_filename="112185749834 - GA.pdf",
+    )
+    elab = (result.notes[0].get("elaboratedText") or "").upper()
+    assert "5 MM" in elab or "5MM" in elab.replace(" ", "")
+    assert "TOP" in elab and "LEFT" in elab
+    assert "BELOW ITEM 2" in elab
+    assert "DC OUT" in elab
+    assert result.notes[0].get("placement")
+    assert any("Label Fixing" in w for w in result.warnings)
+
+
 def test_as_shown_without_measured_offsets_keeps_source():
     """Adhesive AS SHOWN with balloons but no size marks must not invent 5 mm gaps."""
     note_text = "STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE."

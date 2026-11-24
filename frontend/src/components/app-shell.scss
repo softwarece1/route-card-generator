@@ -218,13 +218,20 @@ $rca-sidebar-collapsed: 3.6rem;
   transition: margin-left 0.18s ease;
 }
 
-/* Uploads: lock page to viewport; folder tree + table scroll inside */
-.rca-shell--with-sidebar .rca-main:has(.rc-uploads) {
+/* Uploads / Reference sheets: lock page to viewport; panes scroll inside */
+.rca-shell--with-sidebar .rca-main:has(.rc-uploads),
+.rca-shell--with-sidebar .rca-main:has(.rc-refdocs) {
   height: 100vh;
   height: 100dvh;
   max-height: 100vh;
   max-height: 100dvh;
   overflow: hidden;
+}
+
+.rca-shell--with-sidebar .rca-main > .rc-uploads,
+.rca-shell--with-sidebar .rca-main > .rc-refdocs {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .rca-shell--with-sidebar .rca-topbar {

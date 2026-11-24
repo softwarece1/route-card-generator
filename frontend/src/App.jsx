@@ -12,6 +12,7 @@ import RouteCardGenerationAlt from '@/pages/RouteCardGenerationAlt';
 import SystemPage from '@/pages/SystemPage';
 import WorkCentersPage from '@/pages/WorkCentersPage';
 import OrgStructurePage from '@/pages/OrgStructurePage';
+import ReferenceSheetsPage from '@/pages/ReferenceSheetsPage';
 
 /** `/` → IED review queue, else generator when signed in; otherwise login. */
 function HomeRedirect() {
@@ -88,6 +89,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <WorkCentersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/reference-sheets"
+        element={
+          <ProtectedRoute>
+            <ReferenceSheetsPage />
           </ProtectedRoute>
         }
       />

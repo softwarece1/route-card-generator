@@ -363,6 +363,63 @@
   .p-message {
     font-size: 0.8rem;
   }
+
+  .rca-bom-table {
+    .p-datatable-tbody > tr > td {
+      border: none;
+    }
+
+    .rca-bom-match-tag.p-tag {
+      font-size: 0.68rem;
+      padding: 0.12rem 0.45rem;
+      gap: 0.25rem;
+      border-radius: 999px;
+
+      .p-tag-icon {
+        font-size: 0.72rem;
+      }
+    }
+  }
+
+  // Left accent only on the first cell — not every column
+  .rca-bom-row--mismatch {
+    background: #fdecea !important;
+
+    > td:first-child {
+      box-shadow: inset 4px 0 0 #e24c4c;
+    }
+  }
+
+  .rca-bom-row--match {
+    background: transparent;
+  }
+
+  .rca-bom-row--absent {
+    color: var(--pmf-text-muted, #6b7280);
+
+    > td:first-child {
+      box-shadow: inset 4px 0 0 #9ca3af;
+    }
+  }
+
+  .rca-bom-row--ga-only {
+    background: #fff8e8 !important;
+
+    > td:first-child {
+      box-shadow: inset 4px 0 0 #d4a017;
+    }
+  }
+}
+
+.rca-bom-match-tag.p-tag {
+  font-size: 0.68rem;
+  padding: 0.12rem 0.45rem;
+  gap: 0.25rem;
+  border-radius: 999px;
+
+  .p-tag-icon {
+    font-size: 0.72rem;
+  }
 }
 
 .rca-counts {

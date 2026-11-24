@@ -21,7 +21,10 @@ def active_jti_for_user(user_id: int) -> str | None:
     rows = select(
         s
         for s in RcAuthSession
-        if s.user.id == user_id and s.revoked_at is None and s.expires_at > now
+        if s.user.id == user_id
+        and s.revoked_at is None
+        and s.is_active
+        and s.expires_at > now
     ).order_by(desc(RcAuthSession.created_at))[:1]
     return rows[0].access_jti if rows else None
 
@@ -50,9 +53,12 @@ def create_session(
 
     if revoke_others:
         for s in select(
-            x for x in RcAuthSession if x.user.id == user_id and x.revoked_at is None
+            x
+            for x in RcAuthSession
+            if x.user.id == user_id and (x.revoked_at is None or x.is_active)
         ):
             s.revoked_at = now
+            s.is_active = False
 
     row = RcAuthSession(
         user=user,
@@ -61,6 +67,7 @@ def create_session(
         ip=(ip or "")[:64],
         expires_at=exp,
         revoked_at=None,
+        is_active=True,
         created_at=now,
         last_seen_at=now,
     )
@@ -75,6 +82,7 @@ def revoke_jti(jti: str | None) -> None:
     now = datetime.utcnow()
     for s in select(x for x in RcAuthSession if x.access_jti == jti and x.revoked_at is None):
         s.revoked_at = now
+        s.is_active = False
     commit()
 
 
@@ -82,9 +90,12 @@ def revoke_jti(jti: str | None) -> None:
 def revoke_user_sessions(user_id: int) -> None:
     now = datetime.utcnow()
     for s in select(
-        x for x in RcAuthSession if x.user.id == user_id and x.revoked_at is None
+        x
+        for x in RcAuthSession
+        if x.user.id == user_id and (x.revoked_at is None or x.is_active)
     ):
         s.revoked_at = now
+        s.is_active = False
     commit()
 
 
@@ -94,7 +105,7 @@ def is_jti_active(jti: str | None, user_id: int | None = None) -> bool:
         return False
     now = datetime.utcnow()
     row = RcAuthSession.get(access_jti=jti)
-    if not row or row.revoked_at is not None:
+    if not row or row.revoked_at is not None or not row.is_active:
         return False
     if row.expires_at <= now:
         return False
@@ -106,7 +117,7 @@ def is_jti_active(jti: str | None, user_id: int | None = None) -> bool:
 @db_session
 def touch_session(jti: str) -> None:
     row = RcAuthSession.get(access_jti=jti)
-    if row and row.revoked_at is None:
+    if row and row.revoked_at is None and row.is_active:
         row.last_seen_at = datetime.utcnow()
         commit()
 

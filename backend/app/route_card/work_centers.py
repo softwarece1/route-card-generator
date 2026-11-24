@@ -1523,7 +1523,7 @@ def ensure_sap_work_center(
 
     # Plant-scoped master — ignore shared/dept copies
     code = _sap_code_to_wc_code(sap)
-    rows = select(w for w in RcWorkCenter if (w.plant or "") == plant)[:]
+    rows = select(w for w in RcWorkCenter if w.plant == plant)[:]
     hit: RcWorkCenter | None = None
     for w in rows:
         if _norm(w.sap_code or "") == _norm(sap) or _norm(w.code) == _norm(code):

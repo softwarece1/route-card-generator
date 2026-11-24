@@ -244,12 +244,17 @@ CREATE TABLE IF NOT EXISTS route_card.auth_sessions (
     ip VARCHAR(64) NOT NULL DEFAULT '',
     expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
     revoked_at TIMESTAMP WITHOUT TIME ZONE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
     last_seen_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_active
     ON route_card.auth_sessions ("user", revoked_at);
+
+-- At most one active session per user (legacy LAN auth index)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_sessions_one_active_user
+    ON route_card.auth_sessions ("user") WHERE is_active;
 
 -- Grants (harmless if already granted)
 GRANT ALL ON SCHEMA route_card TO route_card;

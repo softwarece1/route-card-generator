@@ -324,3 +324,118 @@ def render_pdf_pages(
         doc.close()
 
     return out
+
+
+def render_callout_zones(
+    pdf_bytes: bytes,
+    page_no: int,
+    *,
+    dpi: int = 280,
+    n_cols: int = 12,
+    n_rows: int = 4,
+    col_bands: tuple[tuple[int, int], ...] = ((1, 4), (5, 8), (9, 12)),
+    margin_frac: float = 0.02,
+    min_ink: float = 0.004,
+    jpeg_quality: int = 92,
+    max_edge: int = 1600,
+    cancel_event=None,
+) -> list[dict[str, Any]]:
+    """Crop one GA sheet into reading-order zones.
+
+    Columns are numbered 1…n from the left. Rows are lettered A, B, C…
+    from the top. Each tile is one row band × one column band, so a vision
+    model sees subscript digits (x40, x80) large enough to read.
+    Nearly blank tiles are omitted.
+    """
+    import fitz
+    from PIL import Image
+
+    from app.route_card.analyze_jobs import check_cancelled
+
+    dpi = max(120, min(int(dpi or 280), 400))
+    n_cols = max(1, int(n_cols or 12))
+    n_rows = max(1, int(n_rows or 4))
+    zoom = dpi / 72.0
+    row_letters = [chr(ord("A") + i) for i in range(min(n_rows, 26))]
+    out: list[dict[str, Any]] = []
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        idx = int(page_no) - 1
+        if idx < 0 or idx >= doc.page_count:
+            return []
+        check_cancelled(cancel_event)
+        page = doc.load_page(idx)
+        rect = page.rect
+        mx = rect.width * float(margin_frac or 0)
+        my = rect.height * float(margin_frac or 0)
+        frame = fitz.Rect(rect.x0 + mx, rect.y0 + my, rect.x1 - mx, rect.y1 - my)
+        col_w = frame.width / float(n_cols)
+        row_h = frame.height / float(len(row_letters))
+        for r_i, row in enumerate(row_letters):
+            for band in col_bands:
+                check_cancelled(cancel_event)
+                try:
+                    c0 = max(1, int(band[0]))
+                    c1 = min(n_cols, int(band[1]))
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if c1 < c0:
+                    continue
+                clip = fitz.Rect(
+                    frame.x0 + (c0 - 1) * col_w,
+                    frame.y0 + r_i * row_h,
+                    frame.x0 + c1 * col_w,
+                    frame.y0 + (r_i + 1) * row_h,
+                )
+                pix = page.get_pixmap(
+                    matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False
+                )
+                if pix.width < 8 or pix.height < 8:
+                    continue
+                if _ink_fraction(pix.samples, pix.width, pix.height, pix.n) < float(
+                    min_ink
+                ):
+                    continue
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                encoded = _encode_image(
+                    img,
+                    image_format="JPEG",
+                    jpeg_quality=jpeg_quality,
+                    max_edge=max_edge,
+                )
+                out.append(
+                    {
+                        "page": int(page_no),
+                        "row": row,
+                        "colFrom": c0,
+                        "colTo": c1,
+                        "zone": f"{row}{c0}",
+                        "mime": encoded["mime"],
+                        "b64": encoded["b64"],
+                        "width": encoded["width"],
+                        "height": encoded["height"],
+                    }
+                )
+    finally:
+        doc.close()
+    return out
+
+
+def _ink_fraction(samples: bytes, width: int, height: int, n: int) -> float:
+    """Share of sampled pixels that are not paper-white."""
+    if width < 1 or height < 1 or n < 1:
+        return 0.0
+    step = 6
+    dark = 0
+    total = 0
+    for y in range(0, height, step):
+        row = y * width * n
+        for x in range(0, width, step):
+            i = row + x * n
+            if samples[i] < 210 or (n > 1 and samples[i + 1] < 210):
+                dark += 1
+            total += 1
+    if not total:
+        return 0.0
+    return dark / float(total)

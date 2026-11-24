@@ -940,3 +940,145 @@ export async function fetchSessionDocumentBlob(sessionId, role, documentId = nul
     throw new Error(await asBlobError(error, 'Could not download document'));
   }
 }
+
+/* --- Shared reference sheets (PS / DS / SS, …) --- */
+
+export async function fetchRefDocCatalog() {
+  try {
+    const { data } = await http.get(`${BASE}/ref-docs/catalog`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not load reference catalog'));
+  }
+}
+
+export async function resolveRefDocs(codes = []) {
+  try {
+    const list = (codes || []).filter(Boolean);
+    if (!list.length) return { found: [] };
+    const { data } = await http.get(`${BASE}/ref-docs/resolve`, {
+      params: { codes: list.join(',') },
+    });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not resolve reference sheets'));
+  }
+}
+
+export async function fetchRefFolders() {
+  try {
+    const { data } = await http.get(`${BASE}/ref-docs/folders`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not load reference folders'));
+  }
+}
+
+export async function createRefFolder({ code, name }) {
+  try {
+    const { data } = await http.post(`${BASE}/ref-docs/folders`, { code, name });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not create folder'));
+  }
+}
+
+export async function updateRefFolder(folderId, { name }) {
+  try {
+    const { data } = await http.patch(`${BASE}/ref-docs/folders/${folderId}`, { name });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not update folder'));
+  }
+}
+
+export async function deleteRefFolder(folderId) {
+  try {
+    const { data } = await http.delete(`${BASE}/ref-docs/folders/${folderId}`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not delete folder'));
+  }
+}
+
+export async function fetchRefDocuments(folderId) {
+  try {
+    const { data } = await http.get(`${BASE}/ref-docs/folders/${folderId}/documents`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not load documents'));
+  }
+}
+
+export async function uploadRefDocument(folderId, file) {
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const { data } = await http.post(
+      `${BASE}/ref-docs/folders/${folderId}/documents`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not upload document'));
+  }
+}
+
+export async function deleteRefDocument(documentId) {
+  try {
+    const { data } = await http.delete(`${BASE}/ref-docs/documents/${documentId}`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not delete document'));
+  }
+}
+
+export async function deleteRefDocumentVersion(documentId, versionNumber) {
+  try {
+    const { data } = await http.delete(
+      `${BASE}/ref-docs/documents/${documentId}/versions/${versionNumber}`,
+    );
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not delete version'));
+  }
+}
+
+export async function fetchRefDocumentVersions(documentId) {
+  try {
+    const { data } = await http.get(
+      `${BASE}/ref-docs/documents/${documentId}/versions`,
+    );
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not load versions'));
+  }
+}
+
+export async function fetchRefDocumentBlob(documentId, version = null) {
+  try {
+    const { data, headers } = await http.get(
+      `${BASE}/ref-docs/documents/${documentId}/file`,
+      {
+        responseType: 'blob',
+        params: version != null ? { version } : undefined,
+      },
+    );
+    const ctype = String(headers?.['content-type'] || '');
+    if (ctype.includes('application/json') && data instanceof Blob) {
+      const text = await data.text();
+      let detail = 'Could not open document';
+      try {
+        detail = detailFromPayload(JSON.parse(text)) || detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof Error && !error.response) throw error;
+    throw new Error(await asBlobError(error, 'Could not open reference document'));
+  }
+}

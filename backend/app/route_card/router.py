@@ -24,9 +24,12 @@ from app.route_card.schemas import (
     OpTemplateCreate,
     OpTemplateDuplicate,
     OpTemplateUpdate,
+    RefFolderCreate,
+    RefFolderUpdate,
     RouteCardUpdate,
     SignupApprovalDecide,
 )
+from app.route_card import ref_docs
 
 router = APIRouter(prefix="/api/v1/route-card", tags=["route-card"])
 
@@ -1055,6 +1058,119 @@ def system_health(current_user: dict = Depends(get_current_user)):
     from app.route_card import admin_ops
 
     return admin_ops.health_extended()
+
+
+# --- Shared reference document library (PS / DS / SS, …) ---
+
+
+@router.get("/ref-docs/catalog")
+def ref_docs_catalog(current_user: dict = Depends(get_current_user)):
+    return ref_docs.catalog()
+
+
+@router.get("/ref-docs/resolve")
+def ref_docs_resolve(
+    codes: str = Query("", description="Comma-separated codes e.g. PS200,SS10"),
+    current_user: dict = Depends(get_current_user),
+):
+    parts = [p.strip() for p in (codes or "").split(",") if p.strip()]
+    return ref_docs.resolve_codes(parts)
+
+
+@router.get("/ref-docs/folders")
+def ref_docs_list_folders(current_user: dict = Depends(get_current_user)):
+    return {"items": ref_docs.list_folders()}
+
+
+@router.post("/ref-docs/folders")
+def ref_docs_create_folder(
+    body: RefFolderCreate,
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    return ref_docs.create_folder(body.model_dump(), current_user)
+
+
+@router.patch("/ref-docs/folders/{folder_id}")
+def ref_docs_update_folder(
+    folder_id: int,
+    body: RefFolderUpdate,
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    return ref_docs.update_folder(folder_id, body.model_dump())
+
+
+@router.delete("/ref-docs/folders/{folder_id}")
+def ref_docs_delete_folder(
+    folder_id: int,
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    return ref_docs.delete_folder(folder_id)
+
+
+@router.get("/ref-docs/folders/{folder_id}/documents")
+def ref_docs_list_documents(
+    folder_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    return {"items": ref_docs.list_documents(folder_id)}
+
+
+@router.post("/ref-docs/folders/{folder_id}/documents")
+async def ref_docs_upload_document(
+    folder_id: int,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    data = await file.read()
+    return ref_docs.upload_document_bytes(
+        folder_id,
+        filename=file.filename or "upload.pdf",
+        data=data,
+        content_type=file.content_type,
+        user=current_user,
+    )
+
+
+@router.delete("/ref-docs/documents/{document_id}")
+def ref_docs_delete_document(
+    document_id: int,
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    return ref_docs.delete_document(document_id)
+
+
+@router.delete("/ref-docs/documents/{document_id}/versions/{version_number}")
+def ref_docs_delete_document_version(
+    document_id: int,
+    version_number: int,
+    current_user: dict = Depends(require_dept_head_or_admin),
+):
+    return ref_docs.delete_document_version(document_id, version_number)
+
+
+@router.get("/ref-docs/documents/{document_id}/versions")
+def ref_docs_list_versions(
+    document_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    return {"items": ref_docs.list_document_versions(document_id)}
+
+
+@router.get("/ref-docs/documents/{document_id}/file")
+def ref_docs_document_file(
+    document_id: int,
+    version: int | None = Query(None, description="Optional version number; default = latest"),
+    current_user: dict = Depends(get_current_user),
+):
+    data, filename, content_type = ref_docs.get_document_file(document_id, version=version)
+    safe = filename.replace('"', "")
+    return StreamingResponse(
+        BytesIO(data),
+        media_type=content_type or "application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{safe}"'},
+    )
+
+
 @router.post("/oarc/to-sap")
 def convert_oarc_to_sap(payload: OarcToSapRequest) -> dict:
     """

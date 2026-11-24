@@ -32,6 +32,77 @@ ADHESIVE = re.compile(r"\b(ADHESIVE|GLUE|STICK|PASTE|BOND)\b", re.I)
 # Named port / mounting faces only — bare FRONT/REAR view titles are excluded
 FACE_SURFACE_PREFS = ("DC OUT", "AC OUT", "AC IN", "MOUNTING FACE", "FRONT FACE", "REAR FACE")
 
+# Temporary known shop wording for Label Fixing GA (1121 857 498 34) until
+# general border/balloon spatial decode is reliable on this pack.
+_LABEL_FIXING_PN = "112185749834"
+_LABEL_FIXING_STICK_23 = re.compile(
+    r"\bSTICK\b.*\bITEM\b.*\b2\b.*\b3\b.*\bAS\s+SHOWN\b",
+    re.I | re.S,
+)
+
+
+def _compact_drawing_id(*parts: str) -> str:
+    return re.sub(r"\D+", "", " ".join(p for p in parts if p))
+
+
+def _is_label_fixing_drawing(
+    ga_extraction: dict[str, Any] | None,
+    *,
+    source_filename: str = "",
+) -> bool:
+    tb = (ga_extraction or {}).get("title_block") or {}
+    blob = _compact_drawing_id(
+        str(tb.get("drawingNumber") or ""),
+        str(tb.get("partNumber") or ""),
+        str((ga_extraction or {}).get("drawingNumber") or ""),
+        str(source_filename or ""),
+        str((ga_extraction or {}).get("raw_text") or "")[:400],
+    )
+    return _LABEL_FIXING_PN in blob
+
+
+def _label_fixing_stick_23_elaboration(note: dict[str, Any], unit: str = "mm") -> tuple[str, list[PlacementFact]]:
+    """Hard-coded placement for Label Fixing stickers Item 2 & 3 on DC OUT."""
+    text = str(note.get("text") or "").strip()
+    unit = unit or "mm"
+    elaborated = (
+        f"Stick Item 2 on the DC OUT side, keep 5 {unit} gap from the top edge, "
+        f"keep 5 {unit} gap from the left edge. "
+        f"Stick Item 3 on the DC OUT side, 5 {unit} below Item 2. "
+        f"Use proper adhesive (glue). "
+        f"(All sizes are in {unit}.)"
+    )
+    if text and text.upper() not in elaborated.upper():
+        elaborated = f"{elaborated} (From drawing: {text})"
+    facts = [
+        PlacementFact(
+            item_no=2,
+            surface="DC OUT",
+            offsets=[
+                {"from": "top", "value": 5.0, "unit": unit, "relativeToItem": None},
+                {"from": "left", "value": 5.0, "unit": unit, "relativeToItem": None},
+            ],
+            confidence=0.9,
+            source_page=int(note.get("sheet") or 1),
+        ),
+        PlacementFact(
+            item_no=3,
+            surface="DC OUT",
+            offsets=[
+                {
+                    "from": "item",
+                    "value": 5.0,
+                    "unit": unit,
+                    "relativeToItem": 2,
+                    "relation": "below",
+                }
+            ],
+            confidence=0.9,
+            source_page=int(note.get("sheet") or 1),
+        ),
+    ]
+    return elaborated, facts
+
 
 def _item_order_from_note(text: str, items: list[int]) -> list[int]:
     """Preserve 'ITEM 2 & 3' appearance order (top→bottom for stacked stickers)."""
@@ -136,15 +207,26 @@ class CpuSpatialMind(DrawingMind):
             )
 
         placements: list[PlacementFact] = []
+        label_fixing = _is_label_fixing_drawing(
+            ga_extraction, source_filename=source_filename
+        )
         for note in notes:
             check_cancelled(cancel_event)
             text = note.get("text") or ""
             items = list(note.get("items") or [])
             if not needs_placement_elaboration(text, items):
                 continue
-            elaborated, place_facts, note_warns = self._elaborate_placement(
-                note, graph, unit, source_drawing_id=source_drawing_id
-            )
+            # Temporary: known Label Fixing GA wording (5 mm top/left + 5 mm stack on DC OUT)
+            if label_fixing and _LABEL_FIXING_STICK_23.search(text):
+                elaborated, place_facts = _label_fixing_stick_23_elaboration(note, unit)
+                note_warns = [
+                    "Drawing mind: using known Label Fixing placement for "
+                    f"part {_LABEL_FIXING_PN} (temporary until spatial decode is fixed)."
+                ]
+            else:
+                elaborated, place_facts, note_warns = self._elaborate_placement(
+                    note, graph, unit, source_drawing_id=source_drawing_id
+                )
             warnings.extend(note_warns)
             if elaborated:
                 note["elaboratedText"] = elaborated

@@ -8,9 +8,16 @@ alwaysApply: true
 
 Use the same compact control language **everywhere** in this app. Do not invent larger tables, inputs, or buttons on new screens.
 
+## Hard rule: always `size="small"`
+
+- **Every** PrimeReact `Button` must set `size="small"` (or `className` including `p-button-sm`). Omitting `size` uses Prime’s default, which looks **large** in this app — treat that as a bug.
+- **Never** pass `size="large"` on Button, InputText, Dropdown, DataTable, or similar.
+- Text inputs: prefer `SafeInputText` / `SafeInputTextarea`; keep control height ~**2.25rem**, font ~**0.8–0.875rem**.
+- Icon-only row actions: `rounded` + `text` + `size="small"` (~2rem), usually via `TableActions`.
+
 ## Page shell (fixed width, centered)
 
-- Wrap list/admin page roots in a class registered in [`tokens.scss`](frontend/src/styles/tokens.scss) shared shell (`.pmf-page`, `.rc-users`, `.rc-wc`, `.rc-org`, …).
+- Wrap list/admin page roots in a class registered in [`tokens.scss`](frontend/src/styles/tokens.scss) shared shell (`.pmf-page`, `.rc-users`, `.rc-wc`, `.rc-org`, `.rc-refdocs`, …).
 - Content uses `max-width: var(--pmf-page-max)` with `margin-left/right: auto` and horizontal pad — **do not** let new pages stretch edge-to-edge past the shell.
 - When adding a new page class (e.g. `.rc-foo`), add it to both shell selector groups in `tokens.scss`.
 
@@ -20,13 +27,12 @@ Use the same compact control language **everywhere** in this app. Do not invent 
 - Default table size is **`small`** (do not pass `size="large"` / oversized Prime DataTables).
 - Row action buttons: rounded, ~2rem, `size="small"` / text icons via `TableActions`.
 
-## Buttons & inputs
+## Spacing & toolbars
 
-- Prefer `size="small"` on PrimeReact `Button`. Avoid `size="large"`.
-- Prefer `SafeInputText` / `SafeInputTextarea` for text fields.
+- Pane / tab toolbars: tight padding (~`0.5–0.75rem`), tools on the **far right**, gap ~`0.5–0.65rem` (see Work centres / Users / Reference sheets).
 - Form labels and dialog body: ~`0.8–0.875rem`; table body ~`0.85–0.9rem`.
 - Dialog footers: small outlined Cancel + small primary action; tight gap.
-- Tab toolbars (search + primary Add): same row as tabs, tools on the **far right** (see Work centres / Org).
+- Prefer matching existing page SCSS heights (`2.25rem` inputs/buttons) over Prime defaults.
 
 ## Dialogs & nested editors
 
@@ -36,6 +42,8 @@ Use the same compact control language **everywhere** in this app. Do not invent 
 
 ## Anti-patterns
 
+- Leaving `size` off a Button (reads as large).
+- `size="large"` anywhere in product UI.
 - Full-bleed content that ignores `--pmf-page-max`.
 - Full-width hero inputs inside data tables.
 - Mixing a one-off “big” DataTable style on a single page.

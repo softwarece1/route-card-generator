@@ -1,4 +1,8 @@
-"""Origin / Referer allowlist for cookie-authenticated mutating requests."""
+"""Origin / Referer checks for cookie-authenticated mutating requests.
+
+Supports server LAN deploys where clients open the UI via http://<server-ip>:port
+(same-origin Vite proxy or FastAPI-served SPA).
+"""
 
 from __future__ import annotations
 
@@ -9,16 +13,9 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.auth.cookies import access_cookie_name
-from app.config.settings import cors_allow_origins
+from app.config.settings import origin_is_allowed
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
-
-
-def _origin_allowed(origin: str, allowlist: list[str]) -> bool:
-    o = (origin or "").strip().rstrip("/")
-    if not o:
-        return False
-    return o in {a.rstrip("/") for a in allowlist}
 
 
 def _request_origin(request: Request) -> str | None:
@@ -40,8 +37,9 @@ def _request_origin(request: Request) -> str | None:
 class CookieCsrfMiddleware(BaseHTTPMiddleware):
     """
     When the access cookie is present on a mutating API request, require
-    Origin/Referer (if sent) to match the CORS allowlist. Missing both headers
-    is allowed for non-browser clients / TestClient; browsers send Origin on XHR.
+    Origin/Referer (if sent) to match the CORS allowlist or a private LAN /
+    loopback host. Missing both headers is allowed for non-browser clients /
+    TestClient; browsers send Origin on XHR.
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -60,8 +58,7 @@ class CookieCsrfMiddleware(BaseHTTPMiddleware):
         if origin is None:
             return await call_next(request)
 
-        allowlist = cors_allow_origins()
-        if _origin_allowed(origin, allowlist):
+        if origin_is_allowed(origin):
             return await call_next(request)
 
         return JSONResponse(

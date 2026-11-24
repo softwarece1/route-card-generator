@@ -645,6 +645,7 @@ export default function UsersPage() {
               className={`rc-users__tab${activeTab === "users" ? " rc-users__tab--active" : ""}`}
               onClick={() => selectTab("users")}
             >
+              <i className="pi pi-users" aria-hidden />
               Directory
             </button>
             <button
@@ -654,53 +655,55 @@ export default function UsersPage() {
               className={`rc-users__tab${activeTab === "pending" ? " rc-users__tab--active" : ""}`}
               onClick={() => selectTab("pending")}
             >
+              <i className="pi pi-clock" aria-hidden />
               Pending signups
               {pending.length > 0 ? (
                 <span className="rc-users__tab-badge">{pending.length}</span>
               ) : null}
             </button>
           </div>
+          {activeTab === "users" ? (
+            <div className="rc-users__tabs-tools">
+              <IconField iconPosition="left" className="rc-users__search">
+                <InputIcon className="pi pi-search" />
+                <InputText
+                  placeholder="Search name, emp ID…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </IconField>
+              {isAdmin ? (
+                <Dropdown
+                  value={filterDept || null}
+                  options={deptFilterOptions}
+                  optionLabel="label"
+                  optionValue="value"
+                  onChange={(e) =>
+                    setFilterDept(e.value == null || e.value === "" ? "" : String(e.value))
+                  }
+                  placeholder="SBU"
+                  showClear
+                  className="rc-users__filter"
+                />
+              ) : null}
+              <Dropdown
+                value={filterRole || null}
+                options={roleFilterOptions}
+                optionLabel="label"
+                optionValue="value"
+                onChange={(e) =>
+                  setFilterRole(e.value == null || e.value === "" ? "" : String(e.value))
+                }
+                placeholder="Role"
+                showClear
+                className="rc-users__filter rc-users__filter--role"
+              />
+            </div>
+          ) : null}
         </div>
 
         {activeTab === "users" ? (
           <>
-        <div className="rc-users__toolbar">
-          <IconField iconPosition="left" className="rc-users__search">
-            <InputIcon className="pi pi-search" />
-            <InputText
-              placeholder="Search name, emp ID…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </IconField>
-          {isAdmin ? (
-            <Dropdown
-              value={filterDept || null}
-              options={deptFilterOptions}
-              optionLabel="label"
-              optionValue="value"
-              onChange={(e) =>
-                setFilterDept(e.value == null || e.value === "" ? "" : String(e.value))
-              }
-              placeholder="SBU"
-              showClear
-              className="rc-users__filter"
-            />
-          ) : null}
-          <Dropdown
-            value={filterRole || null}
-            options={roleFilterOptions}
-            optionLabel="label"
-            optionValue="value"
-            onChange={(e) =>
-              setFilterRole(e.value == null || e.value === "" ? "" : String(e.value))
-            }
-            placeholder="Role"
-            showClear
-            className="rc-users__filter rc-users__filter--role"
-          />
-        </div>
-
         <TableComponent
           value={filteredUsers}
           loading={loading}

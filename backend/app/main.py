@@ -12,7 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.auth import get_current_user, router as auth_router
 from app.auth.csrf import CookieCsrfMiddleware
-from app.config.settings import cors_allow_origins, settings
+from app.config.settings import cors_allow_origins, cors_origin_regex, settings
 from app.database.connection import connect_to_db
 from app.error_log import ensure_log_dir
 from app.realtime import ws_router
@@ -51,15 +51,19 @@ app = FastAPI(
 from app.middleware import IdleSessionMiddleware, SecurityHeadersMiddleware
 from app.middleware.rate_limit import limiter, SlowAPIMiddleware
 
-# CORS — credentials required for httpOnly access cookie
-app.add_middleware(
-    CORSMiddleware,
+# CORS — credentials required for httpOnly access cookie.
+# Explicit localhost origins + regex for private LAN IPs (server IP access).
+_cors_kwargs = dict(
     allow_origins=cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition", "Content-Type", "Content-Length"],
 )
+_cors_re = cors_origin_regex()
+if _cors_re:
+    _cors_kwargs["allow_origin_regex"] = _cors_re
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 app.add_middleware(CookieCsrfMiddleware)
 app.add_middleware(IdleSessionMiddleware)

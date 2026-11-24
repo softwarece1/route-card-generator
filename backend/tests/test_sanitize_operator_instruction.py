@@ -154,6 +154,20 @@ def test_part_number_paren_tail_not_cut_off():
     ), out
 
 
+def test_preserves_pl_description_caps_in_parentheses():
+    """Item names in () stay ALL CAPS like the Parts List — not sentence-cased."""
+    from app.route_card.extractor import normalize_instruction_case
+
+    raw = (
+        "ASSEMBLE ITEM NO. 480 (CAL POWER DIVIDER UNIT U8) USING "
+        "ITEM NO. 230×4 (SCREW HEXAGON SKT HD AISI 316- M3X6) AS SHOWN."
+    )
+    out = normalize_instruction_case(raw)
+    assert "(CAL POWER DIVIDER UNIT U8)" in out, out
+    assert "(SCREW HEXAGON SKT HD AISI 316- M3X6)" in out, out
+    assert "(cal power divider" not in out.lower() or "(CAL POWER" in out
+
+
 def test_generate_route_sanitizes_instruction_text():
     route = generate_route(
         {

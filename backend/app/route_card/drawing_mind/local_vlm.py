@@ -36,6 +36,36 @@ SYSTEM_PROMPT = (
     "Reply with JSON only — no markdown fences."
 )
 
+
+def _stage_c_page_numbers(
+    pdf_bytes: bytes,
+    *,
+    page_indexes: list[int] | None,
+    max_pages: int,
+) -> list[int]:
+    """1-based page numbers Stage C should scan, capped and in order."""
+    import fitz
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        n = doc.page_count
+    finally:
+        doc.close()
+    cap = max(1, int(max_pages or 1))
+    if page_indexes:
+        out: list[int] = []
+        for p in page_indexes:
+            try:
+                pi = int(p)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= pi <= n and pi not in out:
+                out.append(pi)
+            if len(out) >= cap:
+                break
+        return out
+    return list(range(1, min(n, cap) + 1))
+
 TRANSCRIBE_PROMPT = """You are viewing a crop of the NOTES / instruction area of an engineering GA drawing.
 
 OCR transcript of the same crop (character authority — trust these characters; use the image only to recover a blank or garbled span):
@@ -1425,17 +1455,20 @@ class LocalVlmMind(DrawingMind):
             except Exception as exc:
                 warnings.append(f"Drawing mind (local_vlm): Stage B skipped ({exc}).")
 
-        # Stage C: balloon / callout assembly groups (full-page vision + PL gate)
+        # Stage C: zone scan (cols 1–12 left→right, rows A–D top→bottom).
+        # Full-page vision is only the fallback when a page yields no zone groups.
         assembly_groups: list[dict[str, Any]] = list(cpu_groups)
         try:
             from app.route_card.drawing_mind.assembly_groups import (
                 dedupe_groups,
+                extract_assembly_groups_by_zone,
                 extract_assembly_groups_from_page,
                 filter_weak_groups,
                 groups_to_synthetic_notes,
                 merge_continuation_groups,
                 merge_notes_with_balloon_notes,
                 scan_text_for_clusters,
+                sort_groups_reading_order,
                 validate_assembly_group,
                 pl_item_set,
             )
@@ -1444,24 +1477,18 @@ class LocalVlmMind(DrawingMind):
             stage_c_tokens = min(
                 2048, int(getattr(settings, "OLLAMA_VLM_MAX_TOKENS", 2048) or 2048)
             )
-            page_imgs_c = render_pdf_pages(
-                pdf_bytes,
-                dpi=page_dpi,
-                max_pages=max_pages,
-                max_edge=page_max_edge,
-                page_indexes=page_indexes,
-                cancel_event=cancel_event,
+            zone_pages = _stage_c_page_numbers(
+                pdf_bytes, page_indexes=page_indexes, max_pages=max_pages
             )
             vlm_groups: list[dict[str, Any]] = []
-            for img in page_imgs_c:
+            zone_pages_hit: set[int] = set()
+            for page_no in zone_pages:
                 check_cancelled(cancel_event)
-                page_no = int(img.get("page") or 1)
                 try:
-                    groups_page, c_warns = extract_assembly_groups_from_page(
-                        image_b64=img["b64"],
-                        image_mime=str(img.get("mime") or "image/jpeg"),
-                        parts_list=parts_list,
+                    groups_page, c_warns = extract_assembly_groups_by_zone(
+                        pdf_bytes=pdf_bytes,
                         page_no=page_no,
+                        parts_list=parts_list,
                         model=model,
                         base_url=base_url,
                         timeout=timeout,
@@ -1471,14 +1498,53 @@ class LocalVlmMind(DrawingMind):
                         source_filename=source_filename,
                         system=system_prompt,
                     )
-                    vlm_groups.extend(groups_page)
                     warnings.extend(
                         f"VLM Stage C page {page_no}: {w}" for w in c_warns if w
                     )
+                    if groups_page:
+                        zone_pages_hit.add(page_no)
+                        vlm_groups.extend(groups_page)
                 except AnalysisCancelled:
                     raise
                 except (OllamaError, ValueError, json.JSONDecodeError) as exc:
-                    warnings.append(f"VLM Stage C page {page_no}: {exc}")
+                    warnings.append(f"VLM Stage C zone page {page_no}: {exc}")
+
+            fallback_pages = [p for p in zone_pages if p not in zone_pages_hit]
+            if fallback_pages:
+                page_imgs_c = render_pdf_pages(
+                    pdf_bytes,
+                    dpi=page_dpi,
+                    max_pages=max_pages,
+                    max_edge=page_max_edge,
+                    page_indexes=fallback_pages,
+                    cancel_event=cancel_event,
+                )
+                for img in page_imgs_c:
+                    check_cancelled(cancel_event)
+                    page_no = int(img.get("page") or 1)
+                    try:
+                        groups_page, c_warns = extract_assembly_groups_from_page(
+                            image_b64=img["b64"],
+                            image_mime=str(img.get("mime") or "image/jpeg"),
+                            parts_list=parts_list,
+                            page_no=page_no,
+                            model=model,
+                            base_url=base_url,
+                            timeout=timeout,
+                            max_tokens=stage_c_tokens,
+                            cancel_event=cancel_event,
+                            source_drawing_id=source_drawing_id,
+                            source_filename=source_filename,
+                            system=system_prompt,
+                        )
+                        vlm_groups.extend(groups_page)
+                        warnings.extend(
+                            f"VLM Stage C page {page_no}: {w}" for w in c_warns if w
+                        )
+                    except AnalysisCancelled:
+                        raise
+                    except (OllamaError, ValueError, json.JSONDecodeError) as exc:
+                        warnings.append(f"VLM Stage C page {page_no}: {exc}")
 
             # OCR/raw-text salvage — always run; dedupe unions children with VLM
             blob = (ga_extraction.get("raw_text") or "") + "\n" + "\n".join(
@@ -1497,14 +1563,37 @@ class LocalVlmMind(DrawingMind):
                     vlm_groups.append(ng)
 
             assembly_groups = dedupe_groups(list(cpu_groups) + vlm_groups)
-            assembly_groups, mwarns = merge_continuation_groups(
-                assembly_groups, parts_list=parts_list
-            )
-            warnings.extend(f"VLM Stage C: {w}" for w in mwarns if w)
+            # Zone groups are already wrapped inside their own tile. A second
+            # page-wide merge pulls fastener lines onto the wrong parent.
+            if not any(str(g.get("source") or "") == "zone_vlm" for g in assembly_groups):
+                assembly_groups, mwarns = merge_continuation_groups(
+                    assembly_groups, parts_list=parts_list
+                )
+                warnings.extend(f"VLM Stage C: {w}" for w in mwarns if w)
             assembly_groups, fwarns = filter_weak_groups(
                 assembly_groups, parts_list=parts_list
             )
             warnings.extend(f"VLM Stage C: {w}" for w in fwarns if w)
+            assembly_groups = sort_groups_reading_order(assembly_groups)
+            # Confirmed GA border cell (A-8) only — omit when border/callout unconfirmed
+            try:
+                from app.route_card.drawing_mind.border_zones import (
+                    annotate_groups_with_drawing_zones,
+                )
+
+                assembly_groups, zwarns = annotate_groups_with_drawing_zones(
+                    assembly_groups,
+                    pdf_bytes=pdf_bytes,
+                    model=model,
+                    base_url=base_url,
+                    timeout=timeout,
+                    cancel_event=cancel_event,
+                )
+                warnings.extend(f"VLM Stage C: {w}" for w in zwarns if w)
+            except AnalysisCancelled:
+                raise
+            except Exception as zexc:
+                warnings.append(f"VLM Stage C: border zone annotate skipped ({zexc})")
             if assembly_groups:
                 balloon_notes = groups_to_synthetic_notes(
                     assembly_groups, parts_list=parts_list

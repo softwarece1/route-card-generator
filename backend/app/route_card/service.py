@@ -68,7 +68,11 @@ from app.route_card.models import (
     RcSession,
     RcUser,
 )
-from app.route_card.partslist_parser import enrich_bom_with_pl, enrich_ops_items, parse_partslist_bytes
+from app.route_card.partslist_parser import (
+    enrich_ops_items,
+    parse_partslist_bytes,
+    rebuild_bom_from_pl,
+)
 from app.route_card.route_generator import generate_route
 from app.route_card.wirelist_parser import parse_wirelist_bytes, wirelist_to_route_additions
 from app.services.minio_service import MinioService
@@ -2308,7 +2312,21 @@ def _analyze_session_body(
         parsed["assemblyGroups"] = assembly_groups
 
         if parts_list:
-            parsed["bom_items"] = enrich_bom_with_pl(parsed.get("bom_items") or [], parts_list)
+            extracted_by_item: dict = {}
+            try:
+                from app.route_card.drawing_mind.assembly_groups import (
+                    callout_qty_totals as _callout_qty_totals,
+                )
+
+                extracted_by_item = _callout_qty_totals(assembly_groups)
+            except Exception:
+                extracted_by_item = {}
+            # PL is master: every PL row in item-no order; GA qty for cross-check only.
+            parsed["bom_items"] = rebuild_bom_from_pl(
+                parts_list,
+                existing_bom=parsed.get("bom_items") or [],
+                extracted_by_item=extracted_by_item,
+            )
 
         # Stage D: LLM full route from notes + balloon groups + PL (soft-fail)
         llm_route_ops: list = []

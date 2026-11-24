@@ -304,6 +304,8 @@ def normalize_instruction_case(text: str) -> str:
         return f"\x00{len(tokens) - 1}\x00"
 
     out = raw
+    # Keep PL / item names inside (…) exactly as written (usually ALL CAPS).
+    out = re.sub(r"\([^)]*\)", _protect, out)
     out = _PART_GROUP_RE.sub(_protect, out)
     out = _CONNECTOR_RE.sub(_protect, out)
     out = _ACRONYM_RE.sub(_protect, out)
@@ -354,7 +356,10 @@ def normalize_instruction_case(text: str) -> str:
         flags=re.I,
     )
     for i, tok in enumerate(tokens):
-        if _ACRONYM_RE.fullmatch(tok or ""):
+        if (tok or "").startswith("(") and (tok or "").endswith(")"):
+            # Parenthetical PL descriptions — do not normalize casing
+            restored = tok
+        elif _ACRONYM_RE.fullmatch(tok or ""):
             restored = tok.upper()
         elif _CONNECTOR_RE.fullmatch(tok or ""):
             restored = tok[0].upper() + tok[1:]

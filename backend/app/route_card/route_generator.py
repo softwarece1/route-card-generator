@@ -386,35 +386,41 @@ def generate_route(extraction: dict) -> dict:
         for r in note.get("references") or []:
             if r and r not in refs:
                 refs.append(r)
-        operations.append(
-            {
-                "id": f"op-{op_no}",
-                "opNo": op_no,
-                "operation": name,
-                "workCentre": wc,
-                "machine": "Assembly station",
-                "tool": _tool(hint_text, torque),
-                "items": items_label,
-                "itemsUsed": items_used,
-                "torqueSpec": ", ".join(torque),
-                "reference": ", ".join(dict.fromkeys(refs)),
-                "setup": "1",
-                "time": "",
-                "inspection": _inspection_for_step(hint_text, torque),
-                "instructionText": instruction_clean,
-                "insight": insight_clean or insight,
-                "status": "Planned",
-                "type": wc,
-                "reason": instruction_clean[:240],
-                "features": [f"ITM-{i}" for i in items],
-                "elaborated": bool(insight) or use_elab or bool(note.get("elaborated")),
-                "verbatimText": raw,
-                "needsReview": bool(note.get("needsReview")),
-                "sourceDrawingId": note.get("sourceDrawingId"),
-                "placement": note.get("placement") or [],
-                "viewRefs": note.get("viewRefs") or [],
-            }
-        )
+        drawing_zone = ""
+        if note.get("assemblyGroup"):
+            dz = str(note.get("drawingZone") or "").strip()
+            if re.fullmatch(r"[A-Ha-h]-\d{1,2}", dz):
+                drawing_zone = f"{dz[0].upper()}{dz[1:]}"
+        op_row: dict = {
+            "id": f"op-{op_no}",
+            "opNo": op_no,
+            "operation": name,
+            "workCentre": wc,
+            "machine": "Assembly station",
+            "tool": _tool(hint_text, torque),
+            "items": items_label,
+            "itemsUsed": items_used,
+            "torqueSpec": ", ".join(torque),
+            "reference": ", ".join(dict.fromkeys(refs)),
+            "setup": "1",
+            "time": "",
+            "inspection": _inspection_for_step(hint_text, torque),
+            "instructionText": instruction_clean,
+            "insight": insight_clean or insight,
+            "status": "Planned",
+            "type": wc,
+            "reason": instruction_clean[:240],
+            "features": [f"ITM-{i}" for i in items],
+            "elaborated": bool(insight) or use_elab or bool(note.get("elaborated")),
+            "verbatimText": raw,
+            "needsReview": bool(note.get("needsReview")),
+            "sourceDrawingId": note.get("sourceDrawingId"),
+            "placement": note.get("placement") or [],
+            "viewRefs": note.get("viewRefs") or [],
+        }
+        if drawing_zone:
+            op_row["drawingZone"] = drawing_zone
+        operations.append(op_row)
         op_no += 10
 
     operations.append(_final_inspection_op(extraction, assembly_notes, op_no, title))

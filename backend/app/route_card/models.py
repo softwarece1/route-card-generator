@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pony.orm import Json, Optional, PrimaryKey, Required, Set
+from pony.orm import Json, Optional, PrimaryKey, Required, Set, composite_key
 
 from ..database.connection import db
 
@@ -52,6 +52,9 @@ class RcAuthSession(db.Entity):
     ip = Optional(str, default="")
     expires_at = Required(datetime)
     revoked_at = Optional(datetime)
+    # Legacy column from older auth_sessions; kept in sync with revoked_at so the
+    # partial unique index uq_auth_sessions_one_active_user (WHERE is_active) works.
+    is_active = Required(bool, default=True)
     created_at = Required(datetime, default=datetime.utcnow)
     last_seen_at = Required(datetime, default=datetime.utcnow)
 
@@ -413,4 +416,57 @@ class RcPasswordHistory(db.Entity):
     user = Required(RcUser)
     password_hash = Required(str)
     created_at = Required(datetime, default=datetime.utcnow)
+
+
+class RcRefFolder(db.Entity):
+    """Shared company reference category (PS, DS, SS, …)."""
+
+    _table_ = ("route_card", "ref_folders")
+
+    id = PrimaryKey(int, auto=True)
+    code = Required(str, unique=True)  # uppercase short code e.g. PS
+    name = Optional(str, default="")
+    created_by = Optional(str, default="")
+    created_at = Required(datetime, default=datetime.utcnow)
+    updated_at = Required(datetime, default=datetime.utcnow)
+    documents = Set("RcRefDocument")
+
+
+class RcRefDocument(db.Entity):
+    """Logical sheet (e.g. PS200); latest file fields denormalized like PMF Document."""
+
+    _table_ = ("route_card", "ref_documents")
+
+    id = PrimaryKey(int, auto=True)
+    folder = Required(RcRefFolder)  # DB column name must be "folder"
+    doc_code = Required(str)  # canonical PS200
+    original_filename = Required(str)
+    object_path = Required(str)
+    storage_backend = Required(str, default="minio")
+    content_type = Optional(str, default="application/pdf")
+    size_bytes = Required(int, default=0)
+    uploaded_by = Optional(str, default="")
+    version_number = Required(int, default=1)  # latest version
+    created_at = Required(datetime, default=datetime.utcnow)
+    updated_at = Required(datetime, default=datetime.utcnow)
+    versions = Set("RcRefDocumentVersion")
+    composite_key(folder, doc_code)
+
+
+class RcRefDocumentVersion(db.Entity):
+    """Immutable version row for a reference sheet (PMF-style)."""
+
+    _table_ = ("route_card", "ref_document_versions")
+
+    id = PrimaryKey(int, auto=True)
+    document = Required(RcRefDocument)
+    version_number = Required(int)
+    original_filename = Required(str)
+    object_path = Required(str)
+    storage_backend = Required(str, default="minio")
+    content_type = Optional(str, default="application/pdf")
+    size_bytes = Required(int, default=0)
+    uploaded_by = Optional(str, default="")
+    created_at = Required(datetime, default=datetime.utcnow)
+    composite_key(document, version_number)
 
