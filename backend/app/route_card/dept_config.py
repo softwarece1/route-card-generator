@@ -7,14 +7,14 @@ from datetime import datetime
 from fastapi import HTTPException
 from pony.orm import commit, db_session, desc, select
 
-from app.route_card.models import RcDeptRules, RcFewShotExample, RcUser
-from app.route_card.op_templates import _can_write_dept, _dept, _is_admin, _is_dept_head
+from app.route_card.models import RcSbuRules, RcFewShotExample, RcUser
+from app.route_card.op_templates import _can_write_dept, _dept, _is_admin, _is_sbu_head
 
 
-def _rules_out(row: RcDeptRules) -> dict:
+def _rules_out(row: RcSbuRules) -> dict:
     return {
         "id": row.id,
-        "dept": row.dept,
+        "sbu": row.sbu,
         "rules": row.rules or {},
         "updatedAt": row.updated_at.isoformat() + "Z" if row.updated_at else None,
         "updatedBy": row.updated_by,
@@ -24,10 +24,10 @@ def _rules_out(row: RcDeptRules) -> dict:
 @db_session
 def get_dept_rules(dept: str) -> dict:
     d = (dept or "").strip()
-    row = RcDeptRules.get(dept=d)
+    row = RcSbuRules.get(sbu=d)
     if not row:
         return {
-            "dept": d,
+            "sbu": d,
             "rules": {
                 "autoTemplateIds": [],
                 "keywords": [],
@@ -44,9 +44,9 @@ def upsert_dept_rules(user: dict, dept: str, rules: dict) -> dict:
     d = (dept or "").strip() or _dept(user)
     if not _can_write_dept(user, d) and not _is_admin(user):
         raise HTTPException(403, "Not allowed to edit department rules")
-    row = RcDeptRules.get(dept=d)
+    row = RcSbuRules.get(sbu=d)
     if not row:
-        row = RcDeptRules(dept=d, rules=rules or {})
+        row = RcSbuRules(sbu=d, rules=rules or {})
     else:
         row.rules = rules or {}
     row.updated_at = datetime.utcnow()
@@ -58,7 +58,7 @@ def upsert_dept_rules(user: dict, dept: str, rules: dict) -> dict:
 def few_shot_dict(e: RcFewShotExample) -> dict:
     return {
         "id": e.id,
-        "dept": e.dept,
+        "sbu": e.sbu,
         "docType": e.doc_type or "drawing",
         "title": e.title,
         "inputExcerpt": e.input_excerpt or "",
@@ -72,7 +72,7 @@ def few_shot_dict(e: RcFewShotExample) -> dict:
 def list_few_shots(dept: str | None = None, active_only: bool = True) -> list[dict]:
     q = select(e for e in RcFewShotExample)
     if dept:
-        q = select(e for e in RcFewShotExample if e.dept == dept.strip())
+        q = select(e for e in RcFewShotExample if e.sbu == dept.strip())
     if active_only:
         q = select(e for e in q if e.is_active)
     rows = q.order_by(desc(RcFewShotExample.created_at))[:100]
@@ -81,12 +81,12 @@ def list_few_shots(dept: str | None = None, active_only: bool = True) -> list[di
 
 @db_session
 def create_few_shot(user: dict, body: dict) -> dict:
-    dept = (body.get("dept") or _dept(user) or "").strip()
+    dept = (body.get("sbu") or _dept(user) or "").strip()
     if not _can_write_dept(user, dept) and not _is_admin(user):
         raise HTTPException(403, "Not allowed")
     u = RcUser.get(id=user["id"]) if user.get("id") else None
     e = RcFewShotExample(
-        dept=dept,
+        sbu=dept,
         doc_type=(body.get("docType") or "drawing"),
         title=(body.get("title") or "Example").strip(),
         input_excerpt=body.get("inputExcerpt") or "",
@@ -105,7 +105,7 @@ def delete_few_shot(example_id: int, user: dict) -> dict:
     e = RcFewShotExample.get(id=example_id)
     if not e:
         raise HTTPException(404, "Example not found")
-    if not _can_write_dept(user, e.dept) and not _is_admin(user):
+    if not _can_write_dept(user, e.sbu) and not _is_admin(user):
         raise HTTPException(403, "Not allowed")
     e.is_active = False
     commit()
@@ -120,7 +120,7 @@ def few_shot_prompt_block(dept: str | None, limit: int = 3) -> str:
             desc(RcFewShotExample.created_at)
         )[:limit]
     else:
-        rows = select(e for e in RcFewShotExample if e.is_active and e.dept == d).order_by(
+        rows = select(e for e in RcFewShotExample if e.is_active and e.sbu == d).order_by(
             desc(RcFewShotExample.created_at)
         )[:limit]
     if not rows:

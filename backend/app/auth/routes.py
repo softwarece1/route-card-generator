@@ -25,7 +25,7 @@ from app.auth_crypto import decrypt_creds_cipher, public_key_info
 from app.config.settings import settings
 from app.input_safe import require_safe
 from app.middleware.rate_limit import limiter
-from app.route_card.models import RcDepartment, RcUser
+from app.route_card.models import RcSbu, RcUser
 from app.security import hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -36,7 +36,7 @@ _ADMIN_EMP_ID = "admin"
 
 class SignupRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    dept: str = Field(..., min_length=1, max_length=128)
+    sbu: str = Field(..., min_length=1, max_length=128)
     cipher: str = Field(..., min_length=1)
     alg: str = Field(default=CREDS_ALG, max_length=64)
 
@@ -100,7 +100,7 @@ def _assert_login_allowed(user: RcUser) -> None:
             detail={
                 "code": "SIGNUP_PENDING",
                 "message": (
-                    "Your signup is awaiting department head approval. "
+                    "Your signup is awaiting SBU head approval. "
                     "You can sign in after it is approved."
                 ),
             },
@@ -126,7 +126,7 @@ def _assert_login_allowed(user: RcUser) -> None:
 
 
 def _notify_signup_approvers(*, emp_id: str, name: str, dept: str, user_id: int) -> None:
-    from app.route_card.departments import dept_heads_for_dept
+    from app.route_card.sbus import sbu_heads_for_sbu
     from app.route_card.notifications import create_notification
     from app.route_card.models import RcUser as _RcUser
     from pony.orm import select as _select
@@ -134,7 +134,7 @@ def _notify_signup_approvers(*, emp_id: str, name: str, dept: str, user_id: int)
     title = f"Signup approval: {name} ({emp_id})"
     body = f"{name} ({emp_id}) requested access for department {dept}."
     link = "/users?tab=pending"
-    heads = dept_heads_for_dept(dept)
+    heads = sbu_heads_for_sbu(dept)
     notified = 0
     for h in heads:
         hid = h.get("id")
@@ -208,11 +208,11 @@ def logout(request: Request, response: Response):
     return {"detail": "Logged out successfully"}
 
 
-@router.get("/departments")
+@router.get("/sbus")
 @db_session
-def list_departments():
-    rows = select(d for d in RcDepartment if d.is_active).order_by(
-        RcDepartment.sort_order, RcDepartment.name
+def list_sbus():
+    rows = select(d for d in RcSbu if d.is_active).order_by(
+        RcSbu.sort_order, RcSbu.name
     )[:]
     return [
         {
@@ -267,15 +267,15 @@ def signup(request: Request, response: Response, body: SignupRequest):
 
     validate_password_complexity(password)
     name = require_safe((body.name or "").strip(), "personName", field="name")
-    dept = require_safe((body.dept or "").strip(), "label", field="dept")
+    sbu = require_safe((body.sbu or "").strip(), "label", field="sbu")
     if not name:
         raise HTTPException(400, "name is required")
-    if not dept:
-        raise HTTPException(400, "dept is required")
+    if not sbu:
+        raise HTTPException(400, "sbu is required")
 
-    master = select(d for d in RcDepartment if d.is_active and d.name == dept)[:1]
+    master = select(d for d in RcSbu if d.is_active and d.name == sbu)[:1]
     if not master:
-        raise HTTPException(400, "Select a valid department")
+        raise HTTPException(400, "Select a valid SBU")
 
     if RcUser.get(emp_id=emp_id):
         raise HTTPException(400, f"Employee ID '{emp_id}' is already registered")
@@ -283,7 +283,7 @@ def signup(request: Request, response: Response, body: SignupRequest):
     user = RcUser(
         emp_id=emp_id,
         name=name,
-        dept=dept,
+        sbu=sbu,
         password_hash=hash_password(password),
         role="engineer",
         is_active=False,
@@ -293,20 +293,20 @@ def signup(request: Request, response: Response, body: SignupRequest):
     commit()
     try:
         _notify_signup_approvers(
-            emp_id=user.emp_id, name=user.name, dept=user.dept or dept, user_id=user.id
+            emp_id=user.emp_id, name=user.name, dept=user.sbu or sbu, user_id=user.id
         )
     except Exception:
         pass
     return {
         "status": "pending_approval",
         "message": (
-            "Signup submitted. Awaiting department head approval. "
+            "Signup submitted. Awaiting SBU head approval. "
             "You can sign in after it is approved."
         ),
         "user": {
             "empId": user.emp_id,
             "name": user.name,
-            "dept": user.dept or "",
+            "sbu": user.sbu or "",
         },
     }
 

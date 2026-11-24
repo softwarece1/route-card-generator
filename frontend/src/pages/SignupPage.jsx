@@ -5,7 +5,7 @@ import { Password } from "primereact/password";
 import { Dropdown } from "primereact/dropdown";
 import {
   signup,
-  fetchDepartments,
+  fetchSbus,
   fetchEmpStatus,
 } from "@/services/authApi";
 import { isAuthenticated } from "@/lib/auth";
@@ -23,6 +23,11 @@ function isValidEmployeeId(value) {
   return EMP_ID_DIGITS.test(String(value || "").trim());
 }
 
+function employeeSbu(employee) {
+  if (!employee) return null;
+  return employee.sbu || employee.dept || null;
+}
+
 export default function SignupPage() {
   const navigate = useNavigate();
   const empCheckSeq = useRef(0);
@@ -33,7 +38,7 @@ export default function SignupPage() {
 
   const [empId, setEmpId] = useState("");
   const [name, setName] = useState("");
-  const [dept, setDept] = useState(null);
+  const [sbu, setSbu] = useState(null);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -43,8 +48,8 @@ export default function SignupPage() {
   const [formError, setFormError] = useState("");
   const [pendingSuccess, setPendingSuccess] = useState(null);
 
-  const [departments, setDepartments] = useState([]);
-  const [deptsLoading, setDeptsLoading] = useState(true);
+  const [sbus, setSbus] = useState([]);
+  const [sbusLoading, setSbusLoading] = useState(true);
 
   const [empStatus, setEmpStatus] = useState(null);
   const [verifiedEmployee, setVerifiedEmployee] = useState(null);
@@ -52,14 +57,14 @@ export default function SignupPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setDeptsLoading(true);
+      setSbusLoading(true);
       try {
-        const rows = await fetchDepartments();
-        if (!cancelled) setDepartments(rows);
+        const rows = await fetchSbus();
+        if (!cancelled) setSbus(rows);
       } catch {
-        if (!cancelled) setDepartments([]);
+        if (!cancelled) setSbus([]);
       } finally {
-        if (!cancelled) setDeptsLoading(false);
+        if (!cancelled) setSbusLoading(false);
       }
     })();
     return () => {
@@ -82,7 +87,8 @@ export default function SignupPage() {
       if (status?.verified && status.employee) {
         setVerifiedEmployee(status.employee);
         if (status.employee.name) setName(status.employee.name);
-        if (status.employee.dept) setDept(status.employee.dept);
+        const lockedSbu = employeeSbu(status.employee);
+        if (lockedSbu) setSbu(lockedSbu);
       } else {
         setVerifiedEmployee(null);
       }
@@ -98,26 +104,26 @@ export default function SignupPage() {
   const passwordsMatch = password.length > 0 && password === confirmPassword;
   const confirmMismatch = Boolean(confirmPassword) && password !== confirmPassword;
   const nameLocked = Boolean(verifiedEmployee?.name);
-  const deptLocked = Boolean(verifiedEmployee?.dept);
+  const sbuLocked = Boolean(employeeSbu(verifiedEmployee));
 
   const empInvalid =
     submitted &&
     (!empId.trim() || !isValidEmployeeId(empId) || Boolean(empStatus?.registered));
   const nameInvalid = submitted && !name.trim() && !nameLocked;
-  const deptInvalid = submitted && !dept && !deptLocked;
+  const sbuInvalid = submitted && !sbu && !sbuLocked;
   const passwordInvalid = (submitted || passwordTouched) && !passwordOk;
   const confirmInvalid = (submitted && !confirmPassword) || confirmMismatch;
 
   const canSubmit =
     isValidEmployeeId(empId) &&
     name.trim() &&
-    dept &&
+    sbu &&
     passwordOk &&
     passwordsMatch &&
     !confirmMismatch &&
     !empStatus?.registered &&
-    !deptsLoading &&
-    departments.length > 0;
+    !sbusLoading &&
+    sbus.length > 0;
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -132,15 +138,15 @@ export default function SignupPage() {
       const data = await signup({
         empId: empId.trim(),
         name: name.trim(),
-        dept,
+        sbu,
         password,
       });
       setPendingSuccess({
         message:
           data?.message ||
-          "Signup submitted. Awaiting department head approval. You can sign in after it is approved.",
+          "Signup submitted. Awaiting SBU head approval. You can sign in after it is approved.",
         empId: data?.user?.empId || empId.trim(),
-        dept: data?.user?.dept || dept,
+        sbu: data?.user?.sbu || sbu,
       });
     } catch (err) {
       const detail = err?.response?.data?.detail;
@@ -178,17 +184,17 @@ export default function SignupPage() {
               <div className="rc-login__brand">
                 <AuthLogo size={36} />
                 <h1>Awaiting approval</h1>
-                <p>Your signup was sent to the department head</p>
+                <p>Your signup was sent to the SBU head</p>
               </div>
               <div className="rc-login__form-error" style={{ color: "inherit", background: "transparent" }}>
                 {pendingSuccess.message}
               </div>
               <p className="rc-login__hint" style={{ marginTop: "0.75rem" }}>
                 Employee ID <strong>{pendingSuccess.empId}</strong>
-                {pendingSuccess.dept ? (
+                {pendingSuccess.sbu ? (
                   <>
                     {" "}
-                    · Dept <strong>{pendingSuccess.dept}</strong>
+                    · SBU <strong>{pendingSuccess.sbu}</strong>
                   </>
                 ) : null}
               </p>
@@ -196,6 +202,7 @@ export default function SignupPage() {
                 type="button"
                 label="Go to sign in"
                 className="rc-login__cta"
+                size="small"
                 onClick={() => navigate("/login", { replace: true })}
               />
               <p className="rc-login__hint">
@@ -207,7 +214,7 @@ export default function SignupPage() {
             <div className="rc-login__brand">
               <AuthLogo size={36} />
               <h1>Create account</h1>
-              <p>Choose your department — signup is sent for department head approval</p>
+              <p>Choose your SBU — signup is sent for SBU head approval</p>
             </div>
 
             {formError ? <div className="rc-login__form-error">{formError}</div> : null}
@@ -253,10 +260,10 @@ export default function SignupPage() {
                     <span className="rc-login__verified-value">{verifiedEmployee.name}</span>
                   </div>
                 ) : null}
-                {verifiedEmployee.dept ? (
+                {employeeSbu(verifiedEmployee) ? (
                   <div className="rc-login__verified-row">
-                    <span className="rc-login__verified-label">Department</span>
-                    <span className="rc-login__verified-value">{verifiedEmployee.dept}</span>
+                    <span className="rc-login__verified-label">SBU</span>
+                    <span className="rc-login__verified-value">{employeeSbu(verifiedEmployee)}</span>
                   </div>
                 ) : null}
               </div>
@@ -282,22 +289,22 @@ export default function SignupPage() {
               </div>
             ) : null}
 
-            {!deptLocked ? (
+            {!sbuLocked ? (
               <div className="rc-login__field">
-                <label className="rc-login__label" htmlFor="dept">
-                  Department
+                <label className="rc-login__label" htmlFor="sbu">
+                  SBU
                 </label>
                 <Dropdown
-                  id="dept"
-                  value={dept}
-                  options={departments}
+                  id="sbu"
+                  value={sbu}
+                  options={sbus}
                   optionLabel="label"
                   optionValue="value"
-                  onChange={(e) => setDept(e.value)}
-                  placeholder={deptsLoading ? "Loading…" : "Select department"}
-                  disabled={loading || deptsLoading || departments.length === 0}
-                  className={deptInvalid ? "p-invalid w-full" : "w-full"}
-                  emptyMessage="No departments available"
+                  onChange={(e) => setSbu(e.value)}
+                  placeholder={sbusLoading ? "Loading…" : "Select SBU"}
+                  disabled={loading || sbusLoading || sbus.length === 0}
+                  className={sbuInvalid ? "p-invalid w-full" : "w-full"}
+                  emptyMessage="No SBUs available"
                 />
               </div>
             ) : null}
@@ -401,6 +408,7 @@ export default function SignupPage() {
               type="submit"
               label={loading ? "Sending..." : "Send for approval"}
               className="rc-login__cta"
+              size="small"
               loading={loading}
               disabled={loading}
             />

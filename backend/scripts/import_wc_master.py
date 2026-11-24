@@ -67,7 +67,7 @@ def _find_wc(plant: str, code: str, is_shared: bool, dept: str = ""):
             for w in select(
                 w
                 for w in RcWorkCenter
-                if w.code == code and (w.dept or "") == dept and not w.is_shared
+                if w.code == code and (w.sbu or "") == dept and not w.is_shared
             )[:]
         ]
         return rows[0] if rows else None
@@ -97,13 +97,13 @@ def main() -> int:
     from pony.orm import commit, db_session, select
 
     from app.database.connection import connect_to_db
-    from app.route_card.models import RcDepartment, RcMachine, RcPlant, RcWorkCenter
+    from app.route_card.models import RcSbu, RcMachine, RcWorkCenter
 
     connect_to_db()
 
     stats = {
         "plantsUpserted": 0,
-        "deptsUpserted": 0,
+        "sbusUpserted": 0,
         "wcsCreated": 0,
         "wcsUpdated": 0,
         "machinesCreated": 0,
@@ -111,40 +111,19 @@ def main() -> int:
     }
 
     with db_session:
-        for row in data.get("plants") or []:
-            code = str(row.get("code") or "").strip()
-            if not code:
-                continue
-            existing = RcPlant.get(code=code)
-            if args.dry_run:
-                stats["plantsUpserted"] += 1
-                continue
-            if existing:
-                existing.name = row.get("name") or code
-                existing.description = row.get("description") or ""
-                existing.is_active = bool(row.get("isActive", True))
-                existing.sort_order = int(row.get("sortOrder") or 0)
-                synced = _parse_dt(row.get("workCenterSyncedAt"))
-                if synced:
-                    existing.work_center_synced_at = synced
-            else:
-                RcPlant(
-                    code=code,
-                    name=row.get("name") or code,
-                    description=row.get("description") or "",
-                    is_active=bool(row.get("isActive", True)),
-                    sort_order=int(row.get("sortOrder") or 0),
-                    work_center_synced_at=_parse_dt(row.get("workCenterSyncedAt")),
-                )
-            stats["plantsUpserted"] += 1
+        plants_by_code = {
+            str(r.get("code") or "").strip(): r
+            for r in (data.get("plants") or [])
+            if str(r.get("code") or "").strip()
+        }
 
-        for row in data.get("departments") or []:
+        for row in data.get("sbus") or data.get("departments") or []:
             code = str(row.get("code") or "").strip()
             if not code:
                 continue
-            existing = RcDepartment.get(code=code)
+            existing = RcSbu.get(code=code)
             if args.dry_run:
-                stats["deptsUpserted"] += 1
+                stats["sbusUpserted"] += 1
                 continue
             if existing:
                 existing.name = row.get("name") or code
@@ -152,22 +131,28 @@ def main() -> int:
                 existing.plant_id = str(row.get("plantId") or "").strip()
                 existing.is_active = bool(row.get("isActive", True))
                 existing.sort_order = int(row.get("sortOrder") or 0)
+                synced = _parse_dt(row.get("workCenterSyncedAt"))
+                if not synced and existing.plant_id:
+                    pr = plants_by_code.get(existing.plant_id) or {}
+                    synced = _parse_dt(pr.get("workCenterSyncedAt"))
+                if synced:
+                    existing.work_center_synced_at = synced
             else:
-                RcDepartment(
+                RcSbu(
                     code=code,
                     name=row.get("name") or code,
                     plant_id=str(row.get("plantId") or "").strip(),
                     is_active=bool(row.get("isActive", True)),
                     sort_order=int(row.get("sortOrder") or 0),
                 )
-            stats["deptsUpserted"] += 1
+            stats["sbusUpserted"] += 1
 
         for row in data.get("workCenters") or []:
             code = str(row.get("code") or "").strip()
             if not code:
                 continue
             plant = str(row.get("plant") or "").strip()
-            dept = str(row.get("dept") or "").strip()
+            dept = str(row.get("sbu") or "").strip()
             is_shared = bool(row.get("isShared"))
             hit = _find_wc(plant, code, is_shared, dept)
             if args.dry_run:
@@ -177,7 +162,7 @@ def main() -> int:
                     stats["wcsCreated"] += 1
                 continue
             fields = dict(
-                dept=dept,
+                sbu=dept,
                 name=row.get("name") or code,
                 mode=row.get("mode") or "hybrid",
                 is_shared=is_shared,
@@ -207,7 +192,7 @@ def main() -> int:
             wc_plant = str(row.get("wcPlant") or row.get("plant") or "").strip()
             wc_code = str(row.get("wcCode") or "").strip()
             is_shared = bool(row.get("wcIsShared"))
-            dept = str(row.get("dept") or "").strip()
+            dept = str(row.get("sbu") or "").strip()
             wc = _find_wc(wc_plant, wc_code, is_shared, dept) if wc_code else None
             code = str(row.get("code") or "").strip()
             plant = str(row.get("plant") or wc_plant).strip()
@@ -242,7 +227,7 @@ def main() -> int:
                 plant=plant,
                 work_centre=str(row.get("workCentre") or (wc.name if wc else name)),
                 work_center=wc,
-                dept=dept,
+                sbu=dept,
                 code=code,
                 sap_code=str(row.get("sapCode") or "").strip(),
                 name=name,

@@ -12,10 +12,10 @@ import {
   saveDeptRules,
 } from "@/services/routeCardApi";
 
-/** Dept-head / admin: auto-template ids, prompt addendum, few-shot bank. */
+/** SBU-head / admin: auto-template ids, prompt addendum, few-shot bank. */
 export default function DeptRulesPanel() {
   const user = getUser();
-  const canEdit = user?.role === "admin" || user?.role === "dept_head";
+  const canEdit = user?.role === "admin" || user?.role === "sbu_head";
   const [rules, setRules] = useState({
     autoTemplateIds: [],
     keywords: [],
@@ -47,7 +47,7 @@ export default function DeptRulesPanel() {
         );
         setExamples(f.items || []);
       } catch (e) {
-        toast.error(e.message || "Could not load dept rules");
+        toast.error(e.message || "Could not load SBU rules");
       }
     })();
   }, []);
@@ -70,7 +70,7 @@ export default function DeptRulesPanel() {
 
   return (
     <div className="p-3" style={{ maxWidth: 720 }}>
-      <h3 style={{ marginTop: 0 }}>Department rules</h3>
+      <h3 style={{ marginTop: 0 }}>SBU rules</h3>
       <p style={{ color: "var(--pmf-text-muted)", fontSize: "0.9rem" }}>
         Auto-apply operation template IDs on analyze (when keywords match), and add VLM prompt guidance.
       </p>
@@ -97,6 +97,7 @@ export default function DeptRulesPanel() {
         type="button"
         label="Save rules"
         icon="pi pi-save"
+        size="small"
         className="mb-4"
         onClick={async () => {
           const next = {
@@ -114,8 +115,8 @@ export default function DeptRulesPanel() {
             promptAddendum: addendum,
             wcAliases: parseAliases(wcAliasesText),
           };
-          await saveDeptRules({ dept: user.dept, rules: next });
-          toast.success("Dept rules saved");
+          await saveDeptRules({ sbu: user.sbu, rules: next });
+          toast.success("SBU rules saved");
         }}
       />
 
@@ -137,9 +138,10 @@ export default function DeptRulesPanel() {
         type="button"
         label="Add example"
         icon="pi pi-plus"
+        size="small"
         className="mb-3"
         onClick={async () => {
-          await createFewShot({ title: exTitle, outputExcerpt: exOut, dept: user.dept });
+          await createFewShot({ title: exTitle, outputExcerpt: exOut, sbu: user.sbu });
           setExTitle("");
           setExOut("");
           const f = await fetchFewShots();
@@ -157,6 +159,7 @@ export default function DeptRulesPanel() {
               type="button"
               icon="pi pi-trash"
               text
+              size="small"
               severity="danger"
               onClick={async () => {
                 await deleteFewShot(e.id);

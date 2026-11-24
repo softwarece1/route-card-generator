@@ -16,12 +16,12 @@ import { getUser } from "@/lib/auth";
 import { sanitizeInput } from "@/lib/inputSafe";
 import { generateCompliantPassword, getPasswordErrors } from "@/lib/passwordPolicy";
 import { toast } from "@/lib/toast";
-import { fetchDepartments } from "@/services/authApi";
+import { fetchSbus } from "@/services/authApi";
 import {
   approveSignup,
   createManagedUser,
   fetchAdminUsers,
-  fetchDeptHeads,
+  fetchSbuHeads,
   fetchDeptUsers,
   fetchSignupApprovals,
   rejectSignup,
@@ -34,12 +34,12 @@ import "./users.scss";
 const ROLE_FILTER_ALL = [
   { label: "All roles", value: "" },
   { label: "Admin", value: "admin" },
-  { label: "SBU head", value: "dept_head" },
+  { label: "SBU head", value: "sbu_head" },
   { label: "IED", value: "ied" },
   { label: "Engineer", value: "engineer" },
 ];
 
-const ROLE_FILTER_DEPT_HEAD = [
+const ROLE_FILTER_SBU_HEAD = [
   { label: "All roles", value: "" },
   { label: "Engineer", value: "engineer" },
 ];
@@ -149,22 +149,22 @@ function isValidEmployeeId(value) {
 
 const ROLE_OPTIONS_ADMIN = [
   { label: "Engineer", value: "engineer" },
-  { label: "SBU head", value: "dept_head" },
+  { label: "SBU head", value: "sbu_head" },
   { label: "IED", value: "ied" },
 ];
 
-const ROLE_OPTIONS_DEPT_HEAD = [{ label: "Engineer", value: "engineer" }];
+const ROLE_OPTIONS_SBU_HEAD = [{ label: "Engineer", value: "engineer" }];
 
 function roleTone(role) {
   if (role === "admin") return "danger";
-  if (role === "dept_head") return "info";
+  if (role === "sbu_head") return "info";
   if (role === "ied") return "success";
   return "neutral";
 }
 
 function roleLabel(role) {
   if (role === "admin") return "Admin";
-  if (role === "dept_head") return "SBU head";
+  if (role === "sbu_head") return "SBU head";
   if (role === "ied") return "IED";
   return "Engineer";
 }
@@ -172,7 +172,7 @@ function roleLabel(role) {
 const emptyCreate = () => ({
   empId: "",
   name: "",
-  dept: "",
+  sbu: "",
   role: "engineer",
   reportsToId: null,
   password: "",
@@ -182,7 +182,7 @@ const emptyCreate = () => ({
 const emptyEdit = () => ({
   empId: "",
   name: "",
-  dept: "",
+  sbu: "",
   role: "engineer",
   reportsToId: null,
 });
@@ -190,21 +190,21 @@ const emptyEdit = () => ({
 export default function UsersPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
-  const isDeptHead = user?.role === "dept_head";
+  const isSbuHead = user?.role === "sbu_head";
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") === "pending" ? "pending" : "users";
 
   const [activeTab, setActiveTab] = useState(initialTab);
   const [users, setUsers] = useState([]);
   const [pending, setPending] = useState([]);
-  const [dept, setDept] = useState("");
-  const [departments, setDepartments] = useState([]);
+  const [sbuScope, setSbuScope] = useState("");
+  const [sbus, setSbus] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
-  const [filterDept, setFilterDept] = useState("");
+  const [filterSbu, setFilterSbu] = useState("");
   const [filterRole, setFilterRole] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -235,14 +235,14 @@ export default function UsersPage() {
     try {
       const res = isAdmin ? await fetchAdminUsers() : await fetchDeptUsers();
       setUsers(res.users || []);
-      setDept(res.dept || user?.dept || "");
+      setSbuScope(res.sbu || user?.sbu || "");
     } catch (err) {
       setUsers([]);
       setError(err.message || "Could not load users");
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, user?.dept]);
+  }, [isAdmin, user?.sbu]);
 
   const loadPending = useCallback(async () => {
     setPendingLoading(true);
@@ -258,11 +258,11 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin || isDeptHead) {
+    if (isAdmin || isSbuHead) {
       load();
       loadPending();
     }
-  }, [isAdmin, isDeptHead, load, loadPending]);
+  }, [isAdmin, isSbuHead, load, loadPending]);
 
   useEffect(() => {
     if (searchParams.get("tab") === "pending") {
@@ -283,66 +283,66 @@ export default function UsersPage() {
   useEffect(() => {
     if (!isAdmin) return;
     let cancelled = false;
-    fetchDepartments()
+    fetchSbus()
       .then((rows) => {
-        if (!cancelled) setDepartments(Array.isArray(rows) ? rows : []);
+        if (!cancelled) setSbus(Array.isArray(rows) ? rows : []);
       })
       .catch(() => {
-        if (!cancelled) setDepartments([]);
+        if (!cancelled) setSbus([]);
       });
     return () => {
       cancelled = true;
     };
   }, [isAdmin]);
 
-  const deptOptions = useMemo(
+  const sbuOptions = useMemo(
     () =>
-      departments.map((d) => ({
+      sbus.map((d) => ({
         label: d.label || d.name,
         value: d.name || d.value,
       })),
-    [departments]
+    [sbus]
   );
 
-  const deptFilterOptions = useMemo(
-    () => [{ label: "All SBUs", value: "" }, ...deptOptions],
-    [deptOptions]
+  const sbuFilterOptions = useMemo(
+    () => [{ label: "All SBUs", value: "" }, ...sbuOptions],
+    [sbuOptions]
   );
 
-  const roleFilterOptions = isAdmin ? ROLE_FILTER_ALL : ROLE_FILTER_DEPT_HEAD;
+  const roleFilterOptions = isAdmin ? ROLE_FILTER_ALL : ROLE_FILTER_SBU_HEAD;
 
   const filteredUsers = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
-    const wantDept = String(filterDept || "").trim().toLowerCase();
+    const wantSbu = String(filterSbu || "").trim().toLowerCase();
     const wantRole = String(filterRole || "").trim();
     return (users || []).filter((u) => {
       if (wantRole && u.role !== wantRole) return false;
-      if (isAdmin && wantDept) {
-        if ((u.dept || "").trim().toLowerCase() !== wantDept) return false;
+      if (isAdmin && wantSbu) {
+        if ((u.sbu || "").trim().toLowerCase() !== wantSbu) return false;
       }
       if (!q) return true;
-      const blob = `${u.empId || ""} ${u.name || ""} ${u.dept || ""} ${roleLabel(u.role)} ${
+      const blob = `${u.empId || ""} ${u.name || ""} ${u.sbu || ""} ${roleLabel(u.role)} ${
         u.reportsToName || ""
       }`.toLowerCase();
       return blob.includes(q);
     });
-  }, [users, search, filterDept, filterRole, isAdmin]);
+  }, [users, search, filterSbu, filterRole, isAdmin]);
 
   const canManageRow = (row) => {
     if (!row || row.role === "admin") return false;
     if (isAdmin) return true;
-    if (isDeptHead) return row.role === "engineer";
+    if (isSbuHead) return row.role === "engineer";
     return false;
   };
 
-  const loadHeads = useCallback(async (deptName) => {
-    const d = (deptName || "").trim();
+  const loadHeads = useCallback(async (sbuName) => {
+    const d = (sbuName || "").trim();
     if (!d) {
       setHeadOptions([]);
       return;
     }
     try {
-      const items = await fetchDeptHeads(d);
+      const items = await fetchSbuHeads(d);
       setHeadOptions(
         (items || []).map((h) => ({
           label: h.label || `${h.name} (${h.empId})`,
@@ -355,17 +355,17 @@ export default function UsersPage() {
   }, []);
 
   const openCreate = () => {
-    const deptVal = isAdmin ? "" : user?.dept || "";
+    const sbuVal = isAdmin ? "" : user?.sbu || "";
     setCreateForm({
       ...emptyCreate(),
-      dept: deptVal,
+      sbu: sbuVal,
       role: "engineer",
-      reportsToId: isDeptHead ? user?.id || null : null,
+      reportsToId: isSbuHead ? user?.id || null : null,
     });
     setCreateShowPwd(false);
     setDialogError("");
     setCreateOpen(true);
-    if (deptVal) loadHeads(deptVal);
+    if (sbuVal) loadHeads(sbuVal);
     else setHeadOptions([]);
   };
 
@@ -385,13 +385,13 @@ export default function UsersPage() {
     setEditForm({
       empId: row.empId || "",
       name: row.name || "",
-      dept: row.dept || "",
+      sbu: row.sbu || "",
       role: row.role === "admin" ? "engineer" : row.role,
       reportsToId: row.reportsToId || null,
     });
     setDialogError("");
     setEditOpen(true);
-    if (row.dept) loadHeads(row.dept);
+    if (row.sbu) loadHeads(row.sbu);
     else setHeadOptions([]);
   };
 
@@ -425,7 +425,7 @@ export default function UsersPage() {
       setDialogError("Passwords do not match");
       return;
     }
-    if (isAdmin && !createForm.dept) {
+    if (isAdmin && !createForm.sbu) {
       setDialogError("Select an SBU");
       return;
     }
@@ -441,7 +441,7 @@ export default function UsersPage() {
       await createManagedUser({
         empId,
         name,
-        dept: isAdmin ? createForm.dept : undefined,
+        sbu: isAdmin ? createForm.sbu : undefined,
         role,
         password: createForm.password,
         reportsToId: role === "engineer" ? createForm.reportsToId : undefined,
@@ -468,7 +468,7 @@ export default function UsersPage() {
       setDialogError("Employee ID must be exactly 6 digits");
       return;
     }
-    if (isAdmin && !editForm.dept) {
+    if (isAdmin && !editForm.sbu) {
       setDialogError("Select an SBU");
       return;
     }
@@ -483,7 +483,7 @@ export default function UsersPage() {
     try {
       const payload = { empId, name };
       if (isAdmin) {
-        payload.dept = editForm.dept;
+        payload.sbu = editForm.sbu;
         payload.role = editForm.role;
       }
       if (role === "engineer") {
@@ -497,7 +497,7 @@ export default function UsersPage() {
                 ...u,
                 empId: updated.empId,
                 name: updated.name,
-                dept: updated.dept,
+                sbu: updated.sbu,
                 role: updated.role,
                 reportsToId: updated.reportsToId,
                 reportsToName: updated.reportsToName,
@@ -555,13 +555,13 @@ export default function UsersPage() {
     if (isAdmin) {
       return "Add SBU heads, engineers, or IED users; approve engineer signups; reset passwords.";
     }
-    if (isDeptHead) {
-      return dept
-        ? `Manage reports in ${dept} and approve pending engineer signups.`
+    if (isSbuHead) {
+      return sbuScope
+        ? `Manage reports in ${sbuScope} and approve pending engineer signups.`
         : "Manage your engineers and approve pending signups.";
     }
     return "";
-  }, [isAdmin, isDeptHead, dept]);
+  }, [isAdmin, isSbuHead, sbuScope]);
 
   const openDecide = (row, mode) => {
     setDecideTarget(row);
@@ -598,7 +598,7 @@ export default function UsersPage() {
     }
   };
 
-  if (!isAdmin && !isDeptHead) {
+  if (!isAdmin && !isSbuHead) {
     return <Navigate to="/generator" replace />;
   }
 
@@ -674,12 +674,12 @@ export default function UsersPage() {
               </IconField>
               {isAdmin ? (
                 <Dropdown
-                  value={filterDept || null}
-                  options={deptFilterOptions}
+                  value={filterSbu || null}
+                  options={sbuFilterOptions}
                   optionLabel="label"
                   optionValue="value"
                   onChange={(e) =>
-                    setFilterDept(e.value == null || e.value === "" ? "" : String(e.value))
+                    setFilterSbu(e.value == null || e.value === "" ? "" : String(e.value))
                   }
                   placeholder="SBU"
                   showClear
@@ -711,7 +711,7 @@ export default function UsersPage() {
           paginator
           rows={12}
           emptyMessage={
-            search.trim() || filterDept || filterRole
+            search.trim() || filterSbu || filterRole
               ? "No users match your search / filters."
               : "No users found."
           }
@@ -720,7 +720,7 @@ export default function UsersPage() {
             { field: "empId", header: "Emp ID", sortable: true, style: { width: "8.5rem" } },
             { field: "name", header: "Name", sortable: true },
             ...(isAdmin
-              ? [{ field: "dept", header: "SBU", sortable: true, style: { width: "9rem" } }]
+              ? [{ field: "sbu", header: "SBU", sortable: true, style: { width: "9rem" } }]
               : []),
             {
               header: "Role",
@@ -820,7 +820,7 @@ export default function UsersPage() {
               { type: "index", header: "#", style: { width: "3.25rem" } },
               { field: "empId", header: "Emp ID", sortable: true, style: { width: "8.5rem" } },
               { field: "name", header: "Name", sortable: true },
-              { field: "dept", header: "SBU", sortable: true, style: { width: "9rem" } },
+              { field: "sbu", header: "SBU", sortable: true, style: { width: "9rem" } },
               {
                 header: "Requested",
                 style: { width: "11rem" },
@@ -899,7 +899,7 @@ export default function UsersPage() {
             {decideTarget ? (
               <p style={{ margin: 0, fontSize: "0.85rem" }}>
                 {decideTarget.name} ({decideTarget.empId})
-                {decideTarget.dept ? ` · ${decideTarget.dept}` : ""}
+                {decideTarget.sbu ? ` · ${decideTarget.sbu}` : ""}
               </p>
             ) : null}
             <label>
@@ -985,40 +985,40 @@ export default function UsersPage() {
               <label>
                 SBU
                 <Dropdown
-                  value={createForm.dept || null}
-                  options={deptOptions}
+                  value={createForm.sbu || null}
+                  options={sbuOptions}
                   onChange={(e) => {
                     const next = e.value || "";
                     setCreateForm((f) => ({
                       ...f,
-                      dept: next,
+                      sbu: next,
                       reportsToId: null,
                     }));
                     loadHeads(next);
                   }}
                   placeholder="Select SBU"
-                  disabled={saving || deptOptions.length === 0}
+                  disabled={saving || sbuOptions.length === 0}
                   className="w-full"
                 />
               </label>
             ) : (
               <label>
                 SBU
-                <SafeInputText profile="text" value={user?.dept || dept || ""} disabled />
+                <SafeInputText profile="text" value={user?.sbu || sbuScope || ""} disabled />
               </label>
             )}
             <label>
               Role
               <Dropdown
                 value={createForm.role}
-                options={isAdmin ? ROLE_OPTIONS_ADMIN : ROLE_OPTIONS_DEPT_HEAD}
+                options={isAdmin ? ROLE_OPTIONS_ADMIN : ROLE_OPTIONS_SBU_HEAD}
                 onChange={(e) =>
                   setCreateForm((f) => ({
                     ...f,
                     role: e.value,
                     reportsToId:
                       e.value === "engineer"
-                        ? f.reportsToId || (isDeptHead ? user?.id : null)
+                        ? f.reportsToId || (isSbuHead ? user?.id : null)
                         : null,
                   }))
                 }
@@ -1036,7 +1036,7 @@ export default function UsersPage() {
                     setCreateForm((f) => ({ ...f, reportsToId: e.value || null }))
                   }
                   placeholder={
-                    headOptions.length ? "Select dept head" : "No dept heads in this dept"
+                    headOptions.length ? "Select SBU head" : "No SBU heads in this SBU"
                   }
                   disabled={saving || headOptions.length === 0}
                   className="w-full"
@@ -1156,19 +1156,19 @@ export default function UsersPage() {
               SBU
               {isAdmin ? (
                 <Dropdown
-                  value={editForm.dept || null}
-                  options={deptOptions}
+                  value={editForm.sbu || null}
+                  options={sbuOptions}
                   onChange={(e) => {
                     const next = e.value || "";
-                    setEditForm((f) => ({ ...f, dept: next, reportsToId: null }));
+                    setEditForm((f) => ({ ...f, sbu: next, reportsToId: null }));
                     loadHeads(next);
                   }}
                   placeholder="Select SBU"
-                  disabled={saving || deptOptions.length === 0}
+                  disabled={saving || sbuOptions.length === 0}
                   className="w-full"
                 />
               ) : (
-                <SafeInputText profile="text" value={editForm.dept || user?.dept || dept || ""} disabled />
+                <SafeInputText profile="text" value={editForm.sbu || user?.sbu || sbuScope || ""} disabled />
               )}
             </label>
             <label>
@@ -1201,7 +1201,7 @@ export default function UsersPage() {
                     setEditForm((f) => ({ ...f, reportsToId: e.value || null }))
                   }
                   placeholder={
-                    headOptions.length ? "Select dept head" : "No dept heads in this dept"
+                    headOptions.length ? "Select SBU head" : "No SBU heads in this SBU"
                   }
                   disabled={saving || headOptions.length === 0}
                   className="w-full"

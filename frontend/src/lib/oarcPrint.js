@@ -315,8 +315,8 @@ function operationBlock(op, plant) {
         <table class="op-meta">
           <thead>
             <tr>
-              <th>SetUp Time Hrs</th>
-              <th>Per Pc Time Hrs</th>
+              <th>Setup Time (in hrs)</th>
+              <th>Per Pc Time (in hrs)</th>
               <th>Jmp Qty</th>
               <th>Tot Qty</th>
               <th>Allowed Time Hrs</th>

@@ -23,7 +23,7 @@ import {
   displayStatusTone,
   routeStatusLabel,
 } from "@/lib/routeStatus";
-import { fetchDepartments } from "@/services/authApi";
+import { fetchSbus } from "@/services/authApi";
 import { useNavigate } from "react-router-dom";
 import {
   // batchEnqueueAnalyze, // Analyze selected — commented out in UI
@@ -87,7 +87,7 @@ function defaultDateRange() {
 function defaultFilters() {
   return {
     empId: null,
-    dept: null,
+    sbu: null,
     status: null,
     ...defaultDateRange(),
   };
@@ -99,7 +99,7 @@ function filtersAreActive(f) {
   const d = defaultFilters();
   return Boolean(
     f?.empId ||
-      f?.dept ||
+      f?.sbu ||
       f?.status ||
       toYmd(f?.fromDate) !== toYmd(d.fromDate) ||
       toYmd(f?.toDate) !== toYmd(d.toDate)
@@ -116,10 +116,10 @@ export default function ExtractionsPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
   const isIed = user?.role === "ied";
-  const isDeptHead = user?.role === "dept_head";
+  const isSbuHead = user?.role === "sbu_head";
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
-  const [departments, setDepartments] = useState([]);
+  const [sbus, setSbus] = useState([]);
   const [filters, setFilters] = useState(() => defaultFilters());
   const [applied, setApplied] = useState(() => defaultFilters());
   const [iedTab, setIedTab] = useState(0); // 0 Pending, 1 Approved
@@ -138,12 +138,12 @@ export default function ExtractionsPage() {
   const navigate = useNavigate();
 
   const sbuOptions = useMemo(() => {
-    const fromMaster = departments.map((d) => ({
+    const fromMaster = sbus.map((d) => ({
       label: d.label || d.name,
       value: d.value || d.name,
     }));
     const fromUsers = users
-      .map((u) => (u.dept || "").trim())
+      .map((u) => (u.sbu || "").trim())
       .filter(Boolean);
     const merged = new Map();
     for (const opt of fromMaster) merged.set(opt.value, opt);
@@ -151,23 +151,23 @@ export default function ExtractionsPage() {
       if (!merged.has(name)) merged.set(name, { label: name, value: name });
     }
     return [{ label: "All SBUs", value: null }, ...merged.values()];
-  }, [departments, users]);
+  }, [sbus, users]);
 
-  /** Employees for the selected SBU (admin) or caller's SBU reports (dept head). */
+  /** Employees for the selected SBU (admin) or caller's SBU reports (SBU head). */
   const empOptions = useMemo(() => {
-    const sbu = (filters.dept || "").trim();
+    const sbu = (filters.sbu || "").trim();
     let pool = users;
     if (isAdmin && sbu) {
-      pool = users.filter((u) => (u.dept || "").trim() === sbu);
+      pool = users.filter((u) => (u.sbu || "").trim() === sbu);
     }
     return [
       { label: "All employees", value: null },
       ...pool.map((u) => ({
-        label: `${u.empId} — ${u.name}${u.dept ? ` (${u.dept})` : ""}`,
+        label: `${u.empId} — ${u.name}${u.sbu ? ` (${u.sbu})` : ""}`,
         value: u.empId,
       })),
     ];
-  }, [users, filters.dept, isAdmin]);
+  }, [users, filters.sbu, isAdmin]);
 
   const loadMeta = useCallback(async () => {
     if (isIed) return;
@@ -175,19 +175,19 @@ export default function ExtractionsPage() {
       if (isAdmin) {
         const [uRes, dRows] = await Promise.all([
           fetchAdminUsers(),
-          fetchDepartments().catch(() => []),
+          fetchSbus().catch(() => []),
         ]);
         setUsers(uRes.users || []);
-        setDepartments(Array.isArray(dRows) ? dRows : []);
-      } else if (isDeptHead) {
+        setSbus(Array.isArray(dRows) ? dRows : []);
+      } else if (isSbuHead) {
         const uRes = await fetchDeptUsers();
         setUsers(uRes.users || []);
-        setDepartments([]);
+        setSbus([]);
       }
     } catch (err) {
       setError(err.message || "Failed to load filter options");
     }
-  }, [isAdmin, isDeptHead, isIed]);
+  }, [isAdmin, isSbuHead, isIed]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -196,7 +196,7 @@ export default function ExtractionsPage() {
       if (isAdmin) {
         const eRes = await fetchAdminExtractions({
           empId: applied.empId || undefined,
-          dept: applied.dept || undefined,
+          dept: applied.sbu || undefined,
           status: applied.status || undefined,
           fromDate: toYmd(applied.fromDate),
           toDate: toYmd(applied.toDate),
@@ -355,11 +355,11 @@ export default function ExtractionsPage() {
     setFilters((prev) => {
       const next = { ...prev, [key]: value };
       // Changing SBU clears employee if they are outside that SBU
-      if (key === "dept" && prev.empId) {
+      if (key === "sbu" && prev.empId) {
         const sbu = (value || "").trim();
         if (sbu) {
           const stillOk = users.some(
-            (u) => u.empId === prev.empId && (u.dept || "").trim() === sbu
+            (u) => u.empId === prev.empId && (u.sbu || "").trim() === sbu
           );
           if (!stillOk) next.empId = null;
         }
@@ -424,7 +424,7 @@ export default function ExtractionsPage() {
                 ? "All extractions"
                 : isIed
                   ? "IED review queue"
-                  : isDeptHead
+                  : isSbuHead
                     ? "Extractions & approvals"
                     : "My extractions"
             }
@@ -432,8 +432,8 @@ export default function ExtractionsPage() {
               isAdmin
                 ? "Browse every user’s analyzed sessions, open OARC preview, or print PDF."
                 : isIed
-                  ? "Shared route cards for your SBU — review standards (setup / per-piece / WC), then complete IED review."
-                  : isDeptHead
+                  ? "Shared route cards for your SBU — set setup / per-piece time (in hrs), then complete IED review."
+                  : isSbuHead
                     ? "Your extractions plus cards awaiting approval after IED."
                     : "Your past analyses — share to IED, then approve after IED completes."
             }
@@ -649,9 +649,9 @@ export default function ExtractionsPage() {
                   <label htmlFor="sbuFilter">SBU</label>
                   <Dropdown
                     inputId="sbuFilter"
-                    value={filters.dept}
+                    value={filters.sbu}
                     options={sbuOptions}
-                    onChange={(e) => patchFilter("dept", e.value)}
+                    onChange={(e) => patchFilter("sbu", e.value)}
                     className="w-full"
                     placeholder="All SBUs"
                     filter
@@ -659,7 +659,7 @@ export default function ExtractionsPage() {
                   />
                 </div>
               ) : null}
-              {isAdmin || isDeptHead ? (
+              {isAdmin || isSbuHead ? (
                 <div className="rc-hist__filter">
                   <label htmlFor="empFilter">Employee</label>
                   <Dropdown
@@ -743,7 +743,7 @@ export default function ExtractionsPage() {
                         row.user ? (
                           <TablePrimarySub
                             primary={row.user.empId}
-                            secondary={[row.user.name, row.user.dept].filter(Boolean).join(" · ")}
+                            secondary={[row.user.name, row.user.sbu].filter(Boolean).join(" · ")}
                           />
                         ) : (
                           "—"
@@ -778,7 +778,7 @@ export default function ExtractionsPage() {
                         row.user ? (
                           <TablePrimarySub
                             primary={row.user.empId}
-                            secondary={[row.user.name, row.user.dept]
+                            secondary={[row.user.name, row.user.sbu]
                               .filter(Boolean)
                               .join(" · ")}
                           />
@@ -936,7 +936,7 @@ export default function ExtractionsPage() {
                   <dt>User</dt>
                   <dd>
                     {detail.user.empId} — {detail.user.name}
-                    {detail.user.dept ? ` (${detail.user.dept})` : ""}
+                    {detail.user.sbu ? ` (${detail.user.sbu})` : ""}
                   </dd>
                 </div>
               ) : null}

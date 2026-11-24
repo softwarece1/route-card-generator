@@ -7,10 +7,10 @@ from datetime import datetime
 from fastapi import HTTPException
 from pony.orm import db_session, flush, select
 
-from app.route_card.models import RcDepartment, RcOperationTemplate, RcOperationTemplateStep, RcUser
+from app.route_card.models import RcSbu, RcOperationTemplate, RcOperationTemplateStep, RcUser
 
 VALID_PLACEMENTS = {"pre", "post", "any"}
-VALID_ROLES = {"admin", "dept_head", "engineer", "ied"}
+VALID_ROLES = {"admin", "sbu_head", "engineer", "ied"}
 
 
 def _role(user: dict | None) -> str:
@@ -18,15 +18,15 @@ def _role(user: dict | None) -> str:
 
 
 def _dept(user: dict | None) -> str:
-    return ((user or {}).get("dept") or "").strip()
+    return ((user or {}).get("sbu") or "").strip()
 
 
 def _is_admin(user: dict | None) -> bool:
     return _role(user) == "admin"
 
 
-def _is_dept_head(user: dict | None) -> bool:
-    return _role(user) == "dept_head"
+def _is_sbu_head(user: dict | None) -> bool:
+    return _role(user) == "sbu_head"
 
 
 def _is_ied(user: dict | None) -> bool:
@@ -36,25 +36,25 @@ def _is_ied(user: dict | None) -> bool:
 def _can_write_dept(user: dict | None, dept: str) -> bool:
     if _is_admin(user):
         return True
-    if _is_dept_head(user) and _dept(user) and _dept(user) == (dept or "").strip():
+    if _is_sbu_head(user) and _dept(user) and _dept(user) == (dept or "").strip():
         return True
     return False
 
 
 def _can_manage_templates(user: dict | None, dept: str) -> bool:
-    """Admin any dept; dept_head / IED own department only."""
+    """Admin any dept; sbu_head / IED own department only."""
     if _is_admin(user):
         return True
     d = _dept(user)
     if not d or d != (dept or "").strip():
         return False
-    return _is_dept_head(user) or _is_ied(user)
+    return _is_sbu_head(user) or _is_ied(user)
 
 
 def _can_read_template(user: dict | None, tpl: RcOperationTemplate) -> bool:
-    if _is_admin(user) or _is_dept_head(user):
+    if _is_admin(user) or _is_sbu_head(user):
         return True
-    return _dept(user) == (tpl.dept or "").strip()
+    return _dept(user) == (tpl.sbu or "").strip()
 
 
 def _validate_placement(placement: str) -> str:
@@ -68,7 +68,7 @@ def _validate_dept_name(dept: str) -> str:
     d = (dept or "").strip()
     if not d:
         raise HTTPException(400, "dept is required")
-    master = select(x for x in RcDepartment if x.is_active and x.name == d)[:1]
+    master = select(x for x in RcSbu if x.is_active and x.name == d)[:1]
     if not master:
         raise HTTPException(400, "Select a valid department")
     return d
@@ -105,7 +105,7 @@ def _dept_has_copy(dept: str, root_id: int) -> bool:
         t
         for t in RcOperationTemplate
         if t.is_active
-        and t.dept == dept
+        and t.sbu == dept
         and (t.id == root_id or t.copied_from_id == root_id)
     )[:1]
     return bool(hit)
@@ -121,7 +121,7 @@ def _template_out(
     root_id = _template_root_id(tpl)
     out = {
         "id": tpl.id,
-        "dept": tpl.dept or "",
+        "sbu": tpl.sbu or "",
         "name": tpl.name or "",
         "description": tpl.description or "",
         "placement": tpl.placement or "any",
@@ -217,7 +217,7 @@ def _assert_unique_name(dept: str, name: str, *, exclude_id: int | None = None) 
     q = select(
         t
         for t in RcOperationTemplate
-        if t.is_active and t.dept == dept and t.name == name
+        if t.is_active and t.sbu == dept and t.name == name
     )
     for t in q[:]:
         if exclude_id is not None and t.id == exclude_id:
@@ -239,32 +239,32 @@ def list_templates(
     dept_filter = (dept or "").strip()
 
     if scope_n == "other":
-        if not (_is_admin(user) or _is_dept_head(user)):
+        if not (_is_admin(user) or _is_sbu_head(user)):
             raise HTTPException(403, "Only department heads and admins can browse other departments")
         own = _dept(user)
         rows = [
             t
             for t in RcOperationTemplate.select(lambda t: t.is_active).order_by(
-                RcOperationTemplate.dept, RcOperationTemplate.name
+                RcOperationTemplate.sbu, RcOperationTemplate.name
             )[:]
-            if (not own or t.dept != own) and (not dept_filter or t.dept == dept_filter)
+            if (not own or t.sbu != own) and (not dept_filter or t.sbu == dept_filter)
         ]
     elif scope_n == "all" and _is_admin(user):
         rows = [
             t
             for t in RcOperationTemplate.select(lambda t: t.is_active).order_by(
-                RcOperationTemplate.dept, RcOperationTemplate.name
+                RcOperationTemplate.sbu, RcOperationTemplate.name
             )[:]
-            if not dept_filter or t.dept == dept_filter
+            if not dept_filter or t.sbu == dept_filter
         ]
     else:
-        # own dept (engineers + dept_head + admin with optional dept filter)
+        # own dept (engineers + sbu_head + admin with optional dept filter)
         target = dept_filter if (_is_admin(user) and dept_filter) else _dept(user)
         if not target:
             return {"items": [], "total": 0}
         rows = list(
             RcOperationTemplate.select(
-                lambda t: t.is_active and t.dept == target
+                lambda t: t.is_active and t.sbu == target
             ).order_by(RcOperationTemplate.name)[:]
         )
 
@@ -275,7 +275,7 @@ def list_templates(
     own_names: set[str] = set()
     if annotate:
         for ot in RcOperationTemplate.select(
-            lambda t: t.is_active and t.dept == viewer_dept
+            lambda t: t.is_active and t.sbu == viewer_dept
         )[:]:
             own_root_ids.add(_template_root_id(ot))
             own_root_ids.add(int(ot.id))
@@ -316,7 +316,7 @@ def get_template(template_id: int, user: dict | None) -> dict:
 
 @db_session
 def create_template(body: dict, user: dict | None) -> dict:
-    if not (_is_admin(user) or _is_dept_head(user) or _is_ied(user)):
+    if not (_is_admin(user) or _is_sbu_head(user) or _is_ied(user)):
         raise HTTPException(403, "Department head, IED, or admin access required")
 
     name = (body.get("name") or "").strip()
@@ -326,8 +326,8 @@ def create_template(body: dict, user: dict | None) -> dict:
     placement = _validate_placement(body.get("placement") or "any")
     steps = _normalize_steps(body.get("steps"))
 
-    if _is_admin(user) and body.get("dept"):
-        dept = _validate_dept_name(body.get("dept"))
+    if _is_admin(user) and body.get("sbu"):
+        dept = _validate_dept_name(body.get("sbu"))
     else:
         dept = _validate_dept_name(_dept(user))
 
@@ -343,7 +343,7 @@ def create_template(body: dict, user: dict | None) -> dict:
 
     now = datetime.utcnow()
     tpl = RcOperationTemplate(
-        dept=dept,
+        sbu=dept,
         name=name,
         description=(body.get("description") or "").strip(),
         placement=placement,
@@ -362,14 +362,14 @@ def update_template(template_id: int, body: dict, user: dict | None) -> dict:
     tpl = RcOperationTemplate.get(id=template_id)
     if not tpl or not tpl.is_active:
         raise HTTPException(404, "Template not found")
-    if not _can_manage_templates(user, tpl.dept):
+    if not _can_manage_templates(user, tpl.sbu):
         raise HTTPException(403, "Cannot edit this template")
 
     if body.get("name") is not None:
         name = (body.get("name") or "").strip()
         if not name:
             raise HTTPException(400, "name is required")
-        _assert_unique_name(tpl.dept, name, exclude_id=tpl.id)
+        _assert_unique_name(tpl.sbu, name, exclude_id=tpl.id)
         tpl.name = name
 
     if body.get("description") is not None:
@@ -392,7 +392,7 @@ def delete_template(template_id: int, user: dict | None) -> dict:
     tpl = RcOperationTemplate.get(id=template_id)
     if not tpl or not tpl.is_active:
         raise HTTPException(404, "Template not found")
-    if not _can_manage_templates(user, tpl.dept):
+    if not _can_manage_templates(user, tpl.sbu):
         raise HTTPException(403, "Cannot delete this template")
     tpl.is_active = False
     tpl.updated_at = datetime.utcnow()
@@ -401,16 +401,16 @@ def delete_template(template_id: int, user: dict | None) -> dict:
 
 @db_session
 def duplicate_template(template_id: int, body: dict, user: dict | None) -> dict:
-    if not (_is_admin(user) or _is_dept_head(user) or _is_ied(user)):
+    if not (_is_admin(user) or _is_sbu_head(user) or _is_ied(user)):
         raise HTTPException(403, "Department head, IED, or admin access required")
 
     src = RcOperationTemplate.get(id=template_id)
     if not src or not src.is_active:
         raise HTTPException(404, "Template not found")
 
-    target_dept = _validate_dept_name(_dept(user) if not _is_admin(user) else (_dept(user) or src.dept))
-    if _is_admin(user) and body.get("dept"):
-        target_dept = _validate_dept_name(body.get("dept"))
+    target_dept = _validate_dept_name(_dept(user) if not _is_admin(user) else (_dept(user) or src.sbu))
+    if _is_admin(user) and body.get("sbu"):
+        target_dept = _validate_dept_name(body.get("sbu"))
     elif not _is_admin(user):
         target_dept = _validate_dept_name(_dept(user))
 
@@ -430,7 +430,7 @@ def duplicate_template(template_id: int, body: dict, user: dict | None) -> dict:
             t
             for t in RcOperationTemplate
             if t.is_active
-            and t.dept == target_dept
+            and t.sbu == target_dept
             and (
                 t.name.lower() == src_name
                 or t.name.lower() == f"{src_name} (copy)"
@@ -452,7 +452,7 @@ def duplicate_template(template_id: int, body: dict, user: dict | None) -> dict:
 
     now = datetime.utcnow()
     tpl = RcOperationTemplate(
-        dept=target_dept,
+        sbu=target_dept,
         name=new_name,
         description=src.description or "",
         placement=src.placement or "any",

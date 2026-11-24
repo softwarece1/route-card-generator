@@ -103,6 +103,9 @@ export default function OarcPreviewDialog({
   const isIedMode = mode === "ied";
   const routeStatus = String(payload?.status || "").toLowerCase();
   const canEditStandards = isIedMode ? routeStatus === "ied_review" : true;
+  // IED may only change setup / per-piece hours — no structural op actions
+  const canStructureOps = canEditStandards && !isIedMode;
+  const canEditTimes = canEditStandards;
   const routeCardId = payload?.id || null;
 
   useEffect(() => {
@@ -708,14 +711,14 @@ export default function OarcPreviewDialog({
                     <div className="om-create-order-section__toolbar">
                       <span className="om-create-order-section__hint">
                         {isIedMode
-                          ? canEditStandards
-                            ? "Set standards, reorder/merge ops, or add from templates. Then save or complete IED review."
+                          ? canEditTimes
+                            ? "Edit setup and per-piece time (in hrs) only, then save or complete IED review."
                             : "Read-only — IED review already completed."
                           : operations.length
                             ? "Drag rows to reorder. Operation numbers stay ascending (10, 20, 30…)."
                             : "No operations found. Click 'Add Operation' to add new operations:"}
                       </span>
-                      {canEditStandards ? (
+                      {canStructureOps ? (
                       <div className="flex gap-2 flex-wrap">
                         <Button
                           type="button"
@@ -732,7 +735,6 @@ export default function OarcPreviewDialog({
                           tooltipOptions={{ position: "top" }}
                           onClick={() => {
                             mergeSameWcOps();
-                            if (isIedMode) setDirty(true);
                           }}
                         />
                         <Button
@@ -760,7 +762,6 @@ export default function OarcPreviewDialog({
                           size="small"
                           onClick={() => {
                             addOp();
-                            if (isIedMode) setDirty(true);
                           }}
                         />
                       </div>
@@ -774,16 +775,15 @@ export default function OarcPreviewDialog({
                       scrollHeight="360px"
                       tableStyle={{ minWidth: isIedMode ? "56rem" : "78rem" }}
                       className="om-create-order-table"
-                      reorderableRows={canEditStandards}
+                      reorderableRows={canStructureOps}
                       onRowReorder={
-                        canEditStandards
+                        canStructureOps
                           ? (e) => {
                               onOpsReorder(e);
-                              if (isIedMode) setDirty(true);
                             }
                           : undefined
                       }
-                      {...(canEditStandards
+                      {...(canStructureOps
                         ? {
                             selection: selectedOps,
                             onSelectionChange: (e) => setSelectedOps(e.value || []),
@@ -799,10 +799,10 @@ export default function OarcPreviewDialog({
                         </div>
                       }
                     >
-                      {canEditStandards ? (
+                      {canStructureOps ? (
                         <Column selectionMode="multiple" headerStyle={{ width: "2.5rem" }} />
                       ) : null}
-                      {canEditStandards ? (
+                      {canStructureOps ? (
                         <Column rowReorder style={{ width: "3rem", minWidth: "3rem" }} />
                       ) : null}
                       <Column
@@ -824,7 +824,7 @@ export default function OarcPreviewDialog({
                               placeholder="Select workcentre"
                               filter
                               editable
-                              disabled={!canEditStandards}
+                              disabled={!canStructureOps}
                               onChange={(e) => updateOp(row._rowId, "Wc/Plant", e.value || "")}
                             />
                           ) : (
@@ -833,7 +833,7 @@ export default function OarcPreviewDialog({
                               value={row["Wc/Plant"]}
                               className="w-full"
                               placeholder="Select workcentre"
-                              disabled={!canEditStandards}
+                              disabled={!canStructureOps}
                               onChange={(e) => updateOp(row._rowId, "Wc/Plant", e.target.value)}
                             />
                           )
@@ -850,7 +850,7 @@ export default function OarcPreviewDialog({
                                 value={row.Operation}
                                 placeholder="Enter operation description"
                                 className="om-op-desc-field__input w-full"
-                                disabled={!canEditStandards}
+                                disabled={!canStructureOps}
                                 onChange={(e) => updateOp(row._rowId, "Operation", e.target.value)}
                               />
                               <div className="om-op-desc-field__actions">
@@ -861,10 +861,22 @@ export default function OarcPreviewDialog({
                                   rounded
                                   text
                                   size="small"
-                                  disabled={!canEditStandards && !hasInstruction}
-                                  tooltip={hasInstruction ? "Edit instruction" : "Add instruction"}
+                                  disabled={!canStructureOps && !hasInstruction}
+                                  tooltip={
+                                    canStructureOps
+                                      ? hasInstruction
+                                        ? "Edit instruction"
+                                        : "Add instruction"
+                                      : "View instruction"
+                                  }
                                   tooltipOptions={{ position: "top" }}
-                                  aria-label={hasInstruction ? "Edit instruction" : "Add instruction"}
+                                  aria-label={
+                                    canStructureOps
+                                      ? hasInstruction
+                                        ? "Edit instruction"
+                                        : "Add instruction"
+                                      : "View instruction"
+                                  }
                                   onClick={(event) => {
                                     event.preventDefault();
                                     event.stopPropagation();
@@ -880,33 +892,33 @@ export default function OarcPreviewDialog({
                         }}
                       />
                       <Column
-                        header="Setup Time"
-                        style={{ minWidth: "8rem", width: "8rem" }}
+                        header="Setup Time (in hrs)"
+                        style={{ minWidth: "9rem", width: "9rem" }}
                         body={(row) => (
                           <InputNumber
                             value={row["Setup Time"]}
                             min={0}
                             mode="decimal"
                             minFractionDigits={0}
-                            maxFractionDigits={2}
+                            maxFractionDigits={3}
                             className="w-full"
-                            disabled={!canEditStandards}
+                            disabled={!canEditTimes}
                             onValueChange={(e) => updateOp(row._rowId, "Setup Time", e.value)}
                           />
                         )}
                       />
                       <Column
-                        header="Per Piece Time"
-                        style={{ minWidth: "9rem", width: "9rem" }}
+                        header="Per Piece Time (in hrs)"
+                        style={{ minWidth: "10rem", width: "10rem" }}
                         body={(row) => (
                           <InputNumber
                             value={row["Per Pc Time"]}
                             min={0}
                             mode="decimal"
                             minFractionDigits={0}
-                            maxFractionDigits={2}
+                            maxFractionDigits={3}
                             className="w-full"
-                            disabled={!canEditStandards}
+                            disabled={!canEditTimes}
                             onValueChange={(e) => updateOp(row._rowId, "Per Pc Time", e.value)}
                           />
                         )}
@@ -966,7 +978,7 @@ export default function OarcPreviewDialog({
                         )}
                       />
                       ) : null}
-                      {canEditStandards ? (
+                      {canStructureOps ? (
                       <Column
                         header="Actions"
                         style={{ minWidth: "6rem", width: "6rem" }}
@@ -979,7 +991,6 @@ export default function OarcPreviewDialog({
                             size="small"
                             onClick={() => {
                               deleteOp(row._rowId);
-                              if (isIedMode) setDirty(true);
                             }}
                           />
                         )}
@@ -1310,13 +1321,17 @@ export default function OarcPreviewDialog({
               size="small"
               onClick={() => setInstr(emptyInstr())}
             />
-            <Button type="button" label="Save" icon="pi pi-check" size="small" onClick={saveInstruction} />
+            {canStructureOps ? (
+              <Button type="button" label="Save" icon="pi pi-check" size="small" onClick={saveInstruction} />
+            ) : null}
           </div>
         }
       >
         <p className="oarc-instr-dialog__hint">
-          Operator instructions (printed on OARC). Click the text to edit. Item names from the Parts
-          List appear in preview only — they are not written into the saved text.
+          Operator instructions (printed on OARC).
+          {canStructureOps
+            ? " Click the text to edit. Item names from the Parts List appear in preview only — they are not written into the saved text."
+            : " Read-only for IED — only setup and per-piece time can be changed."}
         </p>
         <InstructionClickEdit
           value={instr.draft}
@@ -1324,7 +1339,7 @@ export default function OarcPreviewDialog({
           itemLookup={itemLookup}
           resetKey={`${instr.visible}:${instr.rowId || ""}`}
           rows={6}
-          disabled={!canEditStandards}
+          disabled={!canStructureOps}
         />
         {(instr.itemsUsed?.length > 0 || instr.reference || instr.torqueSpec) && (
           <div className="oarc-instr-dialog__meta" aria-label="Reference only — not printed">

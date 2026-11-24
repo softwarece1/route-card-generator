@@ -35,7 +35,7 @@ function readSidebarCollapsed() {
 
 function roleLabel(role) {
   if (role === "admin") return "Admin";
-  if (role === "dept_head") return "Dept head";
+  if (role === "sbu_head") return "SBU head";
   if (role === "ied") return "IED";
   return "Engineer";
 }
@@ -94,7 +94,7 @@ function navItemsForRole(role) {
       id: "system",
     });
   }
-  if (role === "admin" || role === "dept_head") {
+  if (role === "admin" || role === "sbu_head") {
     base.push({
       to: "/users",
       end: false,
@@ -110,7 +110,7 @@ function navItemsForRole(role) {
       id: "workcenters",
     });
   }
-  // Engineers + admin / dept_head: browse / view / download; manage is page-gated
+  // Engineers + admin / sbu_head: browse / view / download; manage is page-gated
   base.push({
     to: "/reference-sheets",
     end: false,
@@ -300,7 +300,7 @@ export default function AppShell({ active = "generator", children }) {
             <span className="rca-chip">
               <i className="pi pi-id-card" />
               {roleLabel(user?.role)}
-              {user?.dept ? ` · ${user.dept}` : ""}
+              {user?.sbu ? ` · ${user.sbu}` : ""}
             </span>
             <span className="rca-chip">
               <i className="pi pi-user" />

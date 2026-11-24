@@ -52,12 +52,12 @@ def connect_to_db():
             raise
     _db_ready = True
 
-    # Idempotent plant WC import + dept_head/IED users (needs mapping)
+    # Idempotent plant WC import + sbu_head/IED users (needs mapping)
     try:
         from app.route_card.work_centers import (
             deactivate_dummy_work_centers,
             import_work_centres_from_csv,
-            seed_dept_head_and_ied_users,
+            seed_sbu_head_and_ied_users,
         )
 
         dummy_res = deactivate_dummy_work_centers()
@@ -70,9 +70,9 @@ def connect_to_db():
             f"imported work centres from CSV: created={wc_res.get('created')} "
             f"updated={wc_res.get('updated')} skipped={wc_res.get('skipped')}"
         )
-        user_res = seed_dept_head_and_ied_users()
+        user_res = seed_sbu_head_and_ied_users()
         print(
-            f"seeded dept_head/IED users: created={user_res.get('created')} "
+            f"seeded sbu_head/IED users: created={user_res.get('created')} "
             f"skipped={user_res.get('skipped')} "
             f"reset={user_res.get('reset')}"
         )

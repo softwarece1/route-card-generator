@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # Server exposes GET /v1/models and POST /v1/chat/completions. Context window is 8192.
     OLLAMA_BASE_URL: str = "http://172.195.132.152:8010"
     OLLAMA_VLM_MODEL: str = "google/gemma-4-E4B-it"
-    OLLAMA_TIMEOUT_SEC: float = 900.0
+    OLLAMA_TIMEOUT_SEC: float = 1800.0
     OLLAMA_VLM_MAX_TOKENS: int = 2048
     OLLAMA_VLM_DPI: int = 160
     OLLAMA_VLM_MAX_PAGES: int = 6

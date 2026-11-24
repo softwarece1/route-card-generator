@@ -45,37 +45,41 @@ def main() -> int:
     from pony.orm import db_session, select
 
     from app.database.connection import connect_to_db
-    from app.route_card.models import RcDepartment, RcMachine, RcPlant, RcWorkCenter
+    from app.route_card.models import RcSbu, RcMachine, RcWorkCenter
 
     connect_to_db()
 
     with db_session:
-        plants = [
-            {
-                "code": p.code,
-                "name": p.name,
-                "description": p.description or "",
-                "isActive": bool(p.is_active),
-                "sortOrder": int(p.sort_order or 0),
-                "workCenterSyncedAt": _iso(p.work_center_synced_at),
-            }
-            for p in select(p for p in RcPlant)[:]
-        ]
-        departments = [
-            {
-                "code": d.code,
-                "name": d.name,
-                "plantId": (d.plant_id or "").strip(),
-                "isActive": bool(d.is_active),
-                "sortOrder": int(d.sort_order or 0),
-            }
-            for d in select(d for d in RcDepartment)[:]
-        ]
+        # Distinct plant codes derived from SBU.plant_id (no plants table)
+        plant_map: dict[str, dict] = {}
+        sbus = []
+        for d in select(d for d in RcSbu)[:]:
+            sbus.append(
+                {
+                    "code": d.code,
+                    "name": d.name,
+                    "plantId": (d.plant_id or "").strip(),
+                    "isActive": bool(d.is_active),
+                    "sortOrder": int(d.sort_order or 0),
+                    "workCenterSyncedAt": _iso(d.work_center_synced_at),
+                }
+            )
+            plant = (d.plant_id or "").strip()
+            if plant and plant not in plant_map:
+                plant_map[plant] = {
+                    "code": plant,
+                    "name": plant,
+                    "description": "",
+                    "isActive": True,
+                    "sortOrder": int(d.sort_order or 0),
+                    "workCenterSyncedAt": _iso(d.work_center_synced_at),
+                }
+        plants = list(plant_map.values())
         work_centers = []
         for w in select(w for w in RcWorkCenter)[:]:
             work_centers.append(
                 {
-                    "dept": (w.dept or "").strip(),
+                    "sbu": (w.sbu or "").strip(),
                     "code": w.code,
                     "name": w.name,
                     "mode": w.mode or "hybrid",
@@ -99,7 +103,7 @@ def main() -> int:
                     "wcPlant": (wc.plant or "").strip() if wc else (m.plant or "").strip(),
                     "wcCode": (wc.code if wc else "") or "",
                     "wcIsShared": bool(wc.is_shared) if wc else False,
-                    "dept": (m.dept or "").strip(),
+                    "sbu": (m.sbu or "").strip(),
                     "code": (m.code or "").strip(),
                     "sapCode": (m.sap_code or "").strip(),
                     "name": m.name,
@@ -117,7 +121,8 @@ def main() -> int:
         "version": 1,
         "note": "Master data only — safe to import without touching extractions.",
         "plants": plants,
-        "departments": departments,
+        "sbus": sbus,
+        "departments": sbus,  # compat alias
         "workCenters": work_centers,
         "machines": machines,
     }
@@ -129,7 +134,7 @@ def main() -> int:
     out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(
         f"Wrote {out}\n"
-        f"  plants={len(plants)} departments={len(departments)} "
+        f"  plants={len(plants)} sbus={len(sbus)} "
         f"workCenters={len(work_centers)} machines={len(machines)}"
     )
     return 0

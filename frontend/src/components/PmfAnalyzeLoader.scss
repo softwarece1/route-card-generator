@@ -1,4 +1,4 @@
-/* OARC analyze loader — 3 docs RTL under fixed magnifier (CSS + SVG, themed) */
+/* OARC analyze loader — 3 docs RTL; glass scans only while center doc is enlarged */
 
 .pmf-analyze-loader-overlay {
   position: fixed;
@@ -21,11 +21,11 @@
 .pmf-analyze-loader {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 0.95rem;
+  align-items: stretch;
+  gap: 0;
   text-align: center;
-  width: min(23rem, 94vw);
-  padding: 1.5rem 1.25rem 1.15rem;
+  width: min(28rem, 94vw);
+  padding: 1.25rem 1.5rem 1.25rem;
   border: 1px solid var(--pmf-border);
   border-radius: 0.75rem;
   background: var(--pmf-surface);
@@ -34,24 +34,26 @@
 }
 
 .pmf-analyze-loader__stage {
-  --pmf-loader-dur: 3.6s;
+  /* Shared timeline so glass scan windows line up with center dwells */
+  --pmf-loader-dur: 4.2s;
   position: relative;
   width: 14rem;
-  height: 6.5rem;
+  height: 7rem;
+  margin: 0 auto 0.85rem;
   overflow: hidden;
-  /* Soft edge fade for side docs */
+  /* Mild edge fade — side stations stay inside the solid band */
   -webkit-mask-image: linear-gradient(
     90deg,
     transparent 0%,
-    #000 12%,
-    #000 88%,
+    #000 5%,
+    #000 95%,
     transparent 100%
   );
   mask-image: linear-gradient(
     90deg,
     transparent 0%,
-    #000 12%,
-    #000 88%,
+    #000 5%,
+    #000 95%,
     transparent 100%
   );
 }
@@ -111,16 +113,20 @@
   stroke-width: 2;
 }
 
-/* Stationary magnifier — always above docs, no motion */
+/*
+  Same duration as docs. Holds still during handoffs; zig-zags only while a
+  doc is dwelling enlarged at center (peaks at ~16.7% / 50% / 83.3%).
+*/
 .pmf-analyze-loader__glass {
   position: absolute;
   left: 50%;
   top: 48%;
-  width: 4.75rem;
-  height: 4.75rem;
-  transform: translate(-50%, -50%);
+  width: 3.75rem;
+  height: 3.75rem;
   pointer-events: none;
   z-index: 10;
+  will-change: transform;
+  animation: pmf-analyze-glass-scan var(--pmf-loader-dur) linear infinite;
 }
 
 .pmf-analyze-loader__glass-svg {
@@ -145,83 +151,269 @@
 }
 
 .pmf-analyze-loader__caption {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 600;
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+  font-weight: 700;
   color: var(--pmf-text);
   letter-spacing: 0.01em;
+  line-height: 1.3;
+}
+
+.pmf-analyze-loader__status {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-height: 2.25rem;
+  margin: 0 0 0.9rem;
+  padding: 0.5rem 0.85rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pmf-accent-soft) 70%, var(--pmf-surface));
+  border: 1px solid color-mix(in srgb, var(--pmf-accent-border) 55%, transparent);
+  box-sizing: border-box;
+}
+
+.pmf-analyze-loader__spinner {
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--pmf-accent-mid) 35%, transparent);
+  border-top-color: var(--pmf-accent, var(--pmf-accent-mid));
+  animation: pmf-analyze-spin 0.75s linear infinite;
+}
+
+.pmf-analyze-loader__status-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--pmf-text);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pmf-analyze-loader__status-detail {
+  font-weight: 400;
+  color: var(--pmf-text-muted);
+}
+
+.pmf-analyze-loader__footer {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.pmf-analyze-loader__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+}
+
+.pmf-analyze-loader__progress-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.05rem;
+}
+
+.pmf-analyze-loader__progress-label {
+  font-size: 0.75rem;
+  color: var(--pmf-text-muted);
+}
+
+.pmf-analyze-loader__progress-pct {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--pmf-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pmf-analyze-loader__progress-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.pmf-analyze-loader__progress-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pmf-border) 80%, var(--pmf-surface));
+  overflow: hidden;
+}
+
+.pmf-analyze-loader__progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--pmf-accent, #3b82f6);
+  transition: width 0.35s ease;
 }
 
 .pmf-analyze-loader__stop {
-  margin-top: 0.15rem;
+  flex: 0 0 auto;
+  height: 2.25rem;
+  margin: 0;
+}
+
+@keyframes pmf-analyze-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /*
-  Path: enter from right → peak scale under center glass → exit left.
-  Opacity fades at edges; scale eases through the middle for smooth handoff.
+  RTL travel with holds at right / enlarged-center / left.
+  Center scale ~1.62 so the middle doc clearly dominates (mockup-like).
 */
 @keyframes pmf-analyze-doc-travel {
   0% {
-    transform: translate3d(13.5rem, 0, 0) scale(0.88);
+    transform: translate3d(12.2rem, 0, 0) scale(0.82);
     opacity: 0;
     z-index: 0;
   }
-  8% {
-    opacity: 0.45;
+  6% {
+    transform: translate3d(9.35rem, 0, 0) scale(0.86);
+    opacity: 0.7;
+    z-index: 1;
   }
+  /* Right station — smaller side doc */
   28% {
-    transform: translate3d(8.5rem, 0, 0) scale(0.95);
-    opacity: 0.55;
+    transform: translate3d(9.35rem, 0, 0) scale(0.86);
+    opacity: 0.7;
     z-index: 1;
   }
-  42% {
-    transform: translate3d(6.35rem, 0, 0) scale(1.08);
-    opacity: 0.9;
-    z-index: 2;
-  }
-  50% {
-    /* Center of 14rem stage minus half doc width (~1.25rem) */
-    transform: translate3d(5.75rem, 0, 0) scale(1.28);
+  /* Snap into center — enlarge */
+  36% {
+    transform: translate3d(5.75rem, 0, 0) scale(1.5);
     opacity: 1;
-    z-index: 2;
+    z-index: 3;
   }
-  58% {
-    transform: translate3d(5.15rem, 0, 0) scale(1.08);
-    opacity: 0.9;
-    z-index: 2;
+  /* Center dwell — clearly enlarged under glass */
+  40% {
+    transform: translate3d(5.75rem, 0, 0) scale(1.62);
+    opacity: 1;
+    z-index: 3;
   }
-  72% {
-    transform: translate3d(3rem, 0, 0) scale(0.95);
-    opacity: 0.55;
+  60% {
+    transform: translate3d(5.75rem, 0, 0) scale(1.62);
+    opacity: 1;
+    z-index: 3;
+  }
+  /* Leave to left station */
+  68% {
+    transform: translate3d(1.75rem, 0, 0) scale(0.86);
+    opacity: 0.7;
     z-index: 1;
   }
-  92% {
-    opacity: 0.45;
+  /* Left station — smaller side doc */
+  90% {
+    transform: translate3d(1.75rem, 0, 0) scale(0.86);
+    opacity: 0.7;
+    z-index: 1;
   }
   100% {
-    transform: translate3d(-2.25rem, 0, 0) scale(0.88);
+    transform: translate3d(-1.1rem, 0, 0) scale(0.82);
     opacity: 0;
     z-index: 0;
+  }
+}
+
+/*
+  Shared timeline with docs. Scan only during center dwells of the three
+  staggered docs (~16.7% / 50% / 83.3%); hold still on handoffs so the glass
+  never scans the empty gap between pages.
+*/
+@keyframes pmf-analyze-glass-scan {
+  0%,
+  8% {
+    transform: translate(-50%, -50%);
+  }
+
+  /* Burst 1 — doc at center (~16.7%) */
+  10% {
+    transform: translate(-50%, -50%) translate(0.55rem, -0.7rem); /* TR */
+  }
+  16% {
+    transform: translate(-50%, -50%) translate(-0.7rem, 0.05rem); /* ML */
+  }
+  22% {
+    transform: translate(-50%, -50%) translate(0.55rem, 0.7rem); /* BR */
+  }
+  26%,
+  41% {
+    transform: translate(-50%, -50%);
+  }
+
+  /* Burst 2 — doc at center (~50%) */
+  43% {
+    transform: translate(-50%, -50%) translate(0.55rem, -0.7rem);
+  }
+  49% {
+    transform: translate(-50%, -50%) translate(-0.7rem, 0.05rem);
+  }
+  55% {
+    transform: translate(-50%, -50%) translate(0.55rem, 0.7rem);
+  }
+  59%,
+  74% {
+    transform: translate(-50%, -50%);
+  }
+
+  /* Burst 3 — doc at center (~83.3%) */
+  76% {
+    transform: translate(-50%, -50%) translate(0.55rem, -0.7rem);
+  }
+  82% {
+    transform: translate(-50%, -50%) translate(-0.7rem, 0.05rem);
+  }
+  88% {
+    transform: translate(-50%, -50%) translate(0.55rem, 0.7rem);
+  }
+  92%,
+  100% {
+    transform: translate(-50%, -50%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pmf-analyze-loader__doc {
     animation: none !important;
-    opacity: 0.45;
-    transform: translate3d(5.75rem, 0, 0) scale(0.95);
+    opacity: 0.7;
+    transform: translate3d(5.75rem, 0, 0) scale(0.9);
   }
 
   .pmf-analyze-loader__doc--2 {
     opacity: 1;
-    transform: translate3d(5.75rem, 0, 0) scale(1.28);
+    transform: translate3d(5.75rem, 0, 0) scale(1.62);
   }
 
   .pmf-analyze-loader__doc--1 {
-    transform: translate3d(1.75rem, 0, 0) scale(0.9);
+    transform: translate3d(1.75rem, 0, 0) scale(0.86);
   }
 
   .pmf-analyze-loader__doc--3 {
-    transform: translate3d(9.5rem, 0, 0) scale(0.9);
+    transform: translate3d(9.35rem, 0, 0) scale(0.86);
+  }
+
+  .pmf-analyze-loader__glass {
+    animation: none !important;
+    transform: translate(-50%, -50%);
+  }
+
+  .pmf-analyze-loader__spinner {
+    animation: none !important;
+    border-top-color: color-mix(in srgb, var(--pmf-accent-mid) 35%, transparent);
+  }
+
+  .pmf-analyze-loader__progress-fill {
+    transition: none;
   }
 }

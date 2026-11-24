@@ -13,6 +13,7 @@ import { ProgressBar } from "primereact/progressbar";
 import { TabPanel, TabView } from "primereact/tabview";
 import { Tag } from "primereact/tag";
 import { Dropdown } from "primereact/dropdown";
+import { InputNumber } from "primereact/inputnumber";
 import { toast } from "@/lib/toast";
 import { getVlmPageIndexes } from "@/lib/vlmPrefs";
 import { isExcelFilename, triggerBlobDownload } from "@/lib/excelPreview";
@@ -22,6 +23,7 @@ import {
   approveRouteCard,
   completeIedReview,
   cancelAnalyzeSession,
+  openAnalyzeProgressStream,
   copyJsonToClipboard,
   createSession,
   deleteSessionDocument,
@@ -173,6 +175,60 @@ const ANALYSIS_LABELS = {
   pl: "Parts List",
   route: "Route generation",
 };
+
+/** Map live analyze progress into the Analysis-tab task bars. */
+function taskProgressFromAnalyzeStatus(status, hasWl, hasPl) {
+  const pct = Math.max(0, Math.min(100, Number(status?.progress) || 0));
+  const msg = String(status?.message || "").toLowerCase();
+  const next = {
+    ocr: 0,
+    notes: 0,
+    bom: 0,
+    torque: 0,
+    dims: 0,
+    mind: 0,
+    wl: hasWl ? 0 : undefined,
+    pl: hasPl ? 0 : undefined,
+    route: 0,
+  };
+  if (hasWl) {
+    if (pct >= 14 || msg.includes("wire")) next.wl = pct >= 14 ? 100 : Math.max(20, pct * 6);
+    if (pct >= 14) next.wl = 100;
+  }
+  if (hasPl) {
+    if (pct >= 18 || msg.includes("parts list") || msg.includes("pl items")) {
+      next.pl = pct >= 28 ? 100 : Math.max(25, Math.round(((pct - 14) / 14) * 100));
+    }
+    if (pct >= 28) next.pl = 100;
+  }
+  if (pct >= 30 || msg.includes("scanning ga") || msg.includes("drawing layout")) {
+    next.ocr = Math.min(100, Math.round(((pct - 28) / 20) * 100));
+  }
+  if (pct >= 36 || msg.includes("notes")) {
+    next.notes = Math.min(100, Math.round(((pct - 34) / 20) * 100));
+  }
+  if (pct >= 40 || msg.includes("quality") || msg.includes("inspection")) {
+    next.torque = Math.min(100, Math.round(((pct - 38) / 15) * 100));
+    next.dims = Math.min(100, Math.round(((pct - 38) / 18) * 100));
+  }
+  if (pct >= 50 || msg.includes("balloon") || msg.includes("drawing mind") || msg.includes("layout")) {
+    next.mind = Math.min(100, Math.round(((pct - 48) / 25) * 100));
+    next.bom = Math.min(100, Math.round(((pct - 55) / 25) * 100));
+  }
+  if (pct >= 78 || msg.includes("cross-checking") || msg.includes("linked to ga")) {
+    next.bom = Math.max(next.bom, Math.min(100, Math.round(((pct - 74) / 10) * 100)));
+  }
+  if (pct >= 85 || msg.includes("route") || msg.includes("finishing") || msg.includes("complete")) {
+    next.route = Math.min(100, Math.round(((pct - 84) / 16) * 100));
+  }
+  if (pct >= 98) {
+    Object.keys(next).forEach((k) => {
+      if (next[k] != null) next[k] = 100;
+    });
+  }
+  // Drop undefined keys (no WL/PL)
+  return Object.fromEntries(Object.entries(next).filter(([, v]) => v != null));
+}
 
 function formatBytes(bytes) {
   if (!bytes) return "—";
@@ -372,6 +428,11 @@ export default function RouteCardGenerationAlt() {
   const [zoom, setZoom] = useState(1);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeStatus, setAnalyzeStatus] = useState({
+    message: "Please wait — preparing documents…",
+    detail: "",
+    progress: 0,
+  });
   const [analyzed, setAnalyzed] = useState(false);
   const [taskProgress, setTaskProgress] = useState({});
   const [drawingInfo, setDrawingInfo] = useState({});
@@ -450,6 +511,33 @@ export default function RouteCardGenerationAlt() {
   useEffect(() => {
     analyzingRef.current = analyzing;
   }, [analyzing]);
+
+  const docsRef = useRef(docs);
+  useEffect(() => {
+    docsRef.current = docs;
+  }, [docs]);
+
+  useEffect(() => {
+    if (!analyzing || !sessionId) return undefined;
+    const close = openAnalyzeProgressStream(sessionId, {
+      onProgress: (snap) => {
+        if (!analyzingRef.current) return;
+        if (!snap?.message && snap?.progress == null && !snap?.detail) return;
+        setAnalyzeStatus({
+          message: snap.message || "Analyzing…",
+          detail: snap.detail || "",
+          progress: Number(snap.progress) || 0,
+        });
+        const d = docsRef.current || {};
+        setTaskProgress(
+          taskProgressFromAnalyzeStatus(snap, Boolean(d.wirelist), Boolean(d.partslist)),
+        );
+      },
+    });
+    return () => {
+      close();
+    };
+  }, [analyzing, sessionId]);
 
   const hasGa = Boolean(docs.drawing || (docs.drawings && docs.drawings.length));
   const canAnalyze = Boolean(hasGa && docs.partslist && drawingId && !analyzing && !uploadingRole);
@@ -783,6 +871,7 @@ export default function RouteCardGenerationAlt() {
     setSessionId(null);
     setZoom(1);
     setAnalyzing(false);
+    setAnalyzeStatus({ message: "", detail: "", progress: 0 });
     setAnalyzed(false);
     setTaskProgress({});
     setDrawingInfo({});
@@ -896,6 +985,7 @@ export default function RouteCardGenerationAlt() {
       }
       setAnalyzed(false);
       setAnalyzing(false);
+      setAnalyzeStatus({ message: "", detail: "", progress: 0 });
       setTaskProgress({});
       setResultTab(0);
       setReviewStatus("ready");
@@ -1045,6 +1135,7 @@ export default function RouteCardGenerationAlt() {
       await cancelAnalyzeSession(sid);
     }
     setAnalyzing(false);
+    setAnalyzeStatus({ message: "", detail: "", progress: 0 });
     setTaskProgress({});
     if (!silent) toast.info("Analysis stopped.");
   }, []);
@@ -1062,16 +1153,21 @@ export default function RouteCardGenerationAlt() {
     setAnalyzing(true);
     setAnalyzed(false);
     setResultTab(0);
+    setAnalyzeStatus({
+      message: "Please wait — preparing documents…",
+      detail: "",
+      progress: 0,
+    });
     setTaskProgress({
-      ocr: 20,
-      notes: 10,
-      bom: 10,
-      torque: 10,
-      dims: 10,
-      mind: 10,
-      wl: docs.wirelist ? 15 : 0,
-      pl: docs.partslist ? 15 : 0,
-      route: 5,
+      ocr: 5,
+      notes: 0,
+      bom: 0,
+      torque: 0,
+      dims: 0,
+      mind: 0,
+      ...(docs.wirelist ? { wl: 5 } : {}),
+      ...(docs.partslist ? { pl: 5 } : {}),
+      route: 0,
     });
     try {
       const vlmPrefs = getVlmPageIndexes();
@@ -1086,12 +1182,18 @@ export default function RouteCardGenerationAlt() {
         storeAdminPlant(plant);
       }
       applyPayload(payload);
+      setAnalyzeStatus({
+        message: "Analysis complete",
+        detail: "",
+        progress: 100,
+      });
       setAnalyzing(false);
       setAnalyzed(true);
       setResultTab(1);
       toast.success("OARC generated. Review the results in the tabs below.");
     } catch (error) {
       setAnalyzing(false);
+      setAnalyzeStatus({ message: "", detail: "", progress: 0 });
       if (isCanceledError(error) || ac.signal.aborted) {
         return;
       }
@@ -1486,7 +1588,7 @@ export default function RouteCardGenerationAlt() {
   const userRole = currentUser?.role;
   const isIedUser = userRole === "ied";
   const isAdminUser = userRole === "admin";
-  const isDeptHeadUser = userRole === "dept_head";
+  const isSbuHeadUser = userRole === "sbu_head";
   const canShareToIed =
     Boolean(routeCardId) &&
     (reviewStatus === "draft" || reviewStatus === "ied_complete") &&
@@ -1498,7 +1600,7 @@ export default function RouteCardGenerationAlt() {
   const canRecallIed =
     Boolean(routeCardId) &&
     reviewStatus === "ied_review" &&
-    (isAdminUser || isDeptHeadUser || !isIedUser);
+    (isAdminUser || isSbuHeadUser || !isIedUser);
   const canApprove =
     Boolean(routeCardId) &&
     reviewStatus === "ied_complete" &&
@@ -3524,7 +3626,7 @@ export default function RouteCardGenerationAlt() {
                 profile="text"
                 id="rca-operation"
                 value={editRow.operation ?? ""}
-                disabled={opsReadOnly}
+                disabled={opsReadOnly || iedFieldsOnly}
                 onChange={(e) => setEditRow((r) => ({ ...r, operation: e.target.value }))}
               />
             </div>
@@ -3549,7 +3651,7 @@ export default function RouteCardGenerationAlt() {
                   filter={wcDropdownOptions.length > 8}
                   filterPlaceholder="Search…"
                   scrollHeight="12rem"
-                  disabled={opsReadOnly}
+                  disabled={opsReadOnly || iedFieldsOnly}
                   onChange={(e) => {
                     const id = e.value != null && e.value !== "" ? Number(e.value) : null;
                     const wc = (wcCatalog || []).find((w) => Number(w.id) === id);
@@ -3569,7 +3671,7 @@ export default function RouteCardGenerationAlt() {
                   profile="text"
                   id="rca-workCentre"
                   value={editRow.workCentre ?? ""}
-                  disabled={opsReadOnly}
+                  disabled={opsReadOnly || iedFieldsOnly}
                   onChange={(e) =>
                     setEditRow((r) => ({
                       ...r,
@@ -3603,7 +3705,7 @@ export default function RouteCardGenerationAlt() {
                   placeholder="Select machine"
                   showClear
                   scrollHeight="10rem"
-                  disabled={opsReadOnly}
+                  disabled={opsReadOnly || iedFieldsOnly}
                   onChange={(e) => {
                     const id = e.value != null && e.value !== "" ? Number(e.value) : null;
                     const m = machineOptionsForEdit.find((o) => Number(o.value) === id)?.raw;
@@ -3620,7 +3722,7 @@ export default function RouteCardGenerationAlt() {
                   profile="text"
                   id="rca-machine"
                   value={editRow.machine ?? ""}
-                  disabled={opsReadOnly}
+                  disabled={opsReadOnly || iedFieldsOnly}
                   onChange={(e) =>
                     setEditRow((r) => ({
                       ...r,
@@ -3637,12 +3739,9 @@ export default function RouteCardGenerationAlt() {
               ["items", "Items"],
               ["torqueSpec", "Torque"],
               ["reference", "Reference"],
-              ["setup", "Setup (std)"],
-              ["time", "Per-piece time"],
               ["inspection", "Inspection"],
             ].map(([key, label]) => {
-              const iedKey = key === "setup" || key === "time";
-              const fieldDisabled = opsReadOnly || (iedFieldsOnly && !iedKey);
+              const fieldDisabled = opsReadOnly || iedFieldsOnly;
               return (
               <div className="field col-12 md:col-6" key={key}>
                 <label htmlFor={`rca-${key}`}>{label}</label>
@@ -3656,6 +3755,52 @@ export default function RouteCardGenerationAlt() {
               </div>
               );
             })}
+            <div className="field col-12 md:col-6">
+              <label htmlFor="rca-setup">Setup time (in hrs)</label>
+              <InputNumber
+                inputId="rca-setup"
+                value={
+                  editRow.setup === "" || editRow.setup == null
+                    ? null
+                    : Number(editRow.setup)
+                }
+                min={0}
+                mode="decimal"
+                minFractionDigits={0}
+                maxFractionDigits={3}
+                className="w-full"
+                disabled={opsReadOnly}
+                onValueChange={(e) =>
+                  setEditRow((r) => ({
+                    ...r,
+                    setup: e.value == null ? "" : String(e.value),
+                  }))
+                }
+              />
+            </div>
+            <div className="field col-12 md:col-6">
+              <label htmlFor="rca-time">Per-piece time (in hrs)</label>
+              <InputNumber
+                inputId="rca-time"
+                value={
+                  editRow.time === "" || editRow.time == null
+                    ? null
+                    : Number(editRow.time)
+                }
+                min={0}
+                mode="decimal"
+                minFractionDigits={0}
+                maxFractionDigits={3}
+                className="w-full"
+                disabled={opsReadOnly}
+                onValueChange={(e) =>
+                  setEditRow((r) => ({
+                    ...r,
+                    time: e.value == null ? "" : String(e.value),
+                  }))
+                }
+              />
+            </div>
             <div className="field col-12">
               <label htmlFor="rca-instructionText">Operation instruction</label>
               <SafeInputTextarea
@@ -3725,6 +3870,9 @@ export default function RouteCardGenerationAlt() {
 
       <PmfAnalyzeLoader
         visible={analyzing}
+        message={analyzeStatus.message || "Analyzing…"}
+        detail={analyzeStatus.detail || ""}
+        progress={analyzeStatus.progress || 0}
         onCancel={() => stopAnalysis()}
       />
     </AppShell>

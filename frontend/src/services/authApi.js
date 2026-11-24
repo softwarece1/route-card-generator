@@ -78,13 +78,13 @@ export function concurrentSessionFromError(err) {
   return null;
 }
 
-export async function signup({ empId, name, dept, password }) {
+export async function signup({ empId, name, sbu, dept, password }) {
   const { cipher, alg } = await encryptedCredsBody(empId, password);
   const safeName = sanitizeInput(name, 'personName').value;
-  const safeDept = sanitizeInput(dept, 'label').value;
+  const safeSbu = sanitizeInput(sbu || dept, 'label').value;
   const { data } = await http.post('/auth/signup', {
     name: safeName,
-    dept: safeDept,
+    sbu: safeSbu,
     cipher,
     alg,
   });
@@ -98,11 +98,14 @@ export async function fetchMe() {
   return data;
 }
 
-/** Department master for signup dropdown. */
-export async function fetchDepartments() {
-  const { data } = await http.get('/auth/departments');
+/** SBU master for signup dropdown. */
+export async function fetchSbus() {
+  const { data } = await http.get('/auth/sbus');
   return Array.isArray(data) ? data : [];
 }
+
+/** @deprecated use fetchSbus */
+export const fetchDepartments = fetchSbus;
 
 /**
  * Signup helper: whether empId is already registered.

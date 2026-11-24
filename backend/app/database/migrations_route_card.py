@@ -25,7 +25,7 @@ def run_migrations():
                 id SERIAL PRIMARY KEY,
                 emp_id VARCHAR(64) NOT NULL UNIQUE,
                 name VARCHAR(255) NOT NULL,
-                dept VARCHAR(128) NOT NULL DEFAULT '',
+                sbu VARCHAR(128) NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 role VARCHAR(32) NOT NULL DEFAULT 'engineer',
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -37,7 +37,7 @@ def run_migrations():
         cursor.execute(
             """
             ALTER TABLE route_card.users
-            ADD COLUMN IF NOT EXISTS dept VARCHAR(128) NOT NULL DEFAULT '';
+            ADD COLUMN IF NOT EXISTS sbu VARCHAR(128) NOT NULL DEFAULT '';
             """
         )
 
@@ -198,12 +198,14 @@ def run_migrations():
 
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS route_card.departments (
+            CREATE TABLE IF NOT EXISTS route_card.sbus (
                 id SERIAL PRIMARY KEY,
                 code VARCHAR(64) NOT NULL UNIQUE,
                 name VARCHAR(128) NOT NULL,
+                plant_id VARCHAR(32) NOT NULL DEFAULT '',
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 sort_order INTEGER NOT NULL DEFAULT 0,
+                work_center_synced_at TIMESTAMP WITHOUT TIME ZONE,
                 created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
             );
             """
@@ -213,7 +215,7 @@ def run_migrations():
             """
             CREATE TABLE IF NOT EXISTS route_card.operation_templates (
                 id SERIAL PRIMARY KEY,
-                dept VARCHAR(128) NOT NULL,
+                sbu VARCHAR(128) NOT NULL,
                 name VARCHAR(255) NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 placement VARCHAR(16) NOT NULL DEFAULT 'any',
@@ -226,10 +228,37 @@ def run_migrations():
             """
         )
 
+        # Early dept→sbu column renames so subsequent indexes use the new names
+        for table, old_col, new_col in [
+            ("users", "dept", "sbu"),
+            ("operation_templates", "dept", "sbu"),
+            ("few_shot_examples", "dept", "sbu"),
+            ("work_centers", "dept", "sbu"),
+            ("machines", "dept", "sbu"),
+        ]:
+            cursor.execute(
+                f"""
+                DO $$
+                BEGIN
+                  IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card' AND table_name = '{table}'
+                      AND column_name = '{old_col}'
+                  ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card' AND table_name = '{table}'
+                      AND column_name = '{new_col}'
+                  ) THEN
+                    ALTER TABLE route_card.{table} RENAME COLUMN {old_col} TO {new_col};
+                  END IF;
+                END $$;
+                """
+            )
+
         cursor.execute(
             """
-            CREATE INDEX IF NOT EXISTS ix_operation_templates_dept_active
-            ON route_card.operation_templates (dept, is_active);
+            CREATE INDEX IF NOT EXISTS ix_operation_templates_sbu_active
+            ON route_card.operation_templates (sbu, is_active);
             """
         )
 
@@ -271,7 +300,7 @@ def run_migrations():
         cursor.execute(
             """
             CREATE INDEX IF NOT EXISTS ix_operation_templates_copied_from
-            ON route_card.operation_templates (dept, copied_from_id)
+            ON route_card.operation_templates (sbu, copied_from_id)
             WHERE copied_from_id IS NOT NULL AND is_active = TRUE;
             """
         )
@@ -521,16 +550,11 @@ def run_migrations():
             """
         )
         # Legacy partial unique index keys on is_active; keep column in sync with revoked_at.
+        # Order matters: sync + dedupe BEFORE creating uq_auth_sessions_one_active_user.
         cursor.execute(
             """
             ALTER TABLE route_card.auth_sessions
             ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
-            """
-        )
-        cursor.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_sessions_one_active_user
-            ON route_card.auth_sessions ("user") WHERE is_active;
             """
         )
         cursor.execute(
@@ -540,7 +564,14 @@ def run_migrations():
             WHERE revoked_at IS NOT NULL AND is_active IS TRUE;
             """
         )
-        # Only one active row per user (legacy index). Ensure no duplicates before login.
+        cursor.execute(
+            """
+            UPDATE route_card.auth_sessions
+            SET is_active = TRUE
+            WHERE revoked_at IS NULL AND is_active IS FALSE;
+            """
+        )
+        # Only one active row per user. Collapse duplicates before unique index.
         cursor.execute(
             """
             WITH ranked AS (
@@ -550,7 +581,7 @@ def run_migrations():
                            ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST, id DESC
                        ) AS rn
                 FROM route_card.auth_sessions
-                WHERE is_active IS TRUE
+                WHERE is_active IS TRUE OR revoked_at IS NULL
             )
             UPDATE route_card.auth_sessions s
             SET is_active = FALSE,
@@ -559,8 +590,14 @@ def run_migrations():
             WHERE s.id = r.id AND r.rn > 1;
             """
         )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_sessions_one_active_user
+            ON route_card.auth_sessions ("user") WHERE is_active;
+            """
+        )
 
-        # Self-service signup approval (engineer → dept_head / admin)
+        # Self-service signup approval (engineer → sbu_head / admin)
         cursor.execute(
             """
             ALTER TABLE route_card.users
@@ -588,8 +625,8 @@ def run_migrations():
         )
         cursor.execute(
             """
-            CREATE INDEX IF NOT EXISTS ix_users_approval_status_dept
-            ON route_card.users (approval_status, dept);
+            CREATE INDEX IF NOT EXISTS ix_users_approval_status_sbu
+            ON route_card.users (approval_status, sbu);
             """
         )
 
@@ -610,9 +647,9 @@ def run_migrations():
 
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS route_card.dept_rules (
+            CREATE TABLE IF NOT EXISTS route_card.sbu_rules (
                 id SERIAL PRIMARY KEY,
-                dept VARCHAR(128) NOT NULL UNIQUE,
+                sbu VARCHAR(128) NOT NULL UNIQUE,
                 rules JSONB,
                 updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
                 updated_by VARCHAR(128)
@@ -624,7 +661,7 @@ def run_migrations():
             """
             CREATE TABLE IF NOT EXISTS route_card.few_shot_examples (
                 id SERIAL PRIMARY KEY,
-                dept VARCHAR(128) NOT NULL,
+                sbu VARCHAR(128) NOT NULL,
                 doc_type VARCHAR(32) NOT NULL DEFAULT 'drawing',
                 title VARCHAR(255) NOT NULL,
                 input_excerpt TEXT,
@@ -682,7 +719,7 @@ def run_migrations():
             """
             CREATE TABLE IF NOT EXISTS route_card.work_centers (
                 id SERIAL PRIMARY KEY,
-                dept VARCHAR(128) NOT NULL DEFAULT '',
+                sbu VARCHAR(128) NOT NULL DEFAULT '',
                 code VARCHAR(64) NOT NULL,
                 name VARCHAR(255) NOT NULL,
                 mode VARCHAR(32) NOT NULL DEFAULT 'hybrid',
@@ -717,8 +754,8 @@ def run_migrations():
         )
         cursor.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_work_centers_dept_code
-            ON route_card.work_centers (dept, code)
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_work_centers_sbu_code
+            ON route_card.work_centers (sbu, code)
             WHERE is_shared = FALSE AND is_active = TRUE
               AND COALESCE(plant, '') = '';
             """
@@ -733,7 +770,7 @@ def run_migrations():
         cursor.execute(
             """
             ALTER TABLE route_card.machines
-            ADD COLUMN IF NOT EXISTS dept VARCHAR(128) NOT NULL DEFAULT '';
+            ADD COLUMN IF NOT EXISTS sbu VARCHAR(128) NOT NULL DEFAULT '';
             """
         )
         cursor.execute(
@@ -843,7 +880,7 @@ def run_migrations():
             """
         )
 
-        # Reporting officer (engineer → dept_head)
+        # Reporting officer (engineer → sbu_head)
         cursor.execute(
             """
             ALTER TABLE route_card.users
@@ -860,77 +897,13 @@ def run_migrations():
 
         print("route_card migrations applied")
 
-        # plant_id on departments (SAP-style WERKS for WC/machine seed)
-        cursor.execute(
-            """
-            ALTER TABLE route_card.departments
-            ADD COLUMN IF NOT EXISTS plant_id VARCHAR(32) NOT NULL DEFAULT '';
-            """
-        )
-
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS route_card.plants (
-                id SERIAL PRIMARY KEY,
-                code VARCHAR(32) NOT NULL UNIQUE,
-                name VARCHAR(128) NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
-            );
-            """
-        )
-
-        cursor.execute(
-            """
-            ALTER TABLE route_card.plants
-            ADD COLUMN IF NOT EXISTS work_center_synced_at
-                TIMESTAMP WITHOUT TIME ZONE NULL;
-            """
-        )
-
-        # Real SAP plant / WERKS codes from end-user work-centres list
-        sap_plant_codes = [
-            "1110", "1111", "1114", "1115", "1120", "1130", "1131", "1132",
-            "1140", "1141", "1142", "1143", "1150", "1151", "1152", "1153",
-            "1154", "1155", "1156", "1157", "1160", "1161", "1170", "1171",
-            "1172", "1173", "1174", "1175", "1176", "1178", "1180", "1181",
-            "1182", "1183", "1184", "1186", "1190", "1191", "1210", "1310",
-            "1320", "1330", "1340", "1350", "1360", "1410", "1411", "1510",
-            "1610", "1710",
-        ]
+        # SBU plant_id (SAP WERKS) — seed runs after rename block so target is always sbus
         dummy_plant_codes = [
             "1100", "1200", "1300", "1400", "1500", "1600", "1700", "1800",
             "1900", "2000", "2100", "2200", "2300", "2400", "2500", "2600",
             "2700", "2800", "2900", "3000",
         ]
-
-        for idx, plant_code in enumerate(sap_plant_codes, start=1):
-            cursor.execute(
-                """
-                INSERT INTO route_card.plants (code, name, description, is_active, sort_order)
-                VALUES (%s, %s, %s, TRUE, %s)
-                ON CONFLICT (code) DO UPDATE
-                SET is_active = TRUE,
-                    sort_order = EXCLUDED.sort_order;
-                """,
-                (plant_code, plant_code, "", idx * 10),
-            )
-
-        # Remove legacy dummy SBU plant codes (1100–3000)
-        cursor.execute(
-            """
-            DELETE FROM route_card.plants
-            WHERE code = ANY(%s);
-            """,
-            (dummy_plant_codes,),
-        )
-        print("upserted SAP route_card.plants master; removed dummy plant codes")
-
-        # Seed / upsert BEL SBU master (safe to re-run; BG excluded)
-        # plant_id left blank until SBU → plant mapping is provided
-        bel_departments = [
+        bel_sbus = [
             ("MR", "MR", 10),
             ("MS", "MS", 20),
             ("ARMS_AMMO", "Arms & Ammunition", 30),
@@ -952,39 +925,6 @@ def run_migrations():
             ("CSG", "CSG", 190),
             ("CUSTOMER", "Customer", 200),
         ]
-        bel_codes = [c for c, _, _ in bel_departments]
-        for code, name, sort_order in bel_departments:
-            cursor.execute(
-                """
-                INSERT INTO route_card.departments (code, name, plant_id, is_active, sort_order)
-                VALUES (%s, %s, '', TRUE, %s)
-                ON CONFLICT (code) DO UPDATE
-                SET name = EXCLUDED.name,
-                    is_active = TRUE,
-                    sort_order = EXCLUDED.sort_order;
-                """,
-                (code, name, sort_order),
-            )
-        # Clear dummy plant codes from SBUs (do not invent replacements)
-        cursor.execute(
-            """
-            UPDATE route_card.departments
-            SET plant_id = ''
-            WHERE plant_id = ANY(%s);
-            """,
-            (dummy_plant_codes,),
-        )
-        # Hide any previously seeded non-BEL rows
-        cursor.execute(
-            """
-            UPDATE route_card.departments
-            SET is_active = FALSE
-            WHERE code <> ALL(%s);
-            """,
-            (bel_codes,),
-        )
-        print("upserted BEL route_card.departments (SBU) master; cleared dummy plant_id")
-
         # Admin plant override for queued analyze jobs (WC linking)
         cursor.execute(
             """
@@ -1104,6 +1044,235 @@ def run_migrations():
             """
         )
 
+        # --- dept → SBU rename; drop plants; stub departments under SBU ---
+        cursor.execute(
+            """
+            DO $$
+            BEGIN
+              -- Rename legacy SBU master departments → sbus
+              IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'departments'
+              ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'sbus'
+              ) THEN
+                ALTER TABLE route_card.departments RENAME TO sbus;
+              END IF;
+
+              -- Leftover legacy departments (code/name master, no sbu FK) while sbus already exists
+              IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'departments'
+              ) AND EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'sbus'
+              ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'route_card' AND table_name = 'departments'
+                  AND column_name = 'sbu'
+                  AND data_type IN ('integer', 'bigint')
+              ) THEN
+                -- Copy any rows not already in sbus, then drop legacy table
+                INSERT INTO route_card.sbus (code, name, is_active, sort_order)
+                SELECT d.code, d.name,
+                       COALESCE(d.is_active, TRUE),
+                       COALESCE(d.sort_order, 0)
+                FROM route_card.departments d
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM route_card.sbus s WHERE s.code = d.code
+                );
+                DROP TABLE route_card.departments;
+              END IF;
+
+              -- Copy plant sync stamp onto sbus before dropping plants
+              IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'plants'
+              ) AND EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'sbus'
+              ) THEN
+                IF NOT EXISTS (
+                  SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'route_card' AND table_name = 'sbus'
+                    AND column_name = 'work_center_synced_at'
+                ) THEN
+                  ALTER TABLE route_card.sbus
+                    ADD COLUMN work_center_synced_at TIMESTAMP WITHOUT TIME ZONE;
+                END IF;
+                UPDATE route_card.sbus s
+                SET work_center_synced_at = p.work_center_synced_at
+                FROM route_card.plants p
+                WHERE (s.plant_id IS NOT NULL AND s.plant_id <> '')
+                  AND s.plant_id = p.code
+                  AND p.work_center_synced_at IS NOT NULL
+                  AND s.work_center_synced_at IS NULL;
+              END IF;
+
+              IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'plants'
+              ) THEN
+                DROP TABLE route_card.plants;
+              END IF;
+            END $$;
+            """
+        )
+
+        # Ensure sbus exists + plant_id / sync columns
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.sbus (
+                id SERIAL PRIMARY KEY,
+                code VARCHAR(64) NOT NULL UNIQUE,
+                name VARCHAR(128) NOT NULL,
+                plant_id VARCHAR(32) NOT NULL DEFAULT '',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                work_center_synced_at TIMESTAMP WITHOUT TIME ZONE,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.sbus
+            ADD COLUMN IF NOT EXISTS plant_id VARCHAR(32) NOT NULL DEFAULT '';
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.sbus
+            ADD COLUMN IF NOT EXISTS work_center_synced_at TIMESTAMP WITHOUT TIME ZONE;
+            """
+        )
+
+        # Rename dept → sbu columns on related tables
+        for table, old_col, new_col in [
+            ("users", "dept", "sbu"),
+            ("operation_templates", "dept", "sbu"),
+            ("few_shot_examples", "dept", "sbu"),
+            ("work_centers", "dept", "sbu"),
+            ("machines", "dept", "sbu"),
+        ]:
+            cursor.execute(
+                f"""
+                DO $$
+                BEGIN
+                  IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card' AND table_name = '{table}'
+                      AND column_name = '{old_col}'
+                  ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'route_card' AND table_name = '{table}'
+                      AND column_name = '{new_col}'
+                  ) THEN
+                    ALTER TABLE route_card.{table} RENAME COLUMN {old_col} TO {new_col};
+                  END IF;
+                END $$;
+                """
+            )
+
+        # dept_rules → sbu_rules (+ column dept → sbu)
+        cursor.execute(
+            """
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'dept_rules'
+              ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'route_card' AND table_name = 'sbu_rules'
+              ) THEN
+                ALTER TABLE route_card.dept_rules RENAME TO sbu_rules;
+              END IF;
+              IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'route_card' AND table_name = 'sbu_rules'
+                  AND column_name = 'dept'
+              ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'route_card' AND table_name = 'sbu_rules'
+                  AND column_name = 'sbu'
+              ) THEN
+                ALTER TABLE route_card.sbu_rules RENAME COLUMN dept TO sbu;
+              END IF;
+            END $$;
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.sbu_rules (
+                id SERIAL PRIMARY KEY,
+                sbu VARCHAR(128) NOT NULL UNIQUE,
+                rules JSONB,
+                updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_by VARCHAR(128)
+            );
+            """
+        )
+
+        cursor.execute(
+            """
+            UPDATE route_card.users SET role = 'sbu_head' WHERE role = 'dept_head';
+            """
+        )
+
+        # New empty departments stub under SBU
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.departments (
+                id SERIAL PRIMARY KEY,
+                sbu INTEGER NOT NULL
+                    REFERENCES route_card.sbus(id) ON DELETE CASCADE,
+                code VARCHAR(64) NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (sbu, code)
+            );
+            """
+        )
+
+        # Seed / upsert BEL SBU master (safe to re-run; BG excluded)
+        bel_codes = [c for c, _, _ in bel_sbus]
+        for code, name, sort_order in bel_sbus:
+            cursor.execute(
+                """
+                INSERT INTO route_card.sbus (code, name, plant_id, is_active, sort_order)
+                VALUES (%s, %s, '', TRUE, %s)
+                ON CONFLICT (code) DO UPDATE
+                SET name = EXCLUDED.name,
+                    is_active = TRUE,
+                    sort_order = EXCLUDED.sort_order;
+                """,
+                (code, name, sort_order),
+            )
+        cursor.execute(
+            """
+            UPDATE route_card.sbus
+            SET plant_id = ''
+            WHERE plant_id = ANY(%s);
+            """,
+            (dummy_plant_codes,),
+        )
+        cursor.execute(
+            """
+            UPDATE route_card.sbus
+            SET is_active = FALSE
+            WHERE code <> ALL(%s);
+            """,
+            (bel_codes,),
+        )
+        print(
+            "migrated departments→sbus, dept→sbu columns, dept_head→sbu_head; "
+            "dropped plants; stubbed departments; seeded BEL sbus"
+        )
+
         # Seed default admin if no users exist
         cursor.execute("SELECT COUNT(*) FROM route_card.users;")
         count = cursor.fetchone()[0]
@@ -1112,7 +1281,7 @@ def run_migrations():
 
             cursor.execute(
                 """
-                INSERT INTO route_card.users (emp_id, name, dept, password_hash, role, is_active)
+                INSERT INTO route_card.users (emp_id, name, sbu, password_hash, role, is_active)
                 VALUES (%s, %s, %s, %s, %s, TRUE);
                 """,
                 ("admin", "Administrator", "Software", hash_password("admin123"), "admin"),

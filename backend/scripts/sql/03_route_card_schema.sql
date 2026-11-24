@@ -4,7 +4,7 @@
 -- Offline PC / pgAdmin: connect Query Tool to database "route_card"
 -- then run this file (safe to re-run).
 --
--- Creates schema + tables used by auth, signup, departments,
+-- Creates schema + tables used by auth, signup, SBUs,
 -- upload sessions, extractions / history, route cards.
 --
 -- Run order on a fresh offline DB:
@@ -12,7 +12,7 @@
 --   setup_pgadmin.sql           (role)
 --   setup_pgadmin_grants.sql    (on route_card DB)
 --   03_route_card_schema.sql    ← this file
---   04_seed_bel_departments.sql
+--   04_seed_bel_sbus.sql
 --   05_seed_default_admin.sql
 --
 -- Note: starting the backend also applies the same DDL via
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS route_card.users (
     id SERIAL PRIMARY KEY,
     emp_id VARCHAR(64) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL,
-    dept VARCHAR(128) NOT NULL DEFAULT '',
+    sbu VARCHAR(128) NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
     role VARCHAR(32) NOT NULL DEFAULT 'engineer',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS route_card.users (
 );
 
 ALTER TABLE route_card.users
-    ADD COLUMN IF NOT EXISTS dept VARCHAR(128) NOT NULL DEFAULT '';
+    ADD COLUMN IF NOT EXISTS sbu VARCHAR(128) NOT NULL DEFAULT '';
 
 ALTER TABLE route_card.users
     ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
@@ -52,8 +52,8 @@ ALTER TABLE route_card.users
     ADD COLUMN IF NOT EXISTS approval_decided_by INTEGER
         REFERENCES route_card.users(id) ON DELETE SET NULL;
 
-CREATE INDEX IF NOT EXISTS ix_users_approval_status_dept
-    ON route_card.users (approval_status, dept);
+CREATE INDEX IF NOT EXISTS ix_users_approval_status_sbu
+    ON route_card.users (approval_status, sbu);
 
 CREATE TABLE IF NOT EXISTS route_card.password_history (
     id SERIAL PRIMARY KEY,
@@ -66,14 +66,29 @@ CREATE TABLE IF NOT EXISTS route_card.password_history (
 CREATE INDEX IF NOT EXISTS ix_password_history_user_created
     ON route_card.password_history ("user", created_at DESC);
 
--- ---------- Department master (signup dropdown) ----------
-CREATE TABLE IF NOT EXISTS route_card.departments (
+-- ---------- SBU master (signup dropdown) ----------
+CREATE TABLE IF NOT EXISTS route_card.sbus (
     id SERIAL PRIMARY KEY,
     code VARCHAR(64) NOT NULL UNIQUE,
     name VARCHAR(128) NOT NULL,
+    plant_id VARCHAR(32) NOT NULL DEFAULT '',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    work_center_synced_at TIMESTAMP WITHOUT TIME ZONE,
     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- ---------- Departments under SBU (stub; no seed in this release) ----------
+CREATE TABLE IF NOT EXISTS route_card.departments (
+    id SERIAL PRIMARY KEY,
+    sbu INTEGER NOT NULL
+        REFERENCES route_card.sbus(id) ON DELETE CASCADE,
+    code VARCHAR(64) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE (sbu, code)
 );
 
 -- ---------- Sessions (upload workspace + history rows) ----------
@@ -199,7 +214,7 @@ CREATE TABLE IF NOT EXISTS route_card.inspection_chars (
 -- ---------- Department operation template packs ----------
 CREATE TABLE IF NOT EXISTS route_card.operation_templates (
     id SERIAL PRIMARY KEY,
-    dept VARCHAR(128) NOT NULL,
+    sbu VARCHAR(128) NOT NULL,
     name VARCHAR(255) NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     placement VARCHAR(16) NOT NULL DEFAULT 'any',
@@ -210,8 +225,8 @@ CREATE TABLE IF NOT EXISTS route_card.operation_templates (
     is_active BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-CREATE INDEX IF NOT EXISTS ix_operation_templates_dept_active
-    ON route_card.operation_templates (dept, is_active);
+CREATE INDEX IF NOT EXISTS ix_operation_templates_sbu_active
+    ON route_card.operation_templates (sbu, is_active);
 
 CREATE TABLE IF NOT EXISTS route_card.operation_template_steps (
     id SERIAL PRIMARY KEY,

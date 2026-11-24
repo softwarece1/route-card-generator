@@ -245,7 +245,7 @@ def _job_context(job_id: int) -> dict | None:
         "user": {
             "id": j.user.id if j.user else None,
             "empId": j.user.emp_id if j.user else None,
-            "dept": j.user.dept if j.user else "",
+            "sbu": j.user.sbu if j.user else "",
             "role": j.user.role if j.user else "engineer",
             "name": j.user.name if j.user else "",
         }

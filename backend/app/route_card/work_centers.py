@@ -17,7 +17,7 @@ from app.route_card.op_templates import (
     _can_write_dept,
     _dept,
     _is_admin,
-    _is_dept_head,
+    _is_sbu_head,
     _validate_dept_name,
 )
 
@@ -207,7 +207,7 @@ def _as_list(val: Any) -> list[str]:
 def wc_dict(wc: RcWorkCenter, *, include_machines: bool = False) -> dict:
     out = {
         "id": wc.id,
-        "dept": wc.dept or "",
+        "sbu": wc.sbu or "",
         "code": wc.code,
         "name": wc.name,
         "mode": wc.mode or "hybrid",
@@ -238,7 +238,7 @@ def machine_dict(m: RcMachine) -> dict:
         "plant": m.plant or (wc.plant if wc else "") or "",
         "workCentre": m.work_centre or (wc.name if wc else "") or "",
         "workCenterId": wc.id if wc else None,
-        "dept": m.dept or (wc.dept if wc else "") or "",
+        "sbu": m.sbu or (wc.sbu if wc else "") or "",
         "code": m.code or "",
         "sapCode": m.sap_code or "",
         "name": m.name,
@@ -258,7 +258,7 @@ def _assert_read_dept(user: dict, dept: str) -> None:
     d = _dept(user)
     if not d:
         raise HTTPException(403, "Department required")
-    # engineers/dept_heads can read own dept (+ shared handled separately)
+    # engineers/sbu_heads can read own dept (+ shared handled separately)
     if dept and dept != d and not _is_admin(user):
         # allow empty dept filter meaning "my dept"
         pass
@@ -270,21 +270,21 @@ def _can_edit_wc(user: dict, wc: RcWorkCenter) -> bool:
     if wc.is_shared:
         return False
     plant = (wc.plant or "").strip()
-    if plant and _is_dept_head(user):
+    if plant and _is_sbu_head(user):
         user_plant = _plant_for_dept_name(_dept(user))
         if user_plant and user_plant == plant:
             return True
-    return _can_write_dept(user, wc.dept or "")
+    return _can_write_dept(user, wc.sbu or "")
 
 
 def _plant_for_dept_name(dept: str) -> str:
-    from app.route_card.models import RcDepartment
+    from app.route_card.models import RcSbu
 
     want = (dept or "").strip()
     if not want:
         return ""
     rows = select(
-        d for d in RcDepartment if d.is_active and (d.name == want or d.code == want)
+        d for d in RcSbu if d.is_active and (d.name == want or d.code == want)
     )[:1]
     if not rows:
         return ""
@@ -305,7 +305,7 @@ def list_work_centers(
     want_dept = (dept or "").strip()
     want_plant = (plant or "").strip()
 
-    if role == "dept_head":
+    if role == "sbu_head":
         want_dept = user_dept
     elif role == "engineer" and not want_dept and not want_plant:
         want_dept = user_dept
@@ -330,11 +330,11 @@ def list_work_centers(
                 out.append(w)
             continue
         if want_dept:
-            if (w.dept or "") == want_dept:
+            if (w.sbu or "") == want_dept:
                 out.append(w)
         elif _is_admin(user):
             out.append(w)
-        elif (w.dept or "") == user_dept:
+        elif (w.sbu or "") == user_dept:
             out.append(w)
     out.sort(key=lambda w: ((w.plant or ""), w.sort_order, (w.code or "").lower(), w.name.lower()))
     return [wc_dict(w, include_machines=include_machines) for w in out]
@@ -358,12 +358,12 @@ def catalog_for_dropdowns(
     else:
         items = list_work_centers(
             user,
-            dept=d or None,
+            sbu=d or None,
             include_shared=True,
             active_only=True,
             include_machines=False,
         )
-    return {"items": items, "dept": d, "plant": want_plant}
+    return {"items": items, "sbu": d, "plant": want_plant}
 
 
 @db_session
@@ -377,7 +377,7 @@ def get_work_center(wc_id: int, user: dict) -> dict:
         user_plant = _plant_for_dept_name(_dept(user)) if role != "admin" else plant
         if plant and user_plant and plant == user_plant:
             pass
-        elif not wc.is_shared and (wc.dept or "") != _dept(user) and role != "admin":
+        elif not wc.is_shared and (wc.sbu or "") != _dept(user) and role != "admin":
             raise HTTPException(403, "Not allowed")
     return wc_dict(wc, include_machines=False)
 
@@ -399,15 +399,15 @@ def upsert_work_center(user: dict, body: dict, wc_id: int | None = None) -> dict
     # Plant-scoped master: empty dept is allowed when plant is set
     if is_shared:
         dept = ""
-    elif plant and not (body.get("dept") or "").strip():
+    elif plant and not (body.get("sbu") or "").strip():
         dept = ""
         if not _is_admin(user):
             user_plant = _plant_for_dept_name(_dept(user))
             if not user_plant or user_plant != plant:
                 raise HTTPException(403, "Not allowed to edit work centres for this plant")
     else:
-        dept = (body.get("dept") or _dept(user) or "").strip()
-        if _is_dept_head(user):
+        dept = (body.get("sbu") or _dept(user) or "").strip()
+        if _is_sbu_head(user):
             dept = _dept(user)
         if not _can_write_dept(user, dept):
             raise HTTPException(403, "Not allowed to edit this SBU")
@@ -441,12 +441,12 @@ def upsert_work_center(user: dict, body: dict, wc_id: int | None = None) -> dict
             hit = select(
                 w
                 for w in RcWorkCenter
-                if (not w.is_shared) and w.dept == dept and w.code == code and w.is_active
+                if (not w.is_shared) and w.sbu == dept and w.code == code and w.is_active
             )[:1]
         if hit:
             raise HTTPException(400, f"Work centre code '{code}' already exists")
         wc = RcWorkCenter(
-            dept=dept,
+            sbu=dept,
             code=code,
             name=name,
             mode=_parse_mode(body.get("mode") or "manual"),
@@ -484,10 +484,10 @@ def upsert_work_center(user: dict, body: dict, wc_id: int | None = None) -> dict
         if "sortOrder" in body or "sort_order" in body:
             wc.sort_order = int(body.get("sortOrder") or body.get("sort_order") or 0)
         if _is_admin(user) and ("dept" in body) and not wc.is_shared:
-            new_dept = (body.get("dept") or "").strip()
+            new_dept = (body.get("sbu") or "").strip()
             if new_dept:
                 _validate_dept_name(new_dept)
-                wc.dept = new_dept
+                wc.sbu = new_dept
         if "isActive" in body:
             wc.is_active = bool(body["isActive"])
 
@@ -549,17 +549,17 @@ def upsert_machine(user: dict, body: dict, machine_id: int | None = None) -> dic
         if not label:
             raise HTTPException(400, "workCenterId or workCentre required")
         # find or create shared/heuristic WC under admin dept or shared
-        dept = (body.get("dept") or "").strip()
+        dept = (body.get("sbu") or "").strip()
         found = select(
             w
             for w in RcWorkCenter
-            if w.is_active and ((w.dept == dept and not w.is_shared) or w.name == label)
+            if w.is_active and ((w.sbu == dept and not w.is_shared) or w.name == label)
         )[:1]
         wc = found[0] if found else None
         if not wc:
             code = _norm(label).upper()[:16] or "WC"
             wc = RcWorkCenter(
-                dept=dept,
+                sbu=dept,
                 code=code,
                 name=label,
                 mode="hybrid",
@@ -589,7 +589,7 @@ def upsert_machine(user: dict, body: dict, machine_id: int | None = None) -> dic
             plant=(body.get("plant") or (wc.plant if wc else "") or ""),
             work_centre=(wc.name if wc else body.get("workCentre") or ""),
             work_center=wc,
-            dept=(wc.dept if wc else body.get("dept") or ""),
+            sbu=(wc.sbu if wc else body.get("sbu") or ""),
             code=(body.get("code") or "").strip().upper(),
             sap_code=body.get("sapCode") or body.get("sap_code") or "",
             name=name,
@@ -606,7 +606,7 @@ def upsert_machine(user: dict, body: dict, machine_id: int | None = None) -> dic
         if wc and ("workCenterId" in body or "work_center_id" in body):
             m.work_center = wc
             m.work_centre = wc.name
-            m.dept = wc.dept or ""
+            m.sbu = wc.sbu or ""
             m.plant = wc.plant or m.plant or ""
         if "name" in body:
             m.name = name or m.name
@@ -667,16 +667,16 @@ def list_machines(user: dict | None = None, active_only: bool = True) -> list[di
         rows = [
             m
             for m in rows
-            if (m.work_center and (m.work_center.is_shared or (m.dept or "") == d))
-            or ((m.dept or "") == d)
+            if (m.work_center and (m.work_center.is_shared or (m.sbu or "") == d))
+            or ((m.sbu or "") == d)
             or (not m.work_center and _is_admin(user))
         ]
-        # engineers/dept_head: also include unscoped legacy if no dept on machine and shared wc
+        # engineers/sbu_head: also include unscoped legacy if no dept on machine and shared wc
         if d:
             rows = [
                 m
                 for m in rows
-                if (m.dept or "") in ("", d)
+                if (m.sbu or "") in ("", d)
                 or (m.work_center and m.work_center.is_shared)
             ]
     return [machine_dict(m) for m in rows]
@@ -693,7 +693,7 @@ def _load_catalog(dept: str, plant: str | None = None) -> list[RcWorkCenter]:
     rows = select(w for w in RcWorkCenter if w.is_active)[:]
     if want_plant:
         return [w for w in rows if (w.plant or "").strip() == want_plant]
-    dept_rows = [w for w in rows if (not w.is_shared) and (w.dept or "") == d]
+    dept_rows = [w for w in rows if (not w.is_shared) and (w.sbu or "") == d]
     shared = [w for w in rows if w.is_shared]
     return dept_rows + shared
 
@@ -1194,7 +1194,7 @@ def _seed_machines_for_wc(wc: RcWorkCenter, plant: str) -> int:
             plant=plant or "",
             work_centre=wc.name,
             work_center=wc,
-            dept=wc.dept or "",
+            sbu=wc.sbu or "",
             code=code,
             name=f"{wc.name} (manual)",
             description="Manual / bench placeholder",
@@ -1219,11 +1219,11 @@ def _seed_machines_for_wc(wc: RcWorkCenter, plant: str) -> int:
             plant=plant or "",
             work_centre=wc.name,
             work_center=wc,
-            dept=wc.dept or "",
+            sbu=wc.sbu or "",
             code=code,
             sap_code=f"{(plant or 'P')}{wc.code}{i}",
             name=f"{wc.name} {suffix}",
-            description=f"Sample machine {suffix} for {wc.dept or 'shared'}",
+            description=f"Sample machine {suffix} for {wc.sbu or 'shared'}",
             capability_tags=list(wc.capability_tags or []),
             is_manual_placeholder=False,
             is_active=True,
@@ -1317,7 +1317,7 @@ def import_work_centres_from_csv(csv_path: Path | None = None) -> dict:
                     updated += 1
             else:
                 wc = RcWorkCenter(
-                    dept="",
+                    sbu="",
                     code=code,
                     name=name,
                     mode="manual",
@@ -1348,7 +1348,7 @@ def seed_default_catalog(dept: str | None = None, plant: str | None = None) -> d
     return {
         "created": 0,
         "machinesCreated": 0,
-        "dept": (dept or "").strip() or "*",
+        "sbu": (dept or "").strip() or "*",
         "deptCount": 0,
         "deprecated": True,
     }
@@ -1385,14 +1385,14 @@ def _stable_emp_id(label: str, used: set[str]) -> str:
 
 
 @db_session
-def seed_dept_head_and_ied_users() -> dict:
+def seed_sbu_head_and_ied_users() -> dict:
     """Idempotent demo users: dept-head-{slug} + IED-{slug} per active department.
 
     empIds are random-looking stable 6-digit numbers (edit later in Users UI).
     Password: Admin@<empId> (e.g. Admin@482917).
-    Also migrates IED / dept_head accounts still on the legacy shared password.
+    Also migrates IED / sbu_head accounts still on the legacy shared password.
     """
-    from app.route_card.models import RcDepartment, RcUser
+    from app.route_card.models import RcSbu, RcUser
     from app.security import hash_password, verify_password
 
     used = {u.emp_id for u in select(u for u in RcUser)[:]}
@@ -1400,12 +1400,12 @@ def seed_dept_head_and_ied_users() -> dict:
     skipped = 0
     reset = 0
 
-    for dept in select(d for d in RcDepartment if d.is_active).order_by(
-        RcDepartment.sort_order
+    for dept in select(d for d in RcSbu if d.is_active).order_by(
+        RcSbu.sort_order
     )[:]:
         slug = _dept_name_slug(dept.code)
         specs = [
-            (f"dept-head-{slug}", "dept_head"),
+            (f"dept-head-{slug}", "sbu_head"),
             (f"IED-{slug}", "ied"),
         ]
         for name, role in specs:
@@ -1415,10 +1415,9 @@ def seed_dept_head_and_ied_users() -> dict:
                 continue
             emp_id = _stable_emp_id(f"{role}:{dept.code}", used)
             used.add(emp_id)
-            RcUser(
-                emp_id=emp_id,
+            RcUser(emp_id=emp_id,
                 name=name,
-                dept=dept.name,
+                sbu=dept.name,
                 password_hash=hash_password(seed_password_for_emp(emp_id)),
                 role=role,
                 is_active=True,
@@ -1426,8 +1425,8 @@ def seed_dept_head_and_ied_users() -> dict:
             )
             created += 1
 
-    # Migrate any IED / dept_head still on the old shared default
-    for u in select(u for u in RcUser if u.role in ("ied", "dept_head") and u.is_active)[:]:
+    # Migrate any IED / sbu_head still on the old shared default
+    for u in select(u for u in RcUser if u.role in ("ied", "sbu_head") and u.is_active)[:]:
         if not u.password_hash:
             continue
         if not verify_password(LEGACY_SEED_PASSWORD, u.password_hash):
@@ -1451,14 +1450,14 @@ def migrate_legacy_machines() -> dict:
         label = (m.work_centre or "").strip()
         if not label:
             continue
-        dept = (m.dept or "").strip()
+        dept = (m.sbu or "").strip()
         wc = None
         if dept:
             found = select(
                 w
                 for w in RcWorkCenter
                 if (not w.is_shared)
-                and w.dept == dept
+                and w.sbu == dept
                 and (_norm(w.name) == _norm(label) or _norm(w.code) == _norm(label))
             )[:1]
             wc = found[0] if found else None
@@ -1473,7 +1472,7 @@ def migrate_legacy_machines() -> dict:
         if not wc:
             code = _norm(label).upper()[:16] or f"WC{m.id}"
             wc = RcWorkCenter(
-                dept=dept,
+                sbu=dept,
                 code=code,
                 name=label,
                 mode="hybrid",
@@ -1485,7 +1484,7 @@ def migrate_legacy_machines() -> dict:
             )
             created_wc += 1
         m.work_center = wc
-        m.dept = wc.dept or dept
+        m.sbu = wc.sbu or dept
         if not m.work_centre:
             m.work_centre = wc.name
         linked += 1
@@ -1553,7 +1552,7 @@ def ensure_sap_work_center(
         return wc_dict(hit, include_machines=False), False
 
     wc = RcWorkCenter(
-        dept=(dept or "").strip(),
+        sbu=(dept or "").strip(),
         code=code,
         name=name.strip() or sap,
         mode="manual",
@@ -1603,7 +1602,7 @@ def sync_work_centers_from_sap(
                 sap_code=center,
                 name=str(row.get("Ktext") or "").strip(),
                 plant=plant,
-                dept=dept,
+                sbu=dept,
             )
         except HTTPException as exc:
             failures.append({"work_center": center, "message": str(exc.detail)})
@@ -1624,7 +1623,7 @@ def sync_work_centers_from_sap(
             f"Synced {created_count + existing_count} work centre(s); {created_count} newly added."
         ),
         "status": "S" if not failures else "P",
-        "criteria": {"plant_code": plant, "dept": (dept or "").strip()},
+        "criteria": {"plant_code": plant, "sbu": (dept or "").strip()},
         "plant_sbu": mapping["items"],
         "plant_sbu_count": mapping["count"],
         "failed_work_centers": failures,

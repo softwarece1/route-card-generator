@@ -207,7 +207,7 @@ class OpTemplateCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = ""
     placement: str = "any"  # pre | post | any
-    dept: Optional[str] = None  # admin may set; dept_head forced to own
+    sbu: Optional[str] = None  # admin may set; sbu_head forced to own
     steps: list[OpTemplateStepIn] = Field(default_factory=list)
 
 
@@ -229,7 +229,7 @@ class AdminUserRoleUpdate(BaseModel):
 class ManagedUserCreate(BaseModel):
     empId: str = Field(..., min_length=1, max_length=64)
     name: str = Field(..., min_length=1, max_length=255)
-    dept: Optional[str] = Field(None, max_length=128)
+    sbu: Optional[str] = Field(None, max_length=128)
     role: str = Field("engineer", min_length=1, max_length=32)
     password: str = Field(..., min_length=4, max_length=128)
     reportsToId: Optional[int] = None
@@ -238,7 +238,7 @@ class ManagedUserCreate(BaseModel):
 class ManagedUserUpdate(BaseModel):
     empId: Optional[str] = Field(None, min_length=1, max_length=64)
     name: Optional[str] = Field(None, min_length=1, max_length=255)
-    dept: Optional[str] = Field(None, max_length=128)
+    sbu: Optional[str] = Field(None, max_length=128)
     role: Optional[str] = Field(None, min_length=1, max_length=32)
     reportsToId: Optional[int] = None
 

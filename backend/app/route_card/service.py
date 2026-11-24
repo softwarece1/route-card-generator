@@ -57,7 +57,7 @@ from app.route_card.format_templates import (
 )
 from app.route_card.pmf_oarc_export import payload_to_pmf_oarc
 from app.route_card.models import (
-    RcDepartment,
+    RcSbu,
     RcDocument,
     RcDrawing,
     RcExtraction,
@@ -517,7 +517,7 @@ def _user_role(user: dict | None) -> str:
 
 
 def _user_dept(user: dict | None) -> str:
-    return ((user or {}).get("dept") or "").strip()
+    return ((user or {}).get("sbu") or "").strip()
 
 
 def _session_route_card(session: RcSession) -> RcRouteCard | None:
@@ -529,7 +529,7 @@ def _session_route_card(session: RcSession) -> RcRouteCard | None:
 
 def _session_owner_dept(session: RcSession) -> str:
     owner = session.user
-    return (owner.dept or "").strip() if owner else ""
+    return (owner.sbu or "").strip() if owner else ""
 
 
 def _same_sbu(user: dict | None, session: RcSession) -> bool:
@@ -567,7 +567,7 @@ def _assert_session_access(session: RcSession, user: dict | None, *, write: bool
             raise HTTPException(403, "IED cannot modify session documents")
         return
     if (
-        role == "dept_head"
+        role == "sbu_head"
         and _same_sbu(user, session)
         and _is_direct_report(owner, uid)
         and card_status in {"ied_review", "ied_complete", "approved"}
@@ -591,7 +591,7 @@ def _assert_can_share_ied(card: RcRouteCard, user: dict | None) -> None:
     uid = user.get("id")
     if owner and uid and owner.id == int(uid):
         return
-    if role == "dept_head" and _same_sbu(user, session) and _is_direct_report(owner, uid):
+    if role == "sbu_head" and _same_sbu(user, session) and _is_direct_report(owner, uid):
         return
     raise HTTPException(
         403, "Only the owner, their reporting officer, or admin can share to IED"
@@ -610,17 +610,31 @@ def _assert_ied_same_sbu(card: RcRouteCard, user: dict | None) -> None:
         raise HTTPException(403, "Route card is not in your SBU")
 
 
+# IED during ied_review may change only standard times (hours, decimals allowed).
 IED_EDITABLE_OP_KEYS = {
-    "operation",
-    "workCentre",
-    "machine",
     "setup",
     "time",
-    "workCentreId",
-    "machineId",
-    "linkStatus",
-    "linkConfidence",
 }
+
+
+def _normalize_hour_value(raw, *, field: str) -> str:
+    """Accept non-negative decimal hours as a string (e.g. 0.25). Empty stays empty."""
+    if raw is None:
+        return ""
+    s = str(raw).strip()
+    if s == "":
+        return ""
+    try:
+        val = float(s)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, f"{field} must be a non-negative number of hours") from exc
+    if val < 0:
+        raise HTTPException(400, f"{field} must be a non-negative number of hours")
+    # Trim trailing zeros but keep at least one decimal place when fractional
+    if val == int(val):
+        return str(int(val))
+    text = f"{val:.6f}".rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _store(drawing_id: int, filename: str, data: bytes, content_type: str) -> tuple[str, str]:
@@ -1120,79 +1134,54 @@ def update_route(route_id: int, body: dict, user: dict | None = None) -> dict:
             _assert_ied_same_sbu(card, user)
     elif role == "ied":
         raise HTTPException(403, "IED can only edit routes in IED review")
-    elif status == "ied_complete" and role not in {"admin", "dept_head", "engineer"}:
+    elif status == "ied_complete" and role not in {"admin", "sbu_head", "engineer"}:
         raise HTTPException(403, "Not allowed to edit this route")
 
     ops = body.get("operations") or []
     if status == "ied_review" and role == "ied":
-        # Preserve non-IED fields; allow setup / time / WC / op rename only
-        existing_by_no = {o.op_no: o for o in card.operations}
-        merged_ops = []
+        # Rebuild from DB order; overlay only setup / time (hours). Ignore add/delete/reorder.
+        by_client = {}
         for o in ops:
             op_no = o.get("opNo")
-            prev = existing_by_no.get(int(op_no)) if op_no is not None else None
-            if prev:
-                base = op_to_out(prev)
-                for key in IED_EDITABLE_OP_KEYS:
-                    if key in o:
-                        base[key if key != "workCentre" else "workCentre"] = o.get(key)
-                # normalize keys used by persist_route
-                merged_ops.append(
-                    {
-                        "opNo": base.get("opNo"),
-                        "operation": o.get("operation", base.get("operation")),
-                        "workCentre": o.get("workCentre", base.get("workCentre")),
-                        "machine": o.get("machine", base.get("machine")),
-                        "tool": base.get("tool"),
-                        "itemsUsed": base.get("itemsUsed") or [],
-                        "torqueSpec": base.get("torqueSpec"),
-                        "reference": base.get("reference"),
-                        "setup": o.get("setup", base.get("setup")),
-                        "time": o.get("time", base.get("time")),
-                        "inspection": base.get("inspection"),
-                        "instructionText": base.get("instructionText") or "",
-                        "status": base.get("status") or "Planned",
-                        "workCentreId": o.get("workCentreId", base.get("workCentreId")),
-                        "machineId": o.get("machineId", base.get("machineId")),
-                        "linkStatus": o.get("linkStatus")
-                        or base.get("linkStatus")
-                        or (
-                            "manual_override"
-                            if o.get("workCentreId") or o.get("workCentre")
-                            else ""
-                        ),
-                        "linkConfidence": o.get(
-                            "linkConfidence", base.get("linkConfidence")
-                        ),
-                    }
-                )
+            if op_no is None:
+                continue
+            try:
+                by_client[int(op_no)] = o
+            except (TypeError, ValueError):
+                continue
+        merged_ops = []
+        for prev in sorted(card.operations, key=lambda x: x.op_no):
+            base = op_to_out(prev)
+            client = by_client.get(int(prev.op_no)) or {}
+            if "setup" in client:
+                setup_raw = _normalize_hour_value(client.get("setup"), field="setup")
             else:
-                merged_ops.append(
-                    {
-                        "opNo": o.get("opNo"),
-                        "operation": o.get("operation"),
-                        "workCentre": o.get("workCentre"),
-                        "machine": o.get("machine"),
-                        "tool": o.get("tool"),
-                        "itemsUsed": o.get("itemsUsed") or [],
-                        "torqueSpec": o.get("torqueSpec"),
-                        "reference": o.get("reference"),
-                        "setup": o.get("setup"),
-                        "time": o.get("time"),
-                        "inspection": o.get("inspection"),
-                        "instructionText": o.get("instructionText") or "",
-                        "status": o.get("status") or "Planned",
-                        "workCentreId": o.get("workCentreId"),
-                        "machineId": o.get("machineId"),
-                        "linkStatus": o.get("linkStatus")
-                        or (
-                            "manual_override"
-                            if o.get("workCentreId") or o.get("workCentre")
-                            else ""
-                        ),
-                        "linkConfidence": o.get("linkConfidence"),
-                    }
-                )
+                setup_raw = base.get("setup") or ""
+            if "time" in client:
+                time_raw = _normalize_hour_value(client.get("time"), field="time")
+            else:
+                time_raw = base.get("time") or ""
+            merged_ops.append(
+                {
+                    "opNo": base.get("opNo"),
+                    "operation": base.get("operation"),
+                    "workCentre": base.get("workCentre"),
+                    "machine": base.get("machine"),
+                    "tool": base.get("tool"),
+                    "itemsUsed": base.get("itemsUsed") or [],
+                    "torqueSpec": base.get("torqueSpec"),
+                    "reference": base.get("reference"),
+                    "setup": setup_raw,
+                    "time": time_raw,
+                    "inspection": base.get("inspection"),
+                    "instructionText": base.get("instructionText") or "",
+                    "status": base.get("status") or "Planned",
+                    "workCentreId": base.get("workCentreId"),
+                    "machineId": base.get("machineId"),
+                    "linkStatus": base.get("linkStatus") or "",
+                    "linkConfidence": base.get("linkConfidence"),
+                }
+            )
         ops = merged_ops
 
     generated = {
@@ -1340,7 +1329,7 @@ def _notify_ied_users(dept: str, title: str, body: str, link: str = "/history") 
         return 0
     count = 0
     for u in select(
-        u for u in RcUser if u.is_active and u.role == "ied" and (u.dept or "") == dept_n
+        u for u in RcUser if u.is_active and u.role == "ied" and (u.sbu or "") == dept_n
     ):
         notifications.create_notification(u.id, title, body, link=link)
         count += 1
@@ -1391,7 +1380,7 @@ def share_route_to_ied(route_id: int, user: dict | None = None) -> dict:
         user=user,
         route_card_id=route_id,
         session_id=session.id if session else None,
-        detail={"notifiedIed": notified, "dept": dept},
+        detail={"notifiedIed": notified, "sbu": dept},
     )
     extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
     return build_payload(card.drawing, extraction, card)
@@ -1481,7 +1470,7 @@ def _remark_dict(r: RcRouteRemark) -> dict:
                 "id": u.id,
                 "empId": u.emp_id,
                 "name": u.name,
-                "dept": u.dept or "",
+                "sbu": u.sbu or "",
                 "role": u.role,
             }
             if u
@@ -1526,11 +1515,11 @@ def create_route_remark(route_id: int, body: str, user: dict | None = None) -> d
     if owner and owner.id != actor_id:
         notify_ids.add(owner.id)
     if dept:
-        # Avoid generator `(u.dept or "") == dept` — Pony translates it to invalid SQL
+        # Avoid generator `(u.sbu or "") == dept` — Pony translates it to invalid SQL
         for u in RcUser.select(
-            lambda u: u.is_active and u.role in ("ied", "dept_head")
+            lambda u: u.is_active and u.role in ("ied", "sbu_head")
         )[:]:
-            if (u.dept or "").strip() != dept:
+            if (u.sbu or "").strip() != dept:
                 continue
             if actor_id is not None and u.id == actor_id:
                 continue
@@ -1890,9 +1879,9 @@ def relink_session_work_centres(
     if status == "approved" and not _is_admin(user):
         raise HTTPException(400, "Approved route cards cannot be re-linked")
 
-    owner_dept = (session.user.dept or "").strip() if session.user else ""
+    owner_dept = (session.user.sbu or "").strip() if session.user else ""
     if not owner_dept and user:
-        owner_dept = (user.get("dept") or "").strip()
+        owner_dept = (user.get("sbu") or "").strip()
     want_plant = (plant or "").strip() or None
 
     existing_ops = [op_to_out(o) for o in sorted(card.operations, key=lambda x: x.op_no)]
@@ -1942,7 +1931,7 @@ def relink_session_work_centres(
     payload["suggestedOperations"] = merged
     payload["routeOperations"] = merged
     payload["relink"] = {
-        "dept": owner_dept,
+        "sbu": owner_dept,
         "plant": want_plant
         or (merged[0].get("plant") if merged else "")
         or "",
@@ -1960,7 +1949,7 @@ def analyze_session(
     vlm_page_indexes: list[int] | None = None,
     plant: str | None = None,
 ) -> dict:
-    from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled
+    from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled, set_progress
 
     session = RcSession.get(id=session_id)
     if not session:
@@ -1971,6 +1960,11 @@ def analyze_session(
         raise HTTPException(400, "Upload at least one drawing before starting analysis")
 
     check_cancelled(cancel_event)
+    set_progress(
+        progress=2,
+        message="Please wait — preparing documents…",
+        detail="",
+    )
     session.status = "analyzing"
     for drawing in drawings:
         drawing.status = "analyzing"
@@ -2005,13 +1999,22 @@ def _analyze_one_ga(
     cancel_event=None,
     vlm_page_indexes: list[int] | None = None,
     prompt_addendum: str | None = None,
+    progress_base: int = 30,
+    progress_span: int = 40,
+    ga_label: str = "",
 ) -> dict:
     """Extract + drawing-mind for a single GA; returns enriched parse dict."""
-    from app.route_card.analyze_jobs import check_cancelled
+    from app.route_card.analyze_jobs import check_cancelled, set_progress
     from app.route_card.drawing_mind import get_drawing_mind
     from app.route_card.pdf_ingest import extract_spatial_pages
 
     check_cancelled(cancel_event)
+    label = ga_label or (drawing.filename or "GA")
+    set_progress(
+        progress=progress_base,
+        message="Scanning GA…",
+        detail=label,
+    )
 
     data = load_bytes(drawing)
     ext = Path(drawing.filename).suffix.lower()
@@ -2029,6 +2032,11 @@ def _analyze_one_ga(
             "candidates": ga_match.get("candidates"),
         })
 
+    set_progress(
+        progress=progress_base + int(progress_span * 0.15),
+        message="Extracting notes from GA…",
+        detail=label,
+    )
     parsed = _extract_from_bytes(data, drawing.filename, ext, format_aliases=ga_aliases)
     if "drawing" not in format_matches and parsed.get("raw_text"):
         ga_match, _ = _match_and_aliases(parsed.get("raw_text") or "", "GA")
@@ -2039,14 +2047,47 @@ def _analyze_one_ga(
             "candidates": ga_match.get("candidates"),
         }
 
+    pre_notes = list(parsed.get("notes") or [])
+    note_n = len(pre_notes)
+    set_progress(
+        progress=progress_base + int(progress_span * 0.28),
+        message="Extracting notes from GA…",
+        detail=f"Extracted {note_n} of {note_n} notes" if note_n else "No notes found yet",
+        counts={"notes": note_n, "notesTotal": note_n},
+    )
+
+    torque_n = len(parsed.get("torque_specs") or [])
+    if torque_n or any(
+        "inspect" in str((n.get("text") or "")).lower()
+        or "ctq" in str((n.get("text") or "")).lower()
+        or "quality" in str((n.get("text") or "")).lower()
+        for n in pre_notes
+    ):
+        set_progress(
+            progress=progress_base + int(progress_span * 0.35),
+            message="Checking quality and inspection points…",
+            detail=f"{torque_n} torque/spec point(s)" if torque_n else label,
+            counts={"torqueSpecs": torque_n},
+        )
+
     spatial_pages: list = []
     spatial_warns: list[str] = []
     if ext == ".pdf":
+        set_progress(
+            progress=progress_base + int(progress_span * 0.42),
+            message="Reading drawing layout…",
+            detail=label,
+        )
         spatial_pages, spatial_warns = extract_spatial_pages(
             data, cancel_event=cancel_event
         )
 
     check_cancelled(cancel_event)
+    set_progress(
+        progress=progress_base + int(progress_span * 0.55),
+        message="Checking balloon points from drawing…",
+        detail=label,
+    )
     mind = get_drawing_mind()
     mind_result = mind.understand(
         pdf_bytes=data if ext == ".pdf" else None,
@@ -2075,6 +2116,22 @@ def _analyze_one_ga(
     parsed["filename"] = drawing.filename
     parsed["drawingNumber"] = (parsed.get("title_block") or {}).get("drawingNumber") or ""
 
+    final_notes = len(parsed.get("notes") or [])
+    balloon_n = len(parsed.get("assemblyGroups") or [])
+    set_progress(
+        progress=progress_base + progress_span,
+        message="Scanning GA…",
+        detail=(
+            f"Extracted {final_notes} of {final_notes} notes"
+            + (f" · {balloon_n} balloon group(s)" if balloon_n else "")
+        ),
+        counts={
+            "notes": final_notes,
+            "notesTotal": final_notes,
+            "balloonGroups": balloon_n,
+        },
+    )
+
     drawing.pages = parsed.get("pages")
     drawing.drawing_type = parsed.get("drawing_type") or "unknown"
     return parsed
@@ -2088,7 +2145,7 @@ def _analyze_session_body(
     vlm_page_indexes: list[int] | None = None,
     plant: str | None = None,
 ) -> dict:
-    from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled
+    from app.route_card.analyze_jobs import AnalysisCancelled, check_cancelled, set_progress
     from app.route_card.drawing_mind import merge_ga_extractions
 
     extra_warnings: list[str] = []
@@ -2102,6 +2159,11 @@ def _analyze_session_body(
         # --- Wire List / Parts List first so mind can cross-link ---
         wl_doc = _get_role_doc(session, "wirelist")
         if wl_doc:
+            set_progress(
+                progress=8,
+                message="Scanning wire list…",
+                detail=wl_doc.filename or "Wire list",
+            )
             wl_bytes = load_path_bytes(wl_doc.object_path, wl_doc.storage_backend)
             from app.route_card.pdf_ingest import ingest_pdf as _ingest_wl
 
@@ -2116,6 +2178,13 @@ def _analyze_session_body(
                 "candidates": wl_match.get("candidates"),
             }
             wire_list = parse_wirelist_bytes(wl_bytes, wl_doc.filename, format_aliases=wl_aliases)
+            wl_count = int(wire_list.get("wireCount") or len(wire_list.get("wires") or []) or 0)
+            set_progress(
+                progress=14,
+                message="Scanning wire list…",
+                detail=f"Found {wl_count} wire(s)" if wl_count else "Wire list parsed",
+                counts={"wires": wl_count},
+            )
             wl_doc.extraction = {
                 **{
                     k: wire_list[k]
@@ -2142,6 +2211,11 @@ def _analyze_session_body(
 
         pl_doc = _get_role_doc(session, "partslist")
         if pl_doc:
+            set_progress(
+                progress=18,
+                message="Scanning parts list…",
+                detail=pl_doc.filename or "Parts list",
+            )
             pl_bytes = load_path_bytes(pl_doc.object_path, pl_doc.storage_backend)
             pl_preview_text = ""
             if Path(pl_doc.filename).suffix.lower() == ".pdf":
@@ -2156,6 +2230,13 @@ def _analyze_session_body(
                 "candidates": pl_match.get("candidates"),
             }
             parts_list = parse_partslist_bytes(pl_bytes, pl_doc.filename, format_aliases=pl_aliases)
+            pl_n = len(parts_list.get("items") or [])
+            set_progress(
+                progress=28,
+                message="Scanning parts list…",
+                detail=f"Parsed {pl_n} of {pl_n} PL items" if pl_n else "No PL items parsed",
+                counts={"plItems": pl_n, "plItemsTotal": pl_n},
+            )
             pl_doc.extraction = {
                 "docType": "PL",
                 "partNumber": parts_list.get("partNumber"),
@@ -2173,14 +2254,16 @@ def _analyze_session_body(
         # --- Each GA ---
         ga_results: list[dict] = []
         mind_payloads: list[dict] = []
-        for drawing in drawings:
+        ga_count = max(1, len(drawings))
+        ga_span = max(8, 42 // ga_count)
+        for ga_i, drawing in enumerate(drawings):
             check_cancelled(cancel_event)
             dept = ""
             prompt_addendum = ""
             if user:
-                dept = (user.get("dept") or "").strip()
+                dept = (user.get("sbu") or "").strip()
             elif session.user:
-                dept = (session.user.dept or "").strip()
+                dept = (session.user.sbu or "").strip()
             try:
                 from app.route_card.dept_config import few_shot_prompt_block, get_dept_rules
 
@@ -2191,6 +2274,9 @@ def _analyze_session_body(
                     prompt_addendum = (prompt_addendum + "\n\n" + fs).strip()
             except Exception:
                 prompt_addendum = ""
+            ga_label = drawing.filename or f"GA {ga_i + 1}"
+            if ga_count > 1:
+                ga_label = f"{ga_label} ({ga_i + 1}/{ga_count})"
             parsed_one = _analyze_one_ga(
                 drawing,
                 format_matches=format_matches,
@@ -2199,6 +2285,9 @@ def _analyze_session_body(
                 cancel_event=cancel_event,
                 vlm_page_indexes=vlm_page_indexes,
                 prompt_addendum=prompt_addendum or None,
+                progress_base=30 + ga_i * ga_span,
+                progress_span=ga_span,
+                ga_label=ga_label,
             )
             ga_results.append(parsed_one)
             if parsed_one.get("mind"):
@@ -2273,6 +2362,12 @@ def _analyze_session_body(
                 assembly_groups, parts_list=parts_list
             )
             if balloon_bom:
+                set_progress(
+                    progress=74,
+                    message="Checking balloon points from drawing…",
+                    detail=f"Matched {len(balloon_bom)} balloon callout(s)",
+                    counts={"balloonCallouts": len(balloon_bom)},
+                )
                 parsed["bom_items"] = merge_bom_with_balloon_items(
                     parsed.get("bom_items") or [], balloon_bom
                 )
@@ -2312,6 +2407,11 @@ def _analyze_session_body(
         parsed["assemblyGroups"] = assembly_groups
 
         if parts_list:
+            set_progress(
+                progress=78,
+                message="Cross-checking PL items with GA…",
+                detail="",
+            )
             extracted_by_item: dict = {}
             try:
                 from app.route_card.drawing_mind.assembly_groups import (
@@ -2327,9 +2427,28 @@ def _analyze_session_body(
                 existing_bom=parsed.get("bom_items") or [],
                 extracted_by_item=extracted_by_item,
             )
+            pl_total = len(parts_list.get("items") or [])
+            linked = sum(
+                1
+                for row in (parsed.get("bom_items") or [])
+                if str(row.get("gaPresence") or "").lower() == "present"
+                or row.get("extractedQty")
+            )
+            if pl_total:
+                set_progress(
+                    progress=82,
+                    message="Cross-checking PL items with GA…",
+                    detail=f"{linked} of {pl_total} PL items linked to GA",
+                    counts={"plLinked": linked, "plItemsTotal": pl_total},
+                )
 
         # Stage D: LLM full route from notes + balloon groups + PL (soft-fail)
         llm_route_ops: list = []
+        set_progress(
+            progress=85,
+            message="Building route operations…",
+            detail="",
+        )
         try:
             from app.config.settings import settings as _settings
             from app.route_card.drawing_mind.assembly_groups import (
@@ -2411,7 +2530,20 @@ def _analyze_session_body(
             raw_text=parsed.get("raw_text") or "",
         )
 
+        set_progress(
+            progress=90,
+            message="Building route operations…",
+            detail="",
+        )
         generated = generate_route(parsed)
+        op_n = len(generated.get("operations") or [])
+        if op_n:
+            set_progress(
+                progress=94,
+                message="Building route operations…",
+                detail=f"{op_n} operation(s) drafted",
+                counts={"operations": op_n},
+            )
 
         # Auto-apply department operation templates when configured
         try:
@@ -2419,9 +2551,9 @@ def _analyze_session_body(
 
             dept = ""
             if user:
-                dept = (user.get("dept") or "").strip()
+                dept = (user.get("sbu") or "").strip()
             elif session.user:
-                dept = (session.user.dept or "").strip()
+                dept = (session.user.sbu or "").strip()
             generated["operations"] = apply_auto_templates(
                 generated.get("operations") or [],
                 dept=dept,
@@ -2437,9 +2569,9 @@ def _analyze_session_body(
             from app.route_card.workflow import resolve_route_operations
 
             # Prefer explicit plant (admin) or session owner's SBU plant catalog
-            dept_r = (session.user.dept or "").strip() if session.user else ""
+            dept_r = (session.user.sbu or "").strip() if session.user else ""
             if not dept_r and user:
-                dept_r = (user.get("dept") or "").strip()
+                dept_r = (user.get("sbu") or "").strip()
             want_plant = (plant or "").strip() or None
             generated["operations"] = resolve_route_operations(
                 generated.get("operations") or [],
@@ -2479,9 +2611,9 @@ def _analyze_session_body(
                 from app.route_card.work_centers import unresolved_wc_messages
                 from app.route_card.workflow import resolve_route_operations
 
-                dept_w = (session.user.dept or "").strip() if session.user else ""
+                dept_w = (session.user.sbu or "").strip() if session.user else ""
                 if not dept_w and user:
-                    dept_w = (user.get("dept") or "").strip()
+                    dept_w = (user.get("sbu") or "").strip()
                 want_plant_w = (plant or "").strip() or None
                 generated["operations"] = resolve_route_operations(
                     generated.get("operations") or [],
@@ -2562,6 +2694,11 @@ def _analyze_session_body(
 
         extraction.bom_items = parsed.get("bom_items") or extraction.bom_items
         extraction.notes = parsed.get("notes") or extraction.notes
+        set_progress(
+            progress=98,
+            message="Finishing analysis…",
+            detail="",
+        )
         payload = build_payload(
             primary,
             extraction,
@@ -2592,6 +2729,11 @@ def _analyze_session_body(
         if resolved_ops:
             payload["suggestedOperations"] = resolved_ops
             payload["routeOperations"] = resolved_ops
+        set_progress(
+            progress=100,
+            message="Analysis complete",
+            detail="",
+        )
         return payload
     except AnalysisCancelled:
         raise
@@ -2891,7 +3033,7 @@ def _session_summary(session: RcSession) -> dict:
                 "id": owner.id,
                 "empId": owner.emp_id,
                 "name": owner.name,
-                "dept": owner.dept or "",
+                "sbu": owner.sbu or "",
                 "role": owner.role,
             }
             if owner
@@ -3047,7 +3189,7 @@ def list_my_extractions(user: dict | None) -> dict:
                 continue
             seen.add(session.id)
             sessions.append(session)
-    elif role == "dept_head" and dept:
+    elif role == "sbu_head" and dept:
         # Own sessions + direct reports' cards awaiting eng/dept-head approval
         sessions = []
         seen = set()
@@ -3154,7 +3296,7 @@ def _user_rows(
     dept_n = (dept or "").strip()
     rows = []
     for u in RcUser.select().order_by(RcUser.emp_id)[:]:
-        if dept_n and (u.dept or "") != dept_n:
+        if dept_n and (u.sbu or "") != dept_n:
             continue
         if reports_to_id is not None:
             boss = getattr(u, "reports_to", None)
@@ -3171,7 +3313,7 @@ def _user_rows(
                 "id": u.id,
                 "empId": u.emp_id,
                 "name": u.name,
-                "dept": u.dept or "",
+                "sbu": u.sbu or "",
                 "role": u.role,
                 "isActive": u.is_active,
                 "approvalStatus": (getattr(u, "approval_status", None) or "approved"),
@@ -3194,14 +3336,14 @@ def list_dept_users(user: dict | None) -> dict:
     if role == "admin":
         rows = _user_rows()
         return {"users": rows, "total": len(rows)}
-    if role != "dept_head":
+    if role != "sbu_head":
         raise HTTPException(403, "Department head or admin access required")
-    dept = (user.get("dept") or "").strip()
+    dept = (user.get("sbu") or "").strip()
     actor_id = user.get("id")
     if not dept or not actor_id:
-        return {"users": [], "total": 0, "dept": dept or ""}
+        return {"users": [], "total": 0, "sbu": dept or ""}
     rows = _user_rows(dept, reports_to_id=int(actor_id))
-    return {"users": rows, "total": len(rows), "dept": dept}
+    return {"users": rows, "total": len(rows), "sbu": dept}
 
 
 def update_admin_user_role(user: dict | None, user_id: int, role: str) -> dict:
@@ -3214,7 +3356,7 @@ def _public_user_row(u: RcUser) -> dict:
         "id": u.id,
         "empId": u.emp_id,
         "name": u.name,
-        "dept": u.dept or "",
+        "sbu": u.sbu or "",
         "role": u.role,
         "isActive": u.is_active,
         "mustChangePassword": bool(getattr(u, "must_change_password", False)),
@@ -3229,7 +3371,7 @@ def _pending_signup_row(u: RcUser) -> dict:
         "id": u.id,
         "empId": u.emp_id,
         "name": u.name,
-        "dept": u.dept or "",
+        "sbu": u.sbu or "",
         "role": u.role,
         "isActive": u.is_active,
         "approvalStatus": getattr(u, "approval_status", None) or "pending",
@@ -3245,12 +3387,12 @@ def _assert_can_decide_signup(actor: dict | None, target: RcUser) -> None:
     actor_role = (actor.get("role") or "").strip().lower()
     if actor_role == "admin":
         return
-    if actor_role != "dept_head":
+    if actor_role != "sbu_head":
         raise HTTPException(403, "Department head or admin access required")
-    actor_dept = (actor.get("dept") or "").strip()
+    actor_dept = (actor.get("sbu") or "").strip()
     if not actor_dept:
         raise HTTPException(400, "Your account has no department assigned")
-    if (target.dept or "").strip() != actor_dept:
+    if (target.sbu or "").strip() != actor_dept:
         raise HTTPException(403, "Signup is not for your department")
     if target.role != "engineer":
         raise HTTPException(403, "Only engineer signups can be approved here")
@@ -3261,21 +3403,21 @@ def list_signup_approvals(actor: dict | None) -> dict:
     if not actor:
         raise HTTPException(401, "Not authenticated")
     role = (actor.get("role") or "").strip().lower()
-    if role not in {"admin", "dept_head"}:
+    if role not in {"admin", "sbu_head"}:
         raise HTTPException(403, "Department head or admin access required")
     q = select(
         u
         for u in RcUser
         if u.role == "engineer" and u.approval_status == "pending"
     )
-    if role == "dept_head":
-        dept = (actor.get("dept") or "").strip()
+    if role == "sbu_head":
+        dept = (actor.get("sbu") or "").strip()
         if not dept:
             return {"items": [], "total": 0}
         rows = [
             _pending_signup_row(u)
             for u in q
-            if (u.dept or "") == dept
+            if (u.sbu or "") == dept
         ]
     else:
         rows = [_pending_signup_row(u) for u in q]
@@ -3302,15 +3444,15 @@ def approve_signup(actor: dict | None, user_id: int, remark: str | None = None) 
     actor_role = (actor.get("role") or "").strip().lower()
     actor_entity = RcUser.get(id=int(actor["id"])) if actor.get("id") else None
     boss = None
-    if actor_role == "dept_head" and actor_entity:
+    if actor_role == "sbu_head" and actor_entity:
         boss = actor_entity
     else:
         heads = select(
             u
             for u in RcUser
             if u.is_active
-            and u.role == "dept_head"
-            and u.dept == (target.dept or "")
+            and u.role == "sbu_head"
+            and u.sbu == (target.sbu or "")
         ).order_by(RcUser.name)[:1]
         boss = heads[0] if heads else None
 
@@ -3387,22 +3529,22 @@ def _resolve_reports_to(
     actor: dict | None,
     required: bool,
 ) -> RcUser | None:
-    """Validate reporting officer is an active dept_head in the same department."""
+    """Validate reporting officer is an active sbu_head in the same department."""
     if reports_to_id is None:
         if required:
-            # Default to actor when dept_head creates an engineer
+            # Default to actor when sbu_head creates an engineer
             actor_role = ((actor or {}).get("role") or "").strip().lower()
             actor_id = (actor or {}).get("id")
-            if actor_role == "dept_head" and actor_id:
+            if actor_role == "sbu_head" and actor_id:
                 reports_to_id = int(actor_id)
             else:
                 raise HTTPException(400, "reportsToId (reporting officer) is required for engineers")
         else:
             return None
     boss = RcUser.get(id=int(reports_to_id))
-    if not boss or not boss.is_active or boss.role != "dept_head":
+    if not boss or not boss.is_active or boss.role != "sbu_head":
         raise HTTPException(400, "Reporting officer must be an active department head")
-    if (boss.dept or "").strip() != (dept_n or "").strip():
+    if (boss.sbu or "").strip() != (dept_n or "").strip():
         raise HTTPException(400, "Reporting officer must be in the same department")
     return boss
 
@@ -3413,15 +3555,15 @@ def _assert_can_manage_target(actor: dict | None, target: RcUser) -> None:
     actor_role = (actor.get("role") or "").strip().lower()
     if actor_role == "admin":
         return
-    if actor_role != "dept_head":
+    if actor_role != "sbu_head":
         raise HTTPException(403, "Department head or admin access required")
-    actor_dept = (actor.get("dept") or "").strip()
+    actor_dept = (actor.get("sbu") or "").strip()
     actor_id = actor.get("id")
     if not actor_dept or not actor_id:
         raise HTTPException(400, "Your account has no department assigned")
     if target.role == "admin":
         raise HTTPException(403, "Cannot manage the admin account")
-    if (target.dept or "").strip() != actor_dept:
+    if (target.sbu or "").strip() != actor_dept:
         raise HTTPException(403, "User is not in your department")
     # Direct reports only — engineers who report to this head
     if target.role != "engineer":
@@ -3438,7 +3580,7 @@ def _validate_dept_name(dept: str) -> str:
     dept_n = (dept or "").strip()
     if not dept_n:
         raise HTTPException(400, "dept is required")
-    master = select(d for d in RcDepartment if d.is_active and d.name == dept_n)[:1]
+    master = select(d for d in RcSbu if d.is_active and d.name == dept_n)[:1]
     if not master:
         raise HTTPException(400, "Select a valid department")
     return dept_n
@@ -3449,7 +3591,7 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
     if not actor:
         raise HTTPException(401, "Not authenticated")
     actor_role = (actor.get("role") or "").strip().lower()
-    if actor_role not in {"admin", "dept_head"}:
+    if actor_role not in {"admin", "sbu_head"}:
         raise HTTPException(403, "Department head or admin access required")
 
     from app.auth import validate_employee_id
@@ -3467,15 +3609,15 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
     validate_password_complexity(str(password))
 
     if actor_role == "admin":
-        if role_n not in {"dept_head", "engineer", "ied"}:
-            raise HTTPException(400, "role must be dept_head, engineer, or ied")
-        dept_n = _validate_dept_name(body.get("dept") or "")
+        if role_n not in {"sbu_head", "engineer", "ied"}:
+            raise HTTPException(400, "role must be sbu_head, engineer, or ied")
+        dept_n = _validate_dept_name(body.get("sbu") or "")
     else:
         if role_n != "engineer":
             raise HTTPException(
                 403, "Department heads can only create engineer accounts"
             )
-        dept_n = (actor.get("dept") or "").strip()
+        dept_n = (actor.get("sbu") or "").strip()
         if not dept_n:
             raise HTTPException(400, "Your account has no department assigned")
 
@@ -3492,10 +3634,9 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
 
     from app.security import hash_password
 
-    user = RcUser(
-        emp_id=emp_id,
+    user = RcUser(emp_id=emp_id,
         name=name,
-        dept=dept_n,
+        sbu=dept_n,
         password_hash=hash_password(str(password)),
         role=role_n,
         is_active=True,
@@ -3516,7 +3657,7 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
     if not actor:
         raise HTTPException(401, "Not authenticated")
     actor_role = (actor.get("role") or "").strip().lower()
-    if actor_role not in {"admin", "dept_head"}:
+    if actor_role not in {"admin", "sbu_head"}:
         raise HTTPException(403, "Department head or admin access required")
 
     target = RcUser.get(id=int(user_id))
@@ -3525,16 +3666,16 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
     if target.role == "admin":
         raise HTTPException(400, "Cannot change the admin account")
 
-    if actor_role == "dept_head":
+    if actor_role == "sbu_head":
         _assert_can_manage_target(actor, target)
         # Dept head: name / empId only for engineers in own dept
         if "role" in body and body.get("role") is not None:
             role_n = str(body.get("role") or "").strip().lower()
             if role_n and role_n != target.role:
                 raise HTTPException(403, "Department heads cannot change roles")
-        if "dept" in body and body.get("dept") is not None:
-            dept_n = str(body.get("dept") or "").strip()
-            if dept_n and dept_n != (target.dept or "").strip():
+        if "sbu" in body and body.get("sbu") is not None:
+            dept_n = str(body.get("sbu") or "").strip()
+            if dept_n and dept_n != (target.sbu or "").strip():
                 raise HTTPException(403, "Department heads cannot change department")
 
     if "empId" in body and body.get("empId") is not None:
@@ -3560,12 +3701,12 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
         target.name = name
 
     if actor_role == "admin":
-        if "dept" in body and body.get("dept") is not None:
-            target.dept = _validate_dept_name(body.get("dept") or "")
+        if "sbu" in body and body.get("sbu") is not None:
+            target.sbu = _validate_dept_name(body.get("sbu") or "")
         if "role" in body and body.get("role") is not None:
             role_n = str(body.get("role") or "").strip().lower()
-            if role_n not in {"dept_head", "engineer", "ied"}:
-                raise HTTPException(400, "role must be dept_head, engineer, or ied")
+            if role_n not in {"sbu_head", "engineer", "ied"}:
+                raise HTTPException(400, "role must be sbu_head, engineer, or ied")
             target.role = role_n
 
     # Reporting officer (engineers only)
@@ -3580,7 +3721,7 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
             if raw_rid is None or str(raw_rid).strip() == "":
                 raise HTTPException(400, "reportsToId is required for engineers")
             target.reports_to = _resolve_reports_to(
-                dept_n=(target.dept or "").strip(),
+                dept_n=(target.sbu or "").strip(),
                 reports_to_id=int(raw_rid),
                 actor=actor,
                 required=True,
@@ -3588,7 +3729,7 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
 
     # If dept changed for an engineer, re-validate boss still same dept
     if effective_role == "engineer" and target.reports_to:
-        if (target.reports_to.dept or "").strip() != (target.dept or "").strip():
+        if (target.reports_to.sbu or "").strip() != (target.sbu or "").strip():
             raise HTTPException(
                 400,
                 "Reporting officer must be in the same department — update reportsToId",
@@ -3603,7 +3744,7 @@ def reset_managed_user_password(actor: dict | None, user_id: int, password: str)
     if not actor:
         raise HTTPException(401, "Not authenticated")
     actor_role = (actor.get("role") or "").strip().lower()
-    if actor_role not in {"admin", "dept_head"}:
+    if actor_role not in {"admin", "sbu_head"}:
         raise HTTPException(403, "Department head or admin access required")
     from app.input_safe import require_safe
     from app.security import hash_password, verify_password
@@ -3618,7 +3759,7 @@ def reset_managed_user_password(actor: dict | None, user_id: int, password: str)
     if target.role == "admin":
         raise HTTPException(400, "Cannot reset the admin account password here")
 
-    if actor_role == "dept_head":
+    if actor_role == "sbu_head":
         _assert_can_manage_target(actor, target)
 
     # Record previous password hash in history so it cannot be reused
@@ -3688,7 +3829,7 @@ def list_admin_extractions(
             desc(RcSession.updated_at)
         )[:]
     elif dept_filter:
-        owners = {u for u in RcUser.select() if (u.dept or "") == dept_filter}
+        owners = {u for u in RcUser.select() if (u.sbu or "") == dept_filter}
         if not owners:
             return {"items": [], "total": 0}
         sessions = [
@@ -3715,7 +3856,7 @@ def list_admin_extractions(
                 continue
         if dept_filter and emp:
             owner = s.user
-            if not owner or (owner.dept or "") != dept_filter:
+            if not owner or (owner.sbu or "") != dept_filter:
                 continue
         updated = s.updated_at
         if from_dt and (not updated or updated < from_dt):

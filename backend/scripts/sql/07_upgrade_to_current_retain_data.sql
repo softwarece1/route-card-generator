@@ -1,5 +1,10 @@
 -- ============================================================
 -- 07_upgrade_to_current_retain_data.sql
+-- NOTE: Current app schema uses route_card.sbus (not plants).
+-- Backend migrations_route_card.py renames departments→sbus, drops plants,
+-- renames dept→sbu columns / dept_head→sbu_head, and stubs empty departments(sbu FK).
+-- Prefer starting the backend (or re-run migrations) over applying this file alone.
+
 -- ============================================================
 -- PURPOSE
 --   Bring an older route_card deployment up to the CURRENT app

@@ -64,7 +64,7 @@ const emptyAddFile = () => ({
 export default function ReferenceSheetsPage() {
   const user = getUser();
   const role = user?.role;
-  const canManage = role === "admin" || role === "dept_head";
+  const canManage = role === "admin" || role === "sbu_head";
   // Engineers (and managers) may browse / view / download; IED stays on review queue
   const canView = canManage || role === "engineer";
 

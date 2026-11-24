@@ -20,14 +20,14 @@ security = HTTPBearer(auto_error=False)
 def user_public(user: RcUser) -> dict:
     from app.route_card.plants import plant_id_for_dept
 
-    dept = user.dept or ""
+    dept = user.sbu or ""
     return {
         "id": user.id,
         "empId": user.emp_id,
         "username": user.emp_id,
         "name": user.name,
         "display_name": user.name,
-        "dept": dept,
+        "sbu": dept,
         "plantId": plant_id_for_dept(dept),
         "role": user.role,
         "mustChangePassword": bool(getattr(user, "must_change_password", False)),
@@ -49,7 +49,7 @@ def get_current_user(
             "username": "dev",
             "name": "Dev",
             "display_name": "Dev",
-            "dept": "IT",
+            "sbu": "IT",
             "plantId": "",
             "role": "admin",
             "mustChangePassword": False,
@@ -106,17 +106,17 @@ def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     return current_user
 
 
-def require_dept_head_or_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    if current_user.get("role") not in {"admin", "dept_head"}:
+def require_sbu_head_or_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    if current_user.get("role") not in {"admin", "sbu_head"}:
         raise HTTPException(
-            status_code=403, detail="Department head or admin access required"
+            status_code=403, detail="SBU head or admin access required"
         )
     return current_user
 
 
 def require_template_manager(current_user: dict = Depends(get_current_user)) -> dict:
     """Admin, dept head, or IED may manage operation templates (IED: own dept)."""
-    if current_user.get("role") not in {"admin", "dept_head", "ied"}:
+    if current_user.get("role") not in {"admin", "sbu_head", "ied"}:
         raise HTTPException(
             status_code=403, detail="Department head, IED, or admin access required"
         )

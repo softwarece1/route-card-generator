@@ -49,7 +49,7 @@ function isExcelDoc(doc) {
 }
 
 function deptKey(session) {
-  return (session?.user?.dept || "").trim() || "Unassigned";
+  return (session?.user?.sbu || "").trim() || "Unassigned";
 }
 
 function empKey(session) {

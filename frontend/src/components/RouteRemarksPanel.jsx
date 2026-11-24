@@ -7,7 +7,7 @@ import { createRouteRemark, fetchRouteRemarks } from "@/services/routeCardApi";
 import "./route-remarks-panel.scss";
 
 function roleShort(role) {
-  if (role === "dept_head") return "Dept head";
+  if (role === "sbu_head") return "Dept head";
   if (role === "ied") return "IED";
   if (role === "admin") return "Admin";
   return "Engineer";

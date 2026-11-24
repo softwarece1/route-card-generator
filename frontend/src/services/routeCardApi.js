@@ -385,6 +385,74 @@ export async function analyzeSession(sessionId, { signal, vlmPageIndexes, plant 
   }
 }
 
+/** One-shot snapshot of in-flight sync analyze status. */
+export async function fetchAnalyzeProgress(sessionId) {
+  try {
+    const { data } = await http.get(`${BASE}/sessions/${sessionId}/analyze/progress`, {
+      timeout: 15_000,
+    });
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, 'Could not read analyze progress'));
+  }
+}
+
+function analyzeProgressStreamUrl(sessionId) {
+  const base = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
+  const path = `/route-card/sessions/${sessionId}/analyze/progress/stream`;
+  if (/^https?:\/\//i.test(base)) {
+    return `${base}${path}`;
+  }
+  return `${base}${path}`;
+}
+
+/**
+ * SSE progress stream for sync analyze. Pushes only when backend status changes.
+ * @returns {() => void} close/unsubscribe
+ */
+export function openAnalyzeProgressStream(sessionId, { onProgress, onError } = {}) {
+  if (!sessionId) return () => {};
+  let es = null;
+  let closed = false;
+  try {
+    es = new EventSource(analyzeProgressStreamUrl(sessionId), { withCredentials: true });
+  } catch (err) {
+    onError?.(err);
+    return () => {};
+  }
+
+  const handleProgress = (ev) => {
+    if (closed) return;
+    try {
+      const data = JSON.parse(ev.data);
+      onProgress?.(data);
+      if (data?.done || data?.running === false) {
+        closed = true;
+        es?.close();
+      }
+    } catch (err) {
+      onError?.(err);
+    }
+  };
+
+  es.addEventListener('progress', handleProgress);
+  es.onmessage = handleProgress;
+  es.onerror = (err) => {
+    if (closed) return;
+    // Browser retries EventSource automatically; surface once for callers.
+    onError?.(err);
+  };
+
+  return () => {
+    closed = true;
+    try {
+      es?.close();
+    } catch {
+      /* ignore */
+    }
+  };
+}
+
 export async function relinkSessionWorkCentres(sessionId, { plant } = {}) {
   try {
     const body = {};
@@ -440,19 +508,19 @@ export async function markAllNotificationsRead() {
   return data;
 }
 
-export async function fetchDeptRules(dept) {
-  const { data } = await http.get(`${BASE}/dept-rules`, { params: dept ? { dept } : undefined });
+export async function fetchDeptRules(sbu) {
+  const { data } = await http.get(`${BASE}/sbu-rules`, { params: sbu ? { sbu } : undefined });
   return data;
 }
 
 export async function saveDeptRules(payload) {
-  const { data } = await http.put(`${BASE}/dept-rules`, payload);
+  const { data } = await http.put(`${BASE}/sbu-rules`, payload);
   return data;
 }
 
-export async function fetchFewShots(dept) {
+export async function fetchFewShots(sbu) {
   const { data } = await http.get(`${BASE}/few-shot-examples`, {
-    params: dept ? { dept } : undefined,
+    params: sbu ? { sbu } : undefined,
   });
   return data;
 }
@@ -478,7 +546,7 @@ export async function fetchMachinesQuietly() {
 
 export async function fetchWorkCenters(dept, { plant } = {}) {
   const params = {};
-  if (dept) params.dept = dept;
+  if (dept) params.sbu = dept;
   if (plant) params.plant = plant;
   const { data } = await http.get(`${BASE}/work-centers`, {
     params: Object.keys(params).length ? params : undefined,
@@ -489,7 +557,7 @@ export async function fetchWorkCenters(dept, { plant } = {}) {
 export async function fetchWorkCenterCatalog(dept, { plant } = {}) {
   try {
     const params = {};
-    if (dept) params.dept = dept;
+    if (dept) params.sbu = dept;
     if (plant) params.plant = plant;
     const { data } = await http.get(`${BASE}/work-centers/catalog`, {
       params: Object.keys(params).length ? params : undefined,
@@ -521,61 +589,46 @@ export async function migrateLegacyMachines() {
 }
 
 export async function fetchPlants({ activeOnly = true } = {}) {
+  /** Distinct plant codes from SBU master. */
   const { data } = await http.get(`${BASE}/plants`, {
     params: { active_only: activeOnly },
   });
   return data?.items || [];
 }
 
-export async function createPlant(body) {
-  try {
-    const { data } = await http.post(`${BASE}/plants`, body);
-    return data;
-  } catch (error) {
-    throw new Error(asError(error, 'Could not create plant'));
-  }
-}
-
-export async function updatePlant(id, body) {
-  try {
-    const { data } = await http.put(`${BASE}/plants/${id}`, body);
-    return data;
-  } catch (error) {
-    throw new Error(asError(error, 'Could not update plant'));
-  }
-}
-
-export async function fetchOrgDepartments({ activeOnly = false } = {}) {
-  const { data } = await http.get(`${BASE}/departments`, {
+export async function fetchOrgSbus({ activeOnly = false } = {}) {
+  const { data } = await http.get(`${BASE}/sbus`, {
     params: { active_only: activeOnly },
   });
   return data?.items || [];
 }
 
-export async function createDepartment(body) {
+export async function createSbu(body) {
   try {
-    const { data } = await http.post(`${BASE}/departments`, body);
+    const { data } = await http.post(`${BASE}/sbus`, body);
     return data;
   } catch (error) {
     throw new Error(asError(error, 'Could not create SBU'));
   }
 }
 
-export async function updateDepartment(id, body) {
+export async function updateSbu(id, body) {
   try {
-    const { data } = await http.put(`${BASE}/departments/${id}`, body);
+    const { data } = await http.put(`${BASE}/sbus/${id}`, body);
     return data;
   } catch (error) {
     throw new Error(asError(error, 'Could not update SBU'));
   }
 }
 
-export async function fetchDeptHeads(dept) {
-  const { data } = await http.get(`${BASE}/dept-heads`, {
-    params: { dept },
+export async function fetchDeptHeads(sbu) {
+  const { data } = await http.get(`${BASE}/sbu-heads`, {
+    params: { sbu },
   });
   return data?.items || [];
 }
+
+export const fetchSbuHeads = fetchDeptHeads;
 
 export async function fetchPlantSbuMapping(plantCode) {
   try {
@@ -592,7 +645,7 @@ export async function fetchPlantSbuMapping(plantCode) {
 /** Fetch organization mapping and work centres directly from SAP Zppfm001. */
 export async function syncWorkCentersFromSap(payload) {
   const body = {
-    dept: payload.dept || '',
+    sbu: payload.sbu || '',
   };
   if (payload.plantCode) body.plant_code = payload.plantCode;
   try {
@@ -698,7 +751,7 @@ export async function fetchAdminUsers() {
 
 export async function fetchDeptUsers() {
   try {
-    const { data } = await http.get(`${BASE}/dept/users`);
+    const { data } = await http.get(`${BASE}/sbu/users`);
     return data;
   } catch (error) {
     throw new Error(asError(error, 'Could not load department users'));
@@ -775,7 +828,7 @@ export async function rejectSignup(userId, remark) {
 export async function listOperationTemplates({ scope = 'own', dept } = {}) {
   try {
     const params = { scope };
-    if (dept) params.dept = dept;
+    if (dept) params.sbu = dept;
     const { data } = await http.get(`${BASE}/operation-templates`, { params });
     return data;
   } catch (error) {
@@ -841,7 +894,7 @@ export async function fetchAdminExtractions({
   try {
     const params = {};
     if (empId) params.empId = empId;
-    if (dept) params.dept = dept;
+    if (dept) params.sbu = dept;
     if (status) params.status = status;
     if (fromDate) params.fromDate = fromDate;
     if (toDate) params.toDate = toDate;
@@ -871,7 +924,7 @@ export async function fetchAdminUploads({
   try {
     const params = {};
     if (empId) params.empId = empId;
-    if (dept) params.dept = dept;
+    if (dept) params.sbu = dept;
     if (status) params.status = status;
     if (fromDate) params.fromDate = fromDate;
     if (toDate) params.toDate = toDate;

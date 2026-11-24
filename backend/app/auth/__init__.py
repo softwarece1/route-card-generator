@@ -8,7 +8,7 @@ from app.auth.cookies import (
 from app.auth.deps import (
     get_current_user,
     require_admin,
-    require_dept_head_or_admin,
+    require_sbu_head_or_admin,
     require_template_manager,
     user_public,
 )
@@ -42,7 +42,7 @@ __all__ = [
     "router",
     "get_current_user",
     "require_admin",
-    "require_dept_head_or_admin",
+    "require_sbu_head_or_admin",
     "require_template_manager",
     "create_access_token",
     "decode_token",

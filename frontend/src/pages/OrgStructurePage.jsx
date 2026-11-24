@@ -14,9 +14,9 @@ import TableComponent, { TableActions, TableStatusBadge } from "@/components/Tab
 import { getUser } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import {
-  createDepartment,
-  fetchOrgDepartments,
-  updateDepartment,
+  createSbu,
+  fetchOrgSbus,
+  updateSbu,
 } from "@/services/routeCardApi";
 import "./org-structure.scss";
 
@@ -47,7 +47,7 @@ export default function OrgStructurePage() {
     setLoading(true);
     setError("");
     try {
-      const rows = await fetchOrgDepartments({ activeOnly: false });
+      const rows = await fetchOrgSbus({ activeOnly: false });
       setSbus(rows || []);
     } catch (err) {
       setSbus([]);
@@ -93,8 +93,13 @@ export default function OrgStructurePage() {
   const save = async () => {
     const code = form.code.trim();
     const name = form.name.trim();
+    const plantId = (form.plantId || "").trim();
     if (!code || !name) {
       setDialogError("Code and name are required");
+      return;
+    }
+    if (!plantId) {
+      setDialogError("Plant ID is required");
       return;
     }
     setSaving(true);
@@ -103,12 +108,12 @@ export default function OrgStructurePage() {
       const body = {
         code,
         name,
-        plantId: (form.plantId || "").trim(),
+        plantId,
         sortOrder: Number(form.sortOrder) || 0,
         isActive: Boolean(form.isActive),
       };
-      if (editId) await updateDepartment(editId, body);
-      else await createDepartment(body);
+      if (editId) await updateSbu(editId, body);
+      else await createSbu(body);
       setDialogOpen(false);
       toast.success(editId ? "SBU updated" : "SBU created");
       await load();

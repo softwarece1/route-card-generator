@@ -1,5 +1,6 @@
 from io import BytesIO
 import asyncio
+import json
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -10,11 +11,18 @@ from .sap_mapper import build_sap_payload
 from app.auth import (
     get_current_user,
     require_admin,
-    require_dept_head_or_admin,
+    require_sbu_head_or_admin,
     require_template_manager,
 )
 from app.route_card import op_templates, service
-from app.route_card.analyze_jobs import AnalysisCancelled, cancel_job, end_job, start_job
+from app.route_card.analyze_jobs import (
+    AnalysisCancelled,
+    cancel_job,
+    end_job,
+    get_job,
+    get_progress,
+    start_job,
+)
 from app.route_card.schemas import (
     AdminUserRoleUpdate,
     FormatLearnRequest,
@@ -192,6 +200,84 @@ def cancel_analyze_session(
     return {"sessionId": session_id, "cancelled": stopped}
 
 
+@router.get("/sessions/{session_id}/analyze/progress")
+def analyze_session_progress(
+    session_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """One-shot snapshot of in-flight sync analyze status."""
+    service.get_session(session_id, current_user)
+    snap = get_progress(session_id)
+    return {"sessionId": session_id, **snap}
+
+
+@router.get("/sessions/{session_id}/analyze/progress/stream")
+async def analyze_session_progress_stream(
+    session_id: int,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """SSE stream of analyze progress — pushes only when status changes."""
+    service.get_session(session_id, current_user)
+
+    async def event_gen():
+        job = None
+        # Analyze POST may start slightly after the EventSource connects.
+        for _ in range(40):
+            if await request.is_disconnected():
+                return
+            job = get_job(session_id)
+            if job is not None:
+                break
+            await asyncio.sleep(0.25)
+        if job is None:
+            payload = {
+                "sessionId": session_id,
+                "running": False,
+                "done": True,
+                "progress": 0,
+                "message": "",
+                "detail": "",
+                "counts": {},
+            }
+            yield f"event: progress\ndata: {json.dumps(payload)}\n\n"
+            return
+
+        last_rev = -1
+        while True:
+            if await request.is_disconnected():
+                return
+            snap = await asyncio.to_thread(job.wait_snapshot, last_rev, 1.5)
+            rev = int(snap.get("rev") or 0)
+            if rev != last_rev:
+                last_rev = rev
+                out = {
+                    "sessionId": session_id,
+                    "running": bool(snap.get("running")),
+                    "done": bool(snap.get("done")),
+                    "progress": int(snap.get("progress") or 0),
+                    "message": snap.get("message") or "",
+                    "detail": snap.get("detail") or "",
+                    "counts": snap.get("counts") or {},
+                }
+                yield f"event: progress\ndata: {json.dumps(out)}\n\n"
+                if out["done"]:
+                    return
+            else:
+                # Keep proxies / browsers from idle-closing the stream
+                yield ": ping\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/sessions/{session_id}/prior-extractions")
 def prior_extractions_for_session(
     session_id: int, current_user: dict = Depends(get_current_user)
@@ -216,8 +302,8 @@ def admin_users(_admin: dict = Depends(require_admin)):
     return service.list_admin_users(_admin)
 
 
-@router.get("/dept/users")
-def dept_users(current_user: dict = Depends(require_dept_head_or_admin)):
+@router.get("/sbu/users")
+def dept_users(current_user: dict = Depends(require_sbu_head_or_admin)):
     """Users in caller's department (admin sees all) with extraction counts."""
     return service.list_dept_users(current_user)
 
@@ -225,9 +311,9 @@ def dept_users(current_user: dict = Depends(require_dept_head_or_admin)):
 @router.post("/users")
 def create_user(
     body: ManagedUserCreate,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
-    """Admin creates dept_head/engineer; dept_head creates engineers in own dept."""
+    """Admin creates sbu_head/engineer; sbu_head creates engineers in own dept."""
     return service.create_managed_user(current_user, body.model_dump())
 
 
@@ -235,7 +321,7 @@ def create_user(
 def update_user(
     user_id: int,
     body: ManagedUserUpdate,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     """Update empId / name / dept / role (role+dept changes are admin-only)."""
     return service.update_managed_user(
@@ -247,9 +333,9 @@ def update_user(
 def reset_user_password(
     user_id: int,
     body: ManagedUserResetPassword,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
-    """Admin or dept_head resets password (dept_head: engineers in own dept only)."""
+    """Admin or sbu_head resets password (sbu_head: engineers in own dept only)."""
     return service.reset_managed_user_password(current_user, user_id, body.password)
 
 
@@ -263,15 +349,15 @@ def admin_update_user_role(
 
 
 @router.get("/signup-approvals")
-def list_signup_approvals(current_user: dict = Depends(require_dept_head_or_admin)):
-    """Pending self-service engineer signups for dept_head (own dept) or admin (all)."""
+def list_signup_approvals(current_user: dict = Depends(require_sbu_head_or_admin)):
+    """Pending self-service engineer signups for sbu_head (own dept) or admin (all)."""
     return service.list_signup_approvals(current_user)
 
 
 @router.post("/signup-approvals/{user_id}/approve")
 def approve_signup(
     user_id: int,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
     body: SignupApprovalDecide = SignupApprovalDecide(),
 ):
     return service.approve_signup(current_user, user_id, body.remark)
@@ -281,7 +367,7 @@ def approve_signup(
 def reject_signup(
     user_id: int,
     body: SignupApprovalDecide,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     return service.reject_signup(current_user, user_id, body.remark)
 
@@ -289,7 +375,7 @@ def reject_signup(
 @router.get("/admin/extractions")
 def admin_extractions(
     empId: str | None = Query(None),
-    dept: str | None = Query(None),
+    sbu: str | None = Query(None),
     status: str | None = Query(None),
     fromDate: str | None = Query(None, description="YYYY-MM-DD inclusive"),
     toDate: str | None = Query(None, description="YYYY-MM-DD inclusive"),
@@ -298,7 +384,7 @@ def admin_extractions(
     return service.list_admin_extractions(
         _admin,
         emp_id=empId,
-        dept=dept,
+        dept=sbu,
         status=status,
         from_date=fromDate,
         to_date=toDate,
@@ -313,7 +399,7 @@ def admin_extraction_detail(session_id: int, _admin: dict = Depends(require_admi
 @router.get("/admin/uploads")
 def admin_uploads(
     empId: str | None = Query(None),
-    dept: str | None = Query(None),
+    sbu: str | None = Query(None),
     status: str | None = Query(None),
     fromDate: str | None = Query(None, description="YYYY-MM-DD inclusive"),
     toDate: str | None = Query(None, description="YYYY-MM-DD inclusive"),
@@ -323,7 +409,7 @@ def admin_uploads(
     return service.list_admin_uploads(
         _admin,
         emp_id=empId,
-        dept=dept,
+        dept=sbu,
         status=status,
         from_date=fromDate,
         to_date=toDate,
@@ -530,10 +616,10 @@ def export_pmf_oarc(
 @router.get("/operation-templates")
 def list_operation_templates(
     scope: str | None = Query("own", description="own | other | all"),
-    dept: str | None = Query(None),
+    sbu: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
-    return op_templates.list_templates(current_user, scope=scope, dept=dept)
+    return op_templates.list_templates(current_user, scope=scope, dept=sbu)
 
 
 @router.get("/operation-templates/{template_id}")
@@ -745,39 +831,39 @@ def read_all_notifications(current_user: dict = Depends(get_current_user)):
     return notifications.mark_all_read(current_user)
 
 
-@router.get("/dept-rules")
+@router.get("/sbu-rules")
 def get_dept_rules_api(
-    dept: str | None = Query(None),
+    sbu: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
     from app.route_card import dept_config
 
-    d = dept or current_user.get("dept") or ""
+    d = sbu or current_user.get("sbu") or ""
     return dept_config.get_dept_rules(d)
 
 
-@router.put("/dept-rules")
-async def put_dept_rules(request: Request, current_user: dict = Depends(require_dept_head_or_admin)):
+@router.put("/sbu-rules")
+async def put_dept_rules(request: Request, current_user: dict = Depends(require_sbu_head_or_admin)):
     from app.route_card import dept_config
 
     body = await request.json()
     return dept_config.upsert_dept_rules(
-        current_user, body.get("dept") or current_user.get("dept") or "", body.get("rules") or {}
+        current_user, body.get("sbu") or current_user.get("sbu") or "", body.get("rules") or {}
     )
 
 
 @router.get("/few-shot-examples")
 def list_few_shots(
-    dept: str | None = Query(None),
+    sbu: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
     from app.route_card import dept_config
 
-    return {"items": dept_config.list_few_shots(dept or current_user.get("dept"))}
+    return {"items": dept_config.list_few_shots(sbu or current_user.get("sbu"))}
 
 
 @router.post("/few-shot-examples")
-async def create_few_shot(request: Request, current_user: dict = Depends(require_dept_head_or_admin)):
+async def create_few_shot(request: Request, current_user: dict = Depends(require_sbu_head_or_admin)):
     from app.route_card import dept_config
 
     body = await request.json()
@@ -785,7 +871,7 @@ async def create_few_shot(request: Request, current_user: dict = Depends(require
 
 
 @router.delete("/few-shot-examples/{example_id}")
-def delete_few_shot(example_id: int, current_user: dict = Depends(require_dept_head_or_admin)):
+def delete_few_shot(example_id: int, current_user: dict = Depends(require_sbu_head_or_admin)):
     from app.route_card import dept_config
 
     return dept_config.delete_few_shot(example_id, current_user)
@@ -793,7 +879,7 @@ def delete_few_shot(example_id: int, current_user: dict = Depends(require_dept_h
 
 @router.get("/work-centers")
 def list_work_centers(
-    dept: str | None = Query(None),
+    sbu: str | None = Query(None),
     plant: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
@@ -802,7 +888,7 @@ def list_work_centers(
     return {
         "items": wc_mod.list_work_centers(
             current_user,
-            dept=dept,
+            dept=sbu,
             plant=plant,
             include_machines=False,
         )
@@ -811,7 +897,7 @@ def list_work_centers(
 
 @router.get("/work-centers/catalog")
 def work_centers_catalog(
-    dept: str | None = Query(None),
+    sbu: str | None = Query(None),
     plant: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
@@ -822,7 +908,7 @@ def work_centers_catalog(
     if role != "admin":
         want_plant = None
     return wc_mod.catalog_for_dropdowns(
-        current_user, dept=dept, plant=want_plant
+        current_user, dept=sbu, plant=want_plant
     )
 
 
@@ -835,7 +921,7 @@ def get_work_center(wc_id: int, current_user: dict = Depends(get_current_user)):
 
 @router.post("/work-centers")
 async def create_work_center(
-    request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+    request: Request, current_user: dict = Depends(require_sbu_head_or_admin)
 ):
     from app.route_card import work_centers as wc_mod
 
@@ -845,7 +931,7 @@ async def create_work_center(
 
 @router.put("/work-centers/{wc_id}")
 async def update_work_center(
-    wc_id: int, request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+    wc_id: int, request: Request, current_user: dict = Depends(require_sbu_head_or_admin)
 ):
     from app.route_card import work_centers as wc_mod
 
@@ -854,7 +940,7 @@ async def update_work_center(
 
 
 @router.delete("/work-centers/{wc_id}")
-def delete_work_center(wc_id: int, current_user: dict = Depends(require_dept_head_or_admin)):
+def delete_work_center(wc_id: int, current_user: dict = Depends(require_sbu_head_or_admin)):
     from app.route_card import work_centers as wc_mod
 
     return wc_mod.delete_work_center(wc_id, current_user)
@@ -872,94 +958,70 @@ def list_plants(
     active_only: bool = Query(True),
     current_user: dict = Depends(get_current_user),
 ):
+    """Distinct plant codes derived from SBU master (no plants table)."""
     from app.route_card import plants as plants_mod
 
-    # Admin org page may request inactive rows
     if (current_user.get("role") or "") != "admin":
         active_only = True
-    return {"items": plants_mod.list_plants(active_only=active_only)}
+    return {"items": plants_mod.list_plant_codes_from_sbus(active_only=active_only)}
 
 
-@router.post("/plants")
-async def create_plant(request: Request, _admin: dict = Depends(require_admin)):
-    from app.route_card import plants as plants_mod
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    return plants_mod.upsert_plant(body or {})
-
-
-@router.put("/plants/{plant_id}")
-async def update_plant(
-    plant_id: int, request: Request, _admin: dict = Depends(require_admin)
-):
-    from app.route_card import plants as plants_mod
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    return plants_mod.upsert_plant(body or {}, plant_id=plant_id)
-
-
-@router.get("/departments")
-def list_departments_admin(
+@router.get("/sbus")
+def list_sbus_admin(
     active_only: bool = Query(False),
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
-    from app.route_card import departments as dept_mod
+    from app.route_card import sbus as sbu_mod
 
     if (current_user.get("role") or "") != "admin":
         active_only = True
-    return {"items": dept_mod.list_departments(active_only=active_only)}
+    return {"items": sbu_mod.list_sbus(active_only=active_only)}
 
 
-@router.post("/departments")
-async def create_department(request: Request, _admin: dict = Depends(require_admin)):
-    from app.route_card import departments as dept_mod
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    return dept_mod.upsert_department(body or {})
-
-
-@router.put("/departments/{dept_id}")
-async def update_department(
-    dept_id: int, request: Request, _admin: dict = Depends(require_admin)
-):
-    from app.route_card import departments as dept_mod
+@router.post("/sbus")
+async def create_sbu(request: Request, _admin: dict = Depends(require_admin)):
+    from app.route_card import sbus as sbu_mod
 
     try:
         body = await request.json()
     except Exception:
         body = {}
-    return dept_mod.upsert_department(body or {}, dept_id=dept_id)
+    return sbu_mod.upsert_sbu(body or {})
 
 
-@router.get("/dept-heads")
-def list_dept_heads_for_dept(
-    dept: str = Query(...),
-    current_user: dict = Depends(require_dept_head_or_admin),
+@router.put("/sbus/{sbu_id}")
+async def update_sbu(
+    sbu_id: int, request: Request, _admin: dict = Depends(require_admin)
 ):
-    """Reporting-officer dropdown: active dept_heads in a department."""
-    from app.route_card import departments as dept_mod
+    from app.route_card import sbus as sbu_mod
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return sbu_mod.upsert_sbu(body or {}, sbu_id=sbu_id)
+
+
+@router.get("/sbu-heads")
+def list_sbu_heads(
+    sbu: str = Query(...),
+    current_user: dict = Depends(require_sbu_head_or_admin),
+):
+    """Reporting-officer dropdown: active sbu_heads in an SBU."""
+    from app.route_card import sbus as sbu_mod
 
     role = (current_user.get("role") or "").strip()
-    if role == "dept_head":
-        own = (current_user.get("dept") or "").strip()
-        if (dept or "").strip() != own:
-            raise HTTPException(403, "Can only list heads in your department")
-    return {"items": dept_mod.dept_heads_for_dept(dept)}
+    if role == "sbu_head":
+        own = (current_user.get("sbu") or "").strip()
+        if (sbu or "").strip() != own:
+            raise HTTPException(403, "Can only list heads in your SBU")
+    return {"items": sbu_mod.sbu_heads_for_sbu(sbu)}
 
 
 @router.get("/plant-sbu")
 def get_plant_sbu_mapping(
     plant: str = Query(""),
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     from app.route_card import plants as plants_mod
     from app.route_card.sap_org_client import fetch_plant_sbu_mapping
@@ -970,7 +1032,7 @@ def get_plant_sbu_mapping(
 
 @router.post("/work-centers/sync-from-sap")
 async def sync_work_centers_from_sap(
-    request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+    request: Request, current_user: dict = Depends(require_sbu_head_or_admin)
 ):
     """Fetch Plant/SBU mapping and work centres directly from SAP Zppfm001."""
     from app.route_card import plants as plants_mod
@@ -984,9 +1046,9 @@ async def sync_work_centers_from_sap(
     requested_plant = str(body.get("plant_code") or body.get("plantCode") or "").strip()
     plant_code = plants_mod.resolve_sync_plant_code(current_user, requested_plant)
 
-    dept = str(body.get("dept") or "").strip()
+    dept = str(body.get("sbu") or "").strip()
     if (current_user.get("role") or "").strip() != "admin":
-        dept = (current_user.get("dept") or "").strip()
+        dept = (current_user.get("sbu") or "").strip()
 
     return await asyncio.to_thread(
         wc_mod.sync_work_centers_from_sap,
@@ -1003,7 +1065,7 @@ def list_machines(current_user: dict = Depends(get_current_user)):
 
 @router.post("/machines")
 async def create_machine(
-    request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+    request: Request, current_user: dict = Depends(require_sbu_head_or_admin)
 ):
     from app.route_card import work_centers as wc_mod
 
@@ -1013,7 +1075,7 @@ async def create_machine(
 
 @router.put("/machines/{machine_id}")
 async def update_machine(
-    machine_id: int, request: Request, current_user: dict = Depends(require_dept_head_or_admin)
+    machine_id: int, request: Request, current_user: dict = Depends(require_sbu_head_or_admin)
 ):
     from app.route_card import work_centers as wc_mod
 
@@ -1022,7 +1084,7 @@ async def update_machine(
 
 
 @router.delete("/machines/{machine_id}")
-def delete_machine(machine_id: int, current_user: dict = Depends(require_dept_head_or_admin)):
+def delete_machine(machine_id: int, current_user: dict = Depends(require_sbu_head_or_admin)):
     from app.route_card import work_centers as wc_mod
 
     return wc_mod.delete_machine(machine_id, current_user)
@@ -1085,7 +1147,7 @@ def ref_docs_list_folders(current_user: dict = Depends(get_current_user)):
 @router.post("/ref-docs/folders")
 def ref_docs_create_folder(
     body: RefFolderCreate,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     return ref_docs.create_folder(body.model_dump(), current_user)
 
@@ -1094,7 +1156,7 @@ def ref_docs_create_folder(
 def ref_docs_update_folder(
     folder_id: int,
     body: RefFolderUpdate,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     return ref_docs.update_folder(folder_id, body.model_dump())
 
@@ -1102,7 +1164,7 @@ def ref_docs_update_folder(
 @router.delete("/ref-docs/folders/{folder_id}")
 def ref_docs_delete_folder(
     folder_id: int,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     return ref_docs.delete_folder(folder_id)
 
@@ -1119,7 +1181,7 @@ def ref_docs_list_documents(
 async def ref_docs_upload_document(
     folder_id: int,
     file: UploadFile = File(...),
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     data = await file.read()
     return ref_docs.upload_document_bytes(
@@ -1134,7 +1196,7 @@ async def ref_docs_upload_document(
 @router.delete("/ref-docs/documents/{document_id}")
 def ref_docs_delete_document(
     document_id: int,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     return ref_docs.delete_document(document_id)
 
@@ -1143,7 +1205,7 @@ def ref_docs_delete_document(
 def ref_docs_delete_document_version(
     document_id: int,
     version_number: int,
-    current_user: dict = Depends(require_dept_head_or_admin),
+    current_user: dict = Depends(require_sbu_head_or_admin),
 ):
     return ref_docs.delete_document_version(document_id, version_number)
 

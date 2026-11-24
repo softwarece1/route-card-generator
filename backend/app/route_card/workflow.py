@@ -226,7 +226,7 @@ def apply_auto_templates(
             continue
         if not tpl or not tpl.is_active:
             continue
-        if (tpl.dept or "").strip() != (dept or "").strip() and dept:
+        if (tpl.sbu or "").strip() != (dept or "").strip() and dept:
             continue
         steps = sorted(tpl.steps, key=lambda s: s.sort_order)
         mapped = [

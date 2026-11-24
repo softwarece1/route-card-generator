@@ -11,7 +11,7 @@ import PageHeader from "@/components/PageHeader";
 import TableComponent from "@/components/TableComponent";
 import { getUser } from "@/lib/auth";
 import { toast } from "@/lib/toast";
-import { fetchDepartments } from "@/services/authApi";
+import { fetchSbus } from "@/services/authApi";
 import {
   createWorkCenter,
   deleteWorkCenter,
@@ -43,8 +43,8 @@ function formatSyncedAt(iso) {
 export default function WorkCentersPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
-  const isDeptHead = user?.role === "dept_head";
-  const canManage = isAdmin || isDeptHead;
+  const isSbuHead = user?.role === "sbu_head";
+  const canManage = isAdmin || isSbuHead;
 
   const [sbus, setSbus] = useState([]);
   const [plants, setPlants] = useState([]);
@@ -77,11 +77,11 @@ export default function WorkCentersPage() {
   const loadSbus = useCallback(async () => {
     setLoadingSbus(true);
     try {
-      const [deptRes, plantRows] = await Promise.all([
-        fetchDepartments(),
+      const [sbuRes, plantRows] = await Promise.all([
+        fetchSbus(),
         fetchPlants({ activeOnly: true }).catch(() => []),
       ]);
-      const rows = deptRes?.items || deptRes || [];
+      const rows = sbuRes?.items || sbuRes || [];
       setSbus(
         (rows || []).map((x) => ({
           id: x.id ?? x.code ?? x.name,
@@ -114,15 +114,15 @@ export default function WorkCentersPage() {
     if (selectedSbuId != null) return;
     if (!sbus.length) return;
     let pool = sbus;
-    if (!isAdmin && isDeptHead) {
-      const mine = (user?.dept || "").trim();
+    if (!isAdmin && isSbuHead) {
+      const mine = (user?.sbu || "").trim();
       const scoped = sbus.filter((s) => s.name === mine || s.code === mine);
       if (scoped.length) pool = scoped;
     }
     const withPlant = pool.find((s) => (s.plantId || "").trim());
     const pick = withPlant || pool[0];
     if (pick) setSelectedSbuId(pick.id);
-  }, [sbus, selectedSbuId, isAdmin, isDeptHead, user?.dept]);
+  }, [sbus, selectedSbuId, isAdmin, isSbuHead, user?.sbu]);
 
   const selectedPlantCode = (selectedSbu?.plantId || "").trim();
   const selectedPlant = plantByCode.get(selectedPlantCode) || null;
@@ -168,8 +168,8 @@ export default function WorkCentersPage() {
 
   const filteredSbus = useMemo(() => {
     let rows = sbus;
-    if (!isAdmin && isDeptHead) {
-      const mine = (user?.dept || "").trim();
+    if (!isAdmin && isSbuHead) {
+      const mine = (user?.sbu || "").trim();
       rows = rows.filter((s) => s.name === mine || s.code === mine);
     }
     const q = sbuSearch.trim().toLowerCase();
@@ -178,7 +178,7 @@ export default function WorkCentersPage() {
       const blob = `${s.code} ${s.name} ${s.plantId}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [sbus, sbuSearch, isAdmin, isDeptHead, user?.dept]);
+  }, [sbus, sbuSearch, isAdmin, isSbuHead, user?.sbu]);
 
   const filteredWorkCentres = useMemo(() => {
     const q = wcSearch.trim().toLowerCase();
@@ -242,7 +242,7 @@ export default function WorkCentersPage() {
       plant: f.plant || selectedPlantCode,
       sapCode: f.sapCode || f.code,
       isShared: false,
-      dept: "",
+      sbu: selectedSbu?.name || user?.sbu || "",
       sortOrder: Number(f.sortOrder) || 0,
       capabilityTags: [],
       matchKeywords: [String(f.code || "").trim()].filter(Boolean),
@@ -275,7 +275,7 @@ export default function WorkCentersPage() {
     try {
       const done = await syncWorkCentersFromSap({
         plantCode: selectedPlantCode,
-        dept: selectedSbu?.name || user?.dept || "",
+        sbu: selectedSbu?.name || user?.sbu || "",
       });
       if (activePlant.current !== selectedPlantCode) return;
       setPlantSbu({ items: done?.plant_sbu || [], loading: false, error: "" });

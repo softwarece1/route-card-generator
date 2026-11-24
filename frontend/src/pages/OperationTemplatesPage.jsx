@@ -14,7 +14,7 @@ import TableComponent, {
 } from "@/components/TableComponent";
 import { getUser } from "@/lib/auth";
 import { toast } from "@/lib/toast";
-import { fetchDepartments } from "@/services/authApi";
+import { fetchSbus } from "@/services/authApi";
 import {
   createOperationTemplate,
   deleteOperationTemplate,
@@ -54,18 +54,18 @@ const EMPTY_STEP = () => ({
 export default function OperationTemplatesPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
-  const isDeptHead = user?.role === "dept_head";
+  const isSbuHead = user?.role === "sbu_head";
   const isIed = user?.role === "ied";
-  const canManage = isAdmin || isDeptHead || isIed;
+  const canManage = isAdmin || isSbuHead || isIed;
   const isEngineer = !canManage;
 
   const [tab, setTab] = useState(0);
   const [ownItems, setOwnItems] = useState([]);
   const [otherItems, setOtherItems] = useState([]);
   const [adminItems, setAdminItems] = useState([]);
-  const [departments, setDepartments] = useState([]);
-  const [adminDept, setAdminDept] = useState(null);
-  const [otherDept, setOtherDept] = useState(null);
+  const [sbus, setSbus] = useState([]);
+  const [adminSbu, setAdminSbu] = useState(null);
+  const [otherSbu, setOtherSbu] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [viewTpl, setViewTpl] = useState(null);
@@ -77,17 +77,17 @@ export default function OperationTemplatesPage() {
     name: "",
     description: "",
     placement: "any",
-    dept: user?.dept || "",
+    sbu: user?.sbu || "",
     steps: [EMPTY_STEP()],
     saving: false,
   });
   const [wcCatalog, setWcCatalog] = useState([]);
 
   useEffect(() => {
-    fetchWorkCenterCatalog(user?.dept)
+    fetchWorkCenterCatalog(user?.sbu)
       .then((rows) => setWcCatalog(rows || []))
       .catch(() => setWcCatalog([]));
-  }, [user?.dept]);
+  }, [user?.sbu]);
 
   const wcOptions = useMemo(
     () =>
@@ -106,13 +106,13 @@ export default function OperationTemplatesPage() {
     saving: false,
   });
 
-  const deptOptions = useMemo(
+  const sbuOptions = useMemo(
     () =>
-      departments.map((d) => ({
+      sbus.map((d) => ({
         label: d.name || d.label,
         value: d.name || d.value,
       })),
-    [departments],
+    [sbus],
   );
 
   const loadOwn = useCallback(async () => {
@@ -121,22 +121,22 @@ export default function OperationTemplatesPage() {
   }, []);
 
   const loadOther = useCallback(async () => {
-    if (!isDeptHead && !isAdmin) return;
+    if (!isSbuHead && !isAdmin) return;
     const res = await listOperationTemplates({
       scope: "other",
-      dept: otherDept || undefined,
+      dept: otherSbu || undefined,
     });
     setOtherItems(res.items || []);
-  }, [isDeptHead, isAdmin, otherDept]);
+  }, [isSbuHead, isAdmin, otherSbu]);
 
   const loadAdmin = useCallback(async () => {
     if (!isAdmin) return;
     const res = await listOperationTemplates({
       scope: "all",
-      dept: adminDept || undefined,
+      dept: adminSbu || undefined,
     });
     setAdminItems(res.items || []);
-  }, [isAdmin, adminDept]);
+  }, [isAdmin, adminSbu]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -146,23 +146,23 @@ export default function OperationTemplatesPage() {
         await loadAdmin();
       } else {
         await loadOwn();
-        if (isDeptHead && tab === 1) await loadOther();
+        if (isSbuHead && tab === 1) await loadOther();
       }
     } catch (err) {
       setError(err.message || "Failed to load templates");
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, isDeptHead, loadAdmin, loadOwn, loadOther, tab]);
+  }, [isAdmin, isSbuHead, loadAdmin, loadOwn, loadOther, tab]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const rows = await fetchDepartments();
-        if (!cancelled) setDepartments(Array.isArray(rows) ? rows : []);
+        const rows = await fetchSbus();
+        if (!cancelled) setSbus(Array.isArray(rows) ? rows : []);
       } catch {
-        if (!cancelled) setDepartments([]);
+        if (!cancelled) setSbus([]);
       }
     })();
     return () => {
@@ -175,10 +175,10 @@ export default function OperationTemplatesPage() {
   }, [refresh]);
 
   useEffect(() => {
-    if (tab === 1 && isDeptHead) {
+    if (tab === 1 && isSbuHead) {
       loadOther().catch((err) => setError(err.message || "Failed to load"));
     }
-  }, [tab, isDeptHead, loadOther]);
+  }, [tab, isSbuHead, loadOther]);
 
   const openCreate = () => {
     setEditor({
@@ -188,7 +188,7 @@ export default function OperationTemplatesPage() {
       name: "",
       description: "",
       placement: "any",
-      dept: user?.dept || "",
+      sbu: user?.sbu || "",
       steps: [EMPTY_STEP()],
       saving: false,
     });
@@ -204,7 +204,7 @@ export default function OperationTemplatesPage() {
         name: full.name || "",
         description: full.description || "",
         placement: full.placement || "any",
-        dept: full.dept || "",
+        sbu: full.sbu || "",
         steps: (full.steps || []).map((s) => ({
           ...EMPTY_STEP(),
           ...s,
@@ -248,7 +248,7 @@ export default function OperationTemplatesPage() {
         steps,
       };
       if (editor.mode === "create") {
-        if (isAdmin && editor.dept) payload.dept = editor.dept;
+        if (isAdmin && editor.sbu) payload.sbu = editor.sbu;
         await createOperationTemplate(payload);
       } else {
         await updateOperationTemplate(editor.id, payload);
@@ -275,7 +275,7 @@ export default function OperationTemplatesPage() {
 
   const openDup = (row) => {
     if (row.alreadyCopied) {
-      toast.info("Already copied into your department");
+      toast.info("Already copied into your SBU");
       return;
     }
     setDup({
@@ -294,7 +294,7 @@ export default function OperationTemplatesPage() {
         name: dup.name.trim() || undefined,
       });
       setDup({ visible: false, source: null, name: "", saving: false });
-      toast.success("Duplicated into your department");
+      toast.success("Duplicated into your SBU");
       setTab(0);
       await refresh();
     } catch (err) {
@@ -341,10 +341,10 @@ export default function OperationTemplatesPage() {
   };
 
   const pageDescription = isEngineer
-    ? `View-only packs for ${user?.dept || "your department"}. Apply them from OARC preview.`
+    ? `View-only packs for ${user?.sbu || "your SBU"}. Apply them from OARC preview.`
     : isAdmin
-      ? "Manage packs across departments — filter by dept, create and edit."
-      : "Create and edit packs for your team; browse other depts to duplicate.";
+      ? "Manage packs across SBUs — filter by SBU, create and edit."
+      : "Create and edit packs for your team; browse other SBUs to duplicate.";
 
   const actionsCol = (row, { allowEdit }) => (
     <TableActions>
@@ -384,10 +384,10 @@ export default function OperationTemplatesPage() {
     </TableActions>
   );
 
-  const templateColumns = ({ includeDept, allowEdit, otherDup }) => [
+  const templateColumns = ({ includeSbu, allowEdit, otherDup }) => [
     { type: "index", header: "#", style: { width: "3.25rem" } },
-    ...(includeDept
-      ? [{ field: "dept", header: "Department", sortable: true, style: { width: "8rem" } }]
+    ...(includeSbu
+      ? [{ field: "sbu", header: "SBU", sortable: true, style: { width: "8rem" } }]
       : []),
     { field: "name", header: "Name", sortable: true },
     {
@@ -427,8 +427,8 @@ export default function OperationTemplatesPage() {
             disabled={Boolean(row.alreadyCopied)}
             tooltip={
               row.alreadyCopied
-                ? "Already in your department — delete the copy first to duplicate again"
-                : "Duplicate into my department"
+                ? "Already in your SBU — delete the copy first to duplicate again"
+                : "Duplicate into my SBU"
             }
             tooltipOptions={{ position: "top" }}
             onClick={() => openDup(row)}
@@ -465,10 +465,10 @@ export default function OperationTemplatesPage() {
           <>
             <div className="rc-otpl__other-bar">
               <Dropdown
-                value={adminDept}
-                options={[{ label: "All departments", value: null }, ...deptOptions]}
-                onChange={(e) => setAdminDept(e.value)}
-                placeholder="Filter department"
+                value={adminSbu}
+                options={[{ label: "All SBUs", value: null }, ...sbuOptions]}
+                onChange={(e) => setAdminSbu(e.value)}
+                placeholder="Filter SBU"
                 className="rc-otpl__dept-filter"
                 showClear
               />
@@ -488,7 +488,7 @@ export default function OperationTemplatesPage() {
               paginator
               rows={10}
               emptyMessage="No templates yet."
-              columns={templateColumns({ includeDept: true, allowEdit: true })}
+              columns={templateColumns({ includeSbu: true, allowEdit: true })}
             />
           </>
         ) : isEngineer ? (
@@ -498,12 +498,12 @@ export default function OperationTemplatesPage() {
             dataKey="id"
             paginator
             rows={10}
-            emptyMessage="No templates in your department yet."
-            columns={templateColumns({ includeDept: false, allowEdit: false })}
+            emptyMessage="No templates in your SBU yet."
+            columns={templateColumns({ includeSbu: false, allowEdit: false })}
           />
         ) : (
           <TabView activeIndex={tab} onTabChange={(e) => setTab(e.index)}>
-            <TabPanel header="My department">
+            <TabPanel header="My SBU">
               <TableComponent
                 value={ownItems}
                 loading={loading}
@@ -511,19 +511,19 @@ export default function OperationTemplatesPage() {
                 paginator
                 rows={10}
                 emptyMessage="No templates yet. Create a pack to get started."
-                columns={templateColumns({ includeDept: false, allowEdit: true })}
+                columns={templateColumns({ includeSbu: false, allowEdit: true })}
               />
             </TabPanel>
-            <TabPanel header="Dept rules">
+            <TabPanel header="SBU rules">
               <DeptRulesPanel />
             </TabPanel>
-            <TabPanel header="Other departments">
+            <TabPanel header="Other SBUs">
               <div className="rc-otpl__other-bar">
                 <Dropdown
-                  value={otherDept}
-                  options={[{ label: "All other departments", value: null }, ...deptOptions]}
-                  onChange={(e) => setOtherDept(e.value)}
-                  placeholder="Filter department"
+                  value={otherSbu}
+                  options={[{ label: "All other SBUs", value: null }, ...sbuOptions]}
+                  onChange={(e) => setOtherSbu(e.value)}
+                  placeholder="Filter SBU"
                   className="rc-otpl__dept-filter"
                   showClear
                 />
@@ -542,9 +542,9 @@ export default function OperationTemplatesPage() {
                 dataKey="id"
                 paginator
                 rows={10}
-                emptyMessage="No templates in other departments."
+                emptyMessage="No templates in other SBUs."
                 columns={templateColumns({
-                  includeDept: true,
+                  includeSbu: true,
                   allowEdit: false,
                   otherDup: true,
                 })}
@@ -594,13 +594,13 @@ export default function OperationTemplatesPage() {
           </div>
           {isAdmin && editor.mode === "create" ? (
             <div className="rc-otpl-form__row">
-              <label>Department</label>
+              <label>SBU</label>
               <Dropdown
-                value={editor.dept}
-                options={deptOptions}
-                onChange={(e) => setEditor((x) => ({ ...x, dept: e.value }))}
+                value={editor.sbu}
+                options={sbuOptions}
+                onChange={(e) => setEditor((x) => ({ ...x, sbu: e.value }))}
                 className="w-full"
-                placeholder="Department"
+                placeholder="SBU"
               />
             </div>
           ) : null}
@@ -749,19 +749,23 @@ export default function OperationTemplatesPage() {
                   })()}
                 </div>
                 <div>
-                  <label>Setup</label>
+                  <label>Setup (in hrs)</label>
                   <SafeInputText profile="text"
                     value={step.setup}
                     onChange={(e) => updateStep(step._key, "setup", e.target.value)}
                     className="w-full"
+                    inputMode="decimal"
+                    placeholder="e.g. 0.25"
                   />
                 </div>
                 <div>
-                  <label>Per pc time</label>
+                  <label>Per pc time (in hrs)</label>
                   <SafeInputText profile="text"
                     value={step.time}
                     onChange={(e) => updateStep(step._key, "time", e.target.value)}
                     className="w-full"
+                    inputMode="decimal"
+                    placeholder="e.g. 0.25"
                   />
                 </div>
                 <div className="rc-otpl-step__full">
@@ -781,7 +785,7 @@ export default function OperationTemplatesPage() {
       </Dialog>
 
       <Dialog
-        header="Duplicate into my department"
+        header="Duplicate into my SBU"
         visible={dup.visible}
         onHide={() => setDup({ visible: false, source: null, name: "", saving: false })}
         style={{ width: "min(28rem, 96vw)" }}
@@ -808,8 +812,8 @@ export default function OperationTemplatesPage() {
         }
       >
         <p className="m-0 mb-3 text-sm" style={{ color: "var(--pmf-text-muted)" }}>
-          Copying from {dup.source?.dept} / {dup.source?.name} into{" "}
-          <strong>{user?.dept || "your department"}</strong>.
+          Copying from {dup.source?.sbu} / {dup.source?.name} into{" "}
+          <strong>{user?.sbu || "your SBU"}</strong>.
         </p>
         <label className="block mb-1 text-sm">New name</label>
         <SafeInputText profile="text"

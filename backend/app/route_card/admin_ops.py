@@ -88,7 +88,7 @@ def storage_stats() -> dict:
         dept = ""
         if sess and sess.user:
             emp = sess.user.emp_id or ""
-            dept = sess.user.dept or ""
+            dept = sess.user.sbu or ""
         by_dept[dept or "(none)"] = by_dept.get(dept or "(none)", 0) + sz
         by_user[emp or "(none)"] = by_user.get(emp or "(none)", 0) + sz
     for sess in select(s for s in RcSession).order_by(desc(RcSession.updated_at))[:100]:
@@ -99,14 +99,14 @@ def storage_stats() -> dict:
                 "status": sess.status,
                 "bytes": sz,
                 "empId": sess.user.emp_id if sess.user else None,
-                "dept": sess.user.dept if sess.user else None,
+                "sbu": sess.user.sbu if sess.user else None,
                 "updatedAt": sess.updated_at.isoformat() + "Z" if sess.updated_at else None,
             }
         )
     return {
         "uploadRoot": str(root),
         "totalBytes": total,
-        "byDept": [{"dept": k, "bytes": v} for k, v in sorted(by_dept.items())],
+        "byDept": [{"sbu": k, "bytes": v} for k, v in sorted(by_dept.items())],
         "byUser": [{"empId": k, "bytes": v} for k, v in sorted(by_user.items(), key=lambda x: -x[1])[:50]],
         "recentSessions": sessions,
     }

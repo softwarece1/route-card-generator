@@ -26,10 +26,9 @@ def _ensure_user(emp_id: str = "888877", password: str = "CookieAuthPass2026!#")
     with db_session:
         u = RcUser.get(emp_id=emp_id)
         if not u:
-            u = RcUser(
-                emp_id=emp_id,
+            u = RcUser(emp_id=emp_id,
                 name="Cookie Test",
-                dept="Software",
+                sbu="Software",
                 password_hash=hash_password(password),
                 role="engineer",
                 is_active=True,

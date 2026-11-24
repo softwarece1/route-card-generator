@@ -213,10 +213,9 @@ def test_jwt_session_idle_and_revocation():
     with db_session:
         u = RcUser.get(emp_id="999998")
         if not u:
-            u = RcUser(
-                emp_id="999998",
+            u = RcUser(emp_id="999998",
                 name="JWT Revoke Test",
-                dept="Software",
+                sbu="Software",
                 password_hash=hash_password("TestSecurePass2026!#"),
                 role="engineer",
                 is_active=True,
@@ -343,10 +342,9 @@ def test_login_captcha_scenarios():
     with db_session:
         u = RcUser.get(emp_id="999999")
         if not u:
-            RcUser(
-                emp_id="999999",
+            RcUser(emp_id="999999",
                 name="Security Test User",
-                dept="Software",
+                sbu="Software",
                 password_hash=hash_password("TestSecurePass2026!#"),
                 role="engineer",
                 is_active=True,

@@ -29,7 +29,7 @@ function DocSvg() {
   );
 }
 
-/** Stationary magnifying glass over the stage center. */
+/** Magnifying glass — zig-zag scan driven by CSS over the center doc. */
 function MagnifierSvg() {
   return (
     <svg
@@ -67,14 +67,18 @@ function MagnifierSvg() {
 
 /**
  * Fixed viewport-centered analyze overlay over the main content pane only
- * (sidebar + topbar stay clear). Three docs travel RTL under a fixed magnifier.
+ * (sidebar + topbar stay clear). Three docs travel RTL with left / enlarged
+ * center / right holds; magnifier zig-zags only during center dwells.
  */
 export default function PmfAnalyzeLoader({
   visible = false,
   onCancel,
-  message = "Analyzing",
+  message = "Analyzing…",
+  detail = "",
+  progress = 0,
 }) {
   const [box, setBox] = useState(null);
+  const pct = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
 
   useEffect(() => {
     if (!visible) {
@@ -148,19 +152,53 @@ export default function PmfAnalyzeLoader({
             <MagnifierSvg />
           </div>
         </div>
-        <p className="pmf-analyze-loader__caption">{message}</p>
-        {typeof onCancel === "function" ? (
-          <Button
-            type="button"
-            label="Stop"
-            icon="pi pi-stop"
-            size="small"
-            outlined
-            severity="danger"
-            className="pmf-analyze-loader__stop"
-            onClick={onCancel}
-          />
-        ) : null}
+
+        <p className="pmf-analyze-loader__caption">Processing…</p>
+
+        <div className="pmf-analyze-loader__status">
+          <span className="pmf-analyze-loader__spinner" aria-hidden />
+          <span className="pmf-analyze-loader__status-text">
+            {message || "Analyzing…"}
+            {detail ? (
+              <span className="pmf-analyze-loader__status-detail"> — {detail}</span>
+            ) : null}
+          </span>
+        </div>
+
+        <div className="pmf-analyze-loader__footer">
+          <div
+            className="pmf-analyze-loader__progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={pct}
+            role="progressbar"
+          >
+            <div className="pmf-analyze-loader__progress-meta">
+              <span className="pmf-analyze-loader__progress-label">Progress</span>
+              <span className="pmf-analyze-loader__progress-pct">{pct}%</span>
+            </div>
+            <div className="pmf-analyze-loader__progress-row">
+              <div className="pmf-analyze-loader__progress-track">
+                <div
+                  className="pmf-analyze-loader__progress-fill"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              {typeof onCancel === "function" ? (
+                <Button
+                  type="button"
+                  label="Stop"
+                  icon="pi pi-stop"
+                  size="small"
+                  outlined
+                  severity="danger"
+                  className="pmf-analyze-loader__stop"
+                  onClick={onCancel}
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

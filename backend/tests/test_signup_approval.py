@@ -1,4 +1,4 @@
-"""Self-service engineer signup approval (dept_head / admin)."""
+"""Self-service engineer signup approval (sbu_head / admin)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import secrets
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
-from pony.orm import commit, db_session
+from pony.orm import commit, db_session, select
 from starlette.testclient import TestClient
 
 from app.auth_crypto import ALG as CREDS_ALG
@@ -17,7 +17,7 @@ from app.auth_crypto import _private_key
 from app.config.settings import settings
 from app.database.connection import connect_to_db
 from app.main import app
-from app.route_card.models import RcDepartment, RcNotification, RcUser
+from app.route_card.models import RcNotification, RcSbu, RcUser
 from app.security import hash_password
 
 client = TestClient(app)
@@ -40,10 +40,10 @@ def _encrypt(payload: dict) -> str:
 def _ensure_dept(name: str = "Software") -> str:
     connect_to_db()
     with db_session:
-        d = RcDepartment.get(name=name)
+        d = select(x for x in RcSbu if x.name == name)[:1]
         if not d:
-            code = (name[:8] or "SFT").upper()
-            RcDepartment(code=code, name=name, is_active=True, sort_order=99)
+            code = (name[:8] or "SFT").upper().replace(" ", "_")
+            RcSbu(code=code, name=name, plant_id="1110", is_active=True, sort_order=99)
             commit()
     return name
 
@@ -55,16 +55,16 @@ def _ensure_head(dept: str, emp_id: str = "700001") -> int:
         if not u:
             u = RcUser(
                 emp_id=emp_id,
-                name="Test Dept Head",
-                dept=dept,
+                name="Test SBU Head",
+                sbu=dept,
                 password_hash=hash_password("HeadPass2026!#Aa"),
-                role="dept_head",
+                role="sbu_head",
                 is_active=True,
                 approval_status="approved",
             )
         else:
-            u.role = "dept_head"
-            u.dept = dept
+            u.role = "sbu_head"
+            u.sbu = dept
             u.is_active = True
             u.approval_status = "approved"
             u.password_hash = hash_password("HeadPass2026!#Aa")
@@ -104,7 +104,7 @@ def test_signup_pending_no_cookie_and_notifies_head(captcha_off):
         "/api/v1/auth/signup",
         json={
             "name": "Pending Engineer",
-            "dept": dept,
+            "sbu": dept,
             "cipher": _encrypt({"empId": emp_id, "password": password}),
             "alg": CREDS_ALG,
         },
@@ -161,7 +161,7 @@ def test_approve_and_reject_signup(captcha_off):
             "/api/v1/auth/signup",
             json={
                 "name": "Pending Engineer Two" if emp == emp_ok else "Pending Engineer Three",
-                "dept": dept,
+                "sbu": dept,
                 "cipher": _encrypt({"empId": emp, "password": password}),
                 "alg": CREDS_ALG,
             },
@@ -172,8 +172,8 @@ def test_approve_and_reject_signup(captcha_off):
         uid_ok = RcUser.get(emp_id=emp_ok).id
         uid_bad = RcUser.get(emp_id=emp_bad).id
 
-    head_token = _token_for(head_id, "700022", "dept_head")
-    other_token = _token_for(other_head_id, "700044", "dept_head")
+    head_token = _token_for(head_id, "700022", "sbu_head")
+    other_token = _token_for(other_head_id, "700044", "sbu_head")
 
     # Wrong dept cannot approve
     denied = client.post(
@@ -206,7 +206,7 @@ def test_approve_and_reject_signup(captcha_off):
         json={"cipher": _encrypt({"empId": emp_ok, "password": password})},
     )
     assert login_ok.status_code == 200, login_ok.text
-    # Drop engineer cookie so subsequent Bearer calls use the dept_head token
+    # Drop engineer cookie so subsequent Bearer calls use the sbu_head token
     client.cookies.clear()
 
     # Reject requires remark

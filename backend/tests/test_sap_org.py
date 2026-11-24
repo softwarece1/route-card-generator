@@ -162,7 +162,7 @@ def test_empty_work_centres_do_not_stamp_success(sync_stubs):
 def api_client(monkeypatch):
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[get_current_user] = lambda: {"role": "admin", "dept": "SBU A"}
+    app.dependency_overrides[get_current_user] = lambda: {"role": "admin", "sbu": "SBU A"}
     monkeypatch.setattr(plants, "resolve_sync_plant_code", lambda user, plant: plant or "1190")
     with TestClient(app) as client:
         yield client, app

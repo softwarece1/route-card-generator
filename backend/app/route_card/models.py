@@ -11,9 +11,9 @@ class RcUser(db.Entity):
     id = PrimaryKey(int, auto=True)
     emp_id = Required(str, unique=True)
     name = Required(str)
-    dept = Optional(str, default="")
+    sbu = Optional(str, default="")  # matches RcSbu.name
     password_hash = Required(str)
-    role = Required(str, default="engineer")  # admin | dept_head | engineer | ied
+    role = Required(str, default="engineer")  # admin | sbu_head | engineer | ied
     is_active = Required(bool, default=True)
     must_change_password = Required(bool, default=False)
     created_at = Required(datetime, default=datetime.utcnow)
@@ -23,7 +23,7 @@ class RcUser(db.Entity):
     approval_decided_at = Optional(datetime)
     approval_decided_by = Optional("RcUser", reverse="signup_approvals_decided")
     signup_approvals_decided = Set("RcUser", reverse="approval_decided_by")
-    # Engineer → dept_head (same dept). Null for admin / dept_head / ied.
+    # Engineer → sbu_head (same SBU). Null for admin / sbu_head / ied.
     reports_to = Optional("RcUser", reverse="direct_reports")
     direct_reports = Set("RcUser", reverse="reports_to")
     sessions = Set("RcSession")
@@ -59,33 +59,36 @@ class RcAuthSession(db.Entity):
     last_seen_at = Required(datetime, default=datetime.utcnow)
 
 
-class RcPlant(db.Entity):
-    """SAP plant / WERKS master for sync dropdowns."""
+class RcSbu(db.Entity):
+    """SBU master for signup / org dropdown (one SAP plant / WERKS per SBU)."""
 
-    _table_ = ("route_card", "plants")
-
-    id = PrimaryKey(int, auto=True)
-    code = Required(str, unique=True)  # e.g. 1110
-    name = Required(str)
-    description = Optional(str, default="")
-    is_active = Required(bool, default=True)
-    sort_order = Required(int, default=0)
-    work_center_synced_at = Optional(datetime)
-    created_at = Required(datetime, default=datetime.utcnow)
-
-
-class RcDepartment(db.Entity):
-    """SBU master (stored as departments) for signup / org dropdown."""
-
-    _table_ = ("route_card", "departments")
+    _table_ = ("route_card", "sbus")
 
     id = PrimaryKey(int, auto=True)
     code = Required(str, unique=True)
     name = Required(str)
-    plant_id = Optional(str, default="")  # one SAP plant / WERKS per SBU
+    plant_id = Optional(str, default="")  # SAP plant / WERKS code
+    is_active = Required(bool, default=True)
+    sort_order = Required(int, default=0)
+    work_center_synced_at = Optional(datetime)  # last WC sync for this SBU's plant
+    created_at = Required(datetime, default=datetime.utcnow)
+    departments = Set("RcDepartment")
+
+
+class RcDepartment(db.Entity):
+    """Department under an SBU (stub — data/UI in a later plan)."""
+
+    _table_ = ("route_card", "departments")
+
+    id = PrimaryKey(int, auto=True)
+    sbu = Required(RcSbu)
+    code = Required(str)
+    name = Required(str)
     is_active = Required(bool, default=True)
     sort_order = Required(int, default=0)
     created_at = Required(datetime, default=datetime.utcnow)
+
+    composite_key(sbu, code)
 
 
 class RcSession(db.Entity):
@@ -221,12 +224,12 @@ class RcInspectionChar(db.Entity):
 
 
 class RcOperationTemplate(db.Entity):
-    """Department-owned pack of reusable operations (1..N steps)."""
+    """SBU-owned pack of reusable operations (1..N steps)."""
 
     _table_ = ("route_card", "operation_templates")
 
     id = PrimaryKey(int, auto=True)
-    dept = Required(str)
+    sbu = Required(str)
     name = Required(str)
     description = Optional(str, default="")
     placement = Required(str, default="any")  # pre | post | any
@@ -320,7 +323,7 @@ class RcNotification(db.Entity):
 
 
 class RcRouteRemark(db.Entity):
-    """Flat discussion thread on a route card (eng / dept_head / IED)."""
+    """Flat discussion thread on a route card (eng / sbu_head / IED)."""
 
     _table_ = ("route_card", "route_remarks")
 
@@ -343,11 +346,11 @@ class RcUserFavorite(db.Entity):
     created_at = Required(datetime, default=datetime.utcnow)
 
 
-class RcDeptRules(db.Entity):
-    _table_ = ("route_card", "dept_rules")
+class RcSbuRules(db.Entity):
+    _table_ = ("route_card", "sbu_rules")
 
     id = PrimaryKey(int, auto=True)
-    dept = Required(str, unique=True)
+    sbu = Required(str, unique=True)
     rules = Optional(Json)  # autoTemplateIds, keywords, wcAliases, promptAddendum, phrasing
     updated_at = Required(datetime, default=datetime.utcnow)
     updated_by = Optional(str)
@@ -357,7 +360,7 @@ class RcFewShotExample(db.Entity):
     _table_ = ("route_card", "few_shot_examples")
 
     id = PrimaryKey(int, auto=True)
-    dept = Required(str)
+    sbu = Required(str)
     doc_type = Optional(str, default="drawing")
     title = Required(str)
     input_excerpt = Optional(str)
@@ -368,12 +371,12 @@ class RcFewShotExample(db.Entity):
 
 
 class RcWorkCenter(db.Entity):
-    """Department-owned (or shared plant) work centre master."""
+    """SBU-owned (or shared plant) work centre master."""
 
     _table_ = ("route_card", "work_centers")
 
     id = PrimaryKey(int, auto=True)
-    dept = Optional(str)  # empty/None when is_shared
+    sbu = Optional(str)  # empty/None when is_shared
     code = Required(str)
     name = Required(str)
     mode = Required(str, default="hybrid")  # manual | machine | hybrid
@@ -397,7 +400,7 @@ class RcMachine(db.Entity):
     plant = Optional(str)
     work_centre = Required(str)  # denormalized label (legacy + display)
     work_center = Optional(RcWorkCenter)
-    dept = Optional(str)
+    sbu = Optional(str)
     code = Optional(str)
     sap_code = Optional(str)
     name = Required(str)

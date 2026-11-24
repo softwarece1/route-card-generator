@@ -1375,6 +1375,18 @@ class LocalVlmMind(DrawingMind):
                     "Drawing mind (local_vlm): vision steps sparse — merged onto OCR notes."
                 )
 
+        try:
+            from app.route_card.analyze_jobs import set_progress
+
+            n_notes = len(notes or [])
+            set_progress(
+                message="Extracting notes from GA…",
+                detail=f"Extracted {n_notes} of {n_notes} notes",
+                counts={"notes": n_notes, "notesTotal": n_notes},
+            )
+        except Exception:
+            pass
+
         # Stage B: full-page vision for AS SHOWN / DETAIL cues (additive)
         stage_b_placements: list[dict[str, Any]] = []
         stage_b_notes = [n for n in notes if needs_stage_b_vision(n.get("text") or "")]
@@ -1458,6 +1470,15 @@ class LocalVlmMind(DrawingMind):
         # Stage C: zone scan (cols 1–12 left→right, rows A–D top→bottom).
         # Full-page vision is only the fallback when a page yields no zone groups.
         assembly_groups: list[dict[str, Any]] = list(cpu_groups)
+        try:
+            from app.route_card.analyze_jobs import set_progress
+
+            set_progress(
+                message="Checking balloon points from drawing…",
+                detail=source_filename or "",
+            )
+        except Exception:
+            pass
         try:
             from app.route_card.drawing_mind.assembly_groups import (
                 dedupe_groups,
@@ -1575,6 +1596,16 @@ class LocalVlmMind(DrawingMind):
             )
             warnings.extend(f"VLM Stage C: {w}" for w in fwarns if w)
             assembly_groups = sort_groups_reading_order(assembly_groups)
+            try:
+                from app.route_card.analyze_jobs import set_progress
+
+                set_progress(
+                    message="Checking balloon points from drawing…",
+                    detail=f"Matched {len(assembly_groups)} balloon group(s)",
+                    counts={"balloonGroups": len(assembly_groups)},
+                )
+            except Exception:
+                pass
             # Confirmed GA border cell (A-8) only — omit when border/callout unconfirmed
             try:
                 from app.route_card.drawing_mind.border_zones import (
