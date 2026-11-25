@@ -170,6 +170,7 @@
     overflow: hidden;
   }
 
+  /* Parent .p-tabview-nav-content already scrolls (scrollbar hidden by Prime). */
   .p-tabview-nav {
     display: flex;
     flex-wrap: nowrap;
@@ -178,14 +179,20 @@
     border-bottom: 1px solid var(--pmf-border);
     margin-bottom: 0.85rem;
     gap: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: visible;
   }
 
-  .p-tabview-nav li {
+  /* Do not style the ink-bar <li> — display:flex here overrides Prime's
+     display:none and the bar's width (= selected tab) adds phantom overflow.
+     Worst on Engineer Review (widest header + status badge). */
+  .p-tabview-nav li:not(.p-tabview-ink-bar) {
     display: flex;
     flex: 0 0 auto;
     margin: 0 !important;
+  }
+
+  .p-tabview-nav li.p-tabview-ink-bar {
+    display: none !important;
   }
 
   .p-tabview-nav-link {
@@ -1146,16 +1153,152 @@
 
 /* Generated Route Card table — same density as BOM */
 #rca-sec-route {
-  .p-datatable.p-datatable-sm .p-datatable-thead > tr > th,
-  .p-datatable.p-datatable-sm .p-datatable-tbody > tr > td {
-    font-size: 0.78rem;
-    padding: 0.4rem 0.5rem;
+  &.om-create-order-section {
+    .om-create-order-section__toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.65rem;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .om-create-order-section__hint {
+      font-size: 0.8rem;
+      color: var(--pmf-text-muted);
+    }
   }
 
-  /* Only shrink icon-only action buttons — keep "Add operation" label visible */
-  .p-datatable .p-button.p-button-icon-only {
-    width: 1.85rem;
-    height: 1.85rem;
+  .om-create-order-table {
+    font-size: 0.875rem;
+    border: 1px solid var(--pmf-border);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background: var(--pmf-surface);
+    width: 100%;
+
+    .p-datatable-wrapper {
+      border-radius: inherit;
+      overflow: auto;
+    }
+
+    .p-datatable-thead > tr > th {
+      border-bottom: 1px solid var(--pmf-border);
+      background: var(--pmf-page-bg);
+      white-space: nowrap;
+      font-size: 0.8rem;
+      padding: 0.65rem 0.75rem;
+    }
+
+    .p-datatable-tbody > tr > td {
+      border-bottom: 1px solid var(--pmf-border);
+      padding: 0.45rem 0.55rem;
+      vertical-align: middle;
+    }
+
+    .p-datatable-tbody > tr:last-child > td {
+      border-bottom: none;
+    }
+
+    .p-datatable-reorderablerow-handle {
+      cursor: grab;
+      color: var(--pmf-text-muted);
+      font-size: 0.9rem;
+    }
+
+    .om-oprn-no {
+      display: inline-block;
+      min-width: 2.5rem;
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--pmf-ink-deep);
+    }
+
+    .p-inputtext,
+    .p-inputnumber,
+    .p-inputnumber-input,
+    .p-dropdown {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .p-inputtext,
+    .p-inputnumber-input {
+      height: 1.85rem;
+      font-size: 0.8rem;
+    }
+
+    .p-dropdown {
+      height: 1.85rem;
+      align-items: center;
+
+      .p-dropdown-label {
+        font-size: 0.8rem;
+        padding: 0.25rem 0.45rem;
+      }
+
+      .p-dropdown-trigger {
+        width: 1.85rem;
+      }
+    }
+
+    .p-button.p-button-icon-only {
+      width: 1.85rem;
+      height: 1.85rem;
+    }
+  }
+
+  .om-create-order-empty {
+    text-align: center;
+    padding: 1.5rem 1rem;
+    color: var(--pmf-text-muted);
+
+    &__sub {
+      font-size: 0.85rem;
+      margin: 0.35rem 0 0;
+    }
+  }
+
+  .om-op-desc-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+
+    &__input.p-inputtext {
+      width: 100%;
+      padding-right: 2.75rem;
+    }
+
+    &__actions {
+      position: absolute;
+      top: 50%;
+      right: 0.25rem;
+      transform: translateY(-50%);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
+
+  .om-op-instruction-btn {
+    width: 2rem;
+    height: 2rem;
+
+    &--filled {
+      color: var(--pmf-success) !important;
+    }
+  }
+
+  .om-op-instruction-dot {
+    position: absolute;
+    top: 0.2rem;
+    right: 0.2rem;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 999px;
+    background: var(--pmf-success);
   }
 }
 

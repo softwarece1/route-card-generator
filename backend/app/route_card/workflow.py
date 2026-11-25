@@ -237,7 +237,7 @@ def apply_auto_templates(
                 "machine": s.machine or "",
                 "tool": s.tool or "",
                 "itemsUsed": [],
-                "setup": s.setup or "1",
+                "setup": s.setup or "",
                 "time": s.time or "",
                 "inspection": s.inspection or "",
                 "instructionText": s.instruction_text or "",

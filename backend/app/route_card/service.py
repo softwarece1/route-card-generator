@@ -1029,7 +1029,7 @@ def op_to_out(o: RcOperation) -> dict:
         "itemsUsed": items_used if isinstance(items_used, list) else [],
         "torqueSpec": o.torque_spec or "",
         "reference": o.reference or "",
-        "setup": o.setup or "1",
+        "setup": o.setup or "",
         "time": o.time or "",
         "inspection": o.inspection or "",
         "instructionText": o.instruction_text or "",
@@ -1096,7 +1096,7 @@ def persist_route(drawing: RcDrawing, generated: dict, existing: RcRouteCard | N
             items_used=op.get("itemsUsed") or [],
             torque_spec=op.get("torqueSpec") or "",
             reference=op.get("reference") or "",
-            setup=op.get("setup") or "1",
+            setup=op.get("setup") or "",
             time=op.get("time") or "",
             inspection=op.get("inspection") or "",
             instruction_text=op.get("instructionText") or "",
@@ -3562,11 +3562,15 @@ def _public_user_row(u: RcUser) -> dict:
 
 
 def _pending_signup_row(u: RcUser) -> dict:
+    dept = getattr(u, "department", None)
     return {
         "id": u.id,
         "empId": u.emp_id,
         "name": u.name,
         "sbu": u.sbu or "",
+        "departmentId": dept.id if dept else None,
+        "departmentCode": (dept.code if dept else "") or "",
+        "departmentName": (dept.name if dept else "") or "",
         "role": u.role,
         "isActive": u.is_active,
         "approvalStatus": getattr(u, "approval_status", None) or "pending",

@@ -402,7 +402,7 @@ def generate_route(extraction: dict) -> dict:
             "itemsUsed": items_used,
             "torqueSpec": ", ".join(torque),
             "reference": ", ".join(dict.fromkeys(refs)),
-            "setup": "1",
+            "setup": "",
             "time": "",
             "inspection": _inspection_for_step(hint_text, torque),
             "instructionText": instruction_clean,

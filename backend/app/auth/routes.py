@@ -25,7 +25,7 @@ from app.auth_crypto import decrypt_creds_cipher, public_key_info
 from app.config.settings import settings
 from app.input_safe import require_safe
 from app.middleware.rate_limit import limiter
-from app.route_card.models import RcSbu, RcUser
+from app.route_card.models import RcDepartment, RcSbu, RcUser
 from app.security import hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -37,6 +37,7 @@ _ADMIN_EMP_ID = "admin"
 class SignupRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     sbu: str = Field(..., min_length=1, max_length=128)
+    departmentId: int = Field(..., ge=1)
     cipher: str = Field(..., min_length=1)
     alg: str = Field(default=CREDS_ALG, max_length=64)
 
@@ -227,6 +228,38 @@ def list_sbus(request: Request):
     ]
 
 
+@router.get("/departments")
+@limiter.limit("30/min")
+@db_session
+def list_signup_departments(request: Request, sbu: str = ""):
+    """Public signup helper: active departments for a selected SBU."""
+    from app.route_card.departments import ensure_default_departments
+
+    sbu_name = (sbu or "").strip()
+    if not sbu_name:
+        raise HTTPException(400, "sbu is required")
+    rows = select(d for d in RcSbu if d.is_active and d.name == sbu_name)[:1]
+    if not rows:
+        raise HTTPException(400, "Select a valid SBU")
+    master = rows[0]
+    ensure_default_departments(master)
+    depts = select(
+        d for d in RcDepartment if d.sbu == master and d.is_active
+    ).order_by(RcDepartment.sort_order, RcDepartment.name)[:]
+    return [
+        {
+            "id": d.id,
+            "code": d.code,
+            "name": d.name,
+            "sbuId": master.id,
+            "sbuName": master.name,
+            "label": d.name if d.code == d.name else f"{d.code} · {d.name}",
+            "value": d.id,
+        }
+        for d in depts
+    ]
+
+
 @router.get("/emp-status/{emp_id}")
 @limiter.limit("30/min")
 @db_session
@@ -277,6 +310,13 @@ def signup(request: Request, response: Response, body: SignupRequest):
     master = select(d for d in RcSbu if d.is_active and d.name == sbu)[:1]
     if not master:
         raise HTTPException(400, "Select a valid SBU")
+    master = master[0]
+
+    dept = RcDepartment.get(id=int(body.departmentId))
+    if not dept or not dept.is_active:
+        raise HTTPException(400, "Select a valid department")
+    if not dept.sbu or dept.sbu.id != master.id:
+        raise HTTPException(400, "Department must belong to the selected SBU")
 
     if RcUser.get(emp_id=emp_id):
         raise HTTPException(400, f"Employee ID '{emp_id}' is already registered")
@@ -285,6 +325,7 @@ def signup(request: Request, response: Response, body: SignupRequest):
         emp_id=emp_id,
         name=name,
         sbu=sbu,
+        department=dept,
         password_hash=hash_password(password),
         role="engineer",
         is_active=False,
@@ -294,7 +335,10 @@ def signup(request: Request, response: Response, body: SignupRequest):
     commit()
     try:
         _notify_signup_approvers(
-            emp_id=user.emp_id, name=user.name, dept=user.sbu or sbu, user_id=user.id
+            emp_id=user.emp_id,
+            name=user.name,
+            dept=f"{sbu} / {dept.name}",
+            user_id=user.id,
         )
     except Exception:
         pass
@@ -308,6 +352,9 @@ def signup(request: Request, response: Response, body: SignupRequest):
             "empId": user.emp_id,
             "name": user.name,
             "sbu": user.sbu or "",
+            "departmentId": dept.id,
+            "departmentName": dept.name or "",
+            "departmentCode": dept.code or "",
         },
     }
 

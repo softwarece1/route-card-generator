@@ -2060,7 +2060,7 @@ def validate_llm_route_ops(
                 "itemsUsed": items_used,
                 "torqueSpec": "",
                 "reference": str(op.get("reference") or ""),
-                "setup": "1",
+                "setup": "",
                 "time": "",
                 "inspection": str(op.get("inspection") or "Visual"),
                 "instructionText": instr,

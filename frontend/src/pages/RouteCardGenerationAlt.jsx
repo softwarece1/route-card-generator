@@ -6,7 +6,6 @@ import { DataTable } from "primereact/datatable";
 import { Dialog } from "primereact/dialog";
 import { confirmDialog } from "primereact/confirmdialog";
 import SafeInputText from "@/components/SafeInputText";
-import SafeInputTextarea from "@/components/SafeInputTextarea";
 import { Message } from "primereact/message";
 import { OverlayPanel } from "primereact/overlaypanel";
 import { ProgressBar } from "primereact/progressbar";
@@ -95,6 +94,13 @@ import "./route-card-generation-alt.scss";
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ADMIN_PLANT_LS_KEY = "pmf.admin.generatePlant";
 
+/** Normalize part / drawing ids so "1120 059 762 42" and "112005976242" match. */
+function chipIdentityKey(value) {
+  return String(value || "")
+    .replace(/[\s\-_/]/g, "")
+    .toLowerCase();
+}
+
 function readStoredAdminPlant() {
   try {
     return (localStorage.getItem(ADMIN_PLANT_LS_KEY) || "").trim();
@@ -150,7 +156,7 @@ const EMPTY_OPERATION = {
   items: "",
   torqueSpec: "",
   reference: "",
-  setup: "1",
+  setup: "",
   time: "",
   inspection: "—",
   instructionText: "",
@@ -448,7 +454,10 @@ export default function RouteCardGenerationAlt() {
   const [reviewStatus, setReviewStatus] = useState("ready");
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState(null);
-  const [editIsNew, setEditIsNew] = useState(false);
+  const persistOpsTimerRef = useRef(null);
+  const pendingRouteOpsRef = useRef(null);
+  /** Ignore InputNumber/Dropdown echo after server sync (prevents save loop). */
+  const suppressOpsPersistEchoRef = useRef(false);
   const [uploadingRole, setUploadingRole] = useState(null);
   const [uploadBatch, setUploadBatch] = useState(null);
   const [instrDialog, setInstrDialog] = useState({
@@ -480,6 +489,39 @@ export default function RouteCardGenerationAlt() {
   const [refDocPreview, setRefDocPreview] = useState(null);
   const [recentItems, setRecentItems] = useState([]);
   const [favorites, setFavorites] = useState([]);
+  /** Favorites first; recent hides anything already favorited (same session or part). */
+  const sessionChips = useMemo(() => {
+    const favSessionIds = new Set();
+    const favPartKeys = new Set();
+    const favChips = [];
+    for (const f of favorites || []) {
+      const sid = f.sessionId != null ? Number(f.sessionId) : null;
+      const partKey =
+        chipIdentityKey(f.partNumber) ||
+        chipIdentityKey(f.label);
+      if (sid && favSessionIds.has(sid)) continue;
+      if (partKey && favPartKeys.has(partKey)) continue;
+      if (sid) favSessionIds.add(sid);
+      if (partKey) favPartKeys.add(partKey);
+      favChips.push(f);
+      if (favChips.length >= 5) break;
+    }
+
+    const seenSessions = new Set();
+    const seenParts = new Set();
+    const recentChips = [];
+    for (const r of recentItems || []) {
+      const sid = r.sessionId != null ? Number(r.sessionId) : null;
+      const partKey = chipIdentityKey(r.partNumber);
+      if (sid && (favSessionIds.has(sid) || seenSessions.has(sid))) continue;
+      if (partKey && (favPartKeys.has(partKey) || seenParts.has(partKey))) continue;
+      if (sid) seenSessions.add(sid);
+      if (partKey) seenParts.add(partKey);
+      recentChips.push(r);
+      if (recentChips.length >= 5) break;
+    }
+    return { recent: recentChips, favorites: favChips };
+  }, [recentItems, favorites]);
   const [sheetDialogOpen, setSheetDialogOpen] = useState(false);
   const [openingSession, setOpeningSession] = useState(false);
   const [excelPreview, setExcelPreview] = useState(null);
@@ -627,21 +669,38 @@ export default function RouteCardGenerationAlt() {
 
   useEffect(() => {
     let cancelled = false;
+    const user = getUser();
+    const role = user?.role || "";
+    const ownSbu = String(user?.sbu || "").trim();
+    const selectedSbu = (sessionSbu || "").trim();
+    // Prefer session/selected SBU; fall back to the signed-in user's SBU.
+    const sbu = selectedSbu || (role !== "admin" ? ownSbu : "") || undefined;
     const plant =
-      (getUser()?.role === "admin" && (adminPlant || "").trim()) || undefined;
-    Promise.all([
-      fetchMachinesQuietly(),
-      fetchWorkCenterCatalog(undefined, { plant }),
-    ]).then(([m, wc]) => {
+      (role === "admin" && (adminPlant || "").trim()) ||
+      (sessionPlant || "").trim() ||
+      undefined;
+
+    (async () => {
+      const [m, primary] = await Promise.all([
+        fetchMachinesQuietly(),
+        fetchWorkCenterCatalog(sbu || undefined, {
+          plant: plant || undefined,
+        }),
+      ]);
+      let wc = primary || [];
+      // Cross-SBU catalog may 403 for non-admins — retry with own SBU.
+      if (!wc.length && ownSbu && sbu && sbu !== ownSbu && role !== "admin") {
+        wc = (await fetchWorkCenterCatalog(ownSbu, {})) || [];
+      }
       if (!cancelled) {
         setMachines(m || []);
-        setWcCatalog(wc || []);
+        setWcCatalog(wc);
       }
-    });
+    })();
     return () => {
       cancelled = true;
     };
-  }, [adminPlant]);
+  }, [adminPlant, sessionSbu, sessionPlant]);
 
   const ensurePlantsLoaded = useCallback(async () => {
     if (plants.length) return plants;
@@ -682,16 +741,27 @@ export default function RouteCardGenerationAlt() {
     [wcCatalog]
   );
 
-  const machineOptionsForEdit = useMemo(() => {
-    const wcId = editRow?.workCentreId;
-    const wc = (wcCatalog || []).find((w) => w.id === wcId);
-    const list = wc?.machines || [];
-    return list.map((m) => ({
-      label: m.isManualPlaceholder ? `${m.name} (manpower)` : m.name,
-      value: m.id,
-      raw: m,
-    }));
-  }, [wcCatalog, editRow?.workCentreId]);
+  /** Resolve dropdown value by id, else match free-text WC code/name from catalog. */
+  const resolveWcDropdownValue = useCallback(
+    (row) => {
+      if (row?.workCentreId != null && row.workCentreId !== "") {
+        const id = Number(row.workCentreId);
+        if ((wcCatalog || []).some((w) => Number(w.id) === id)) return id;
+      }
+      const key = String(row?.workCentre || row?.workCentreName || "")
+        .trim()
+        .toLowerCase();
+      if (!key) return null;
+      const match = (wcCatalog || []).find((w) => {
+        const code = String(w.code || "").trim().toLowerCase();
+        const name = String(w.name || "").trim().toLowerCase();
+        const sap = String(w.sapCode || "").trim().toLowerCase();
+        return key === code || key === name || (sap && key === sap);
+      });
+      return match ? Number(match.id) : null;
+    },
+    [wcCatalog]
+  );
 
   const plItemLookup = useMemo(() => {
     const map = {};
@@ -719,6 +789,21 @@ export default function RouteCardGenerationAlt() {
 
   const refDocsByCode = useMemo(() => indexFoundRefDocs(refDocsFound), [refDocsFound]);
 
+  /** Instruction text only — avoids re-resolve on every inline op/WC/time keystroke. */
+  const refDocScanText = useMemo(() => {
+    const chunks = [];
+    for (const n of extractedNotes || []) {
+      chunks.push(n?.text || "", n?.elaboratedText || "");
+    }
+    for (const op of suggestedOps || []) {
+      chunks.push(op?.instructionText || "", op?.reason || "");
+    }
+    for (const op of routeOps || []) {
+      chunks.push(op?.instructionText || "", op?.reason || "");
+    }
+    return chunks.join("\n");
+  }, [extractedNotes, suggestedOps, routeOps]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -739,17 +824,7 @@ export default function RouteCardGenerationAlt() {
       setRefDocsFound([]);
       return;
     }
-    const chunks = [];
-    for (const n of extractedNotes || []) {
-      chunks.push(n?.text || "", n?.elaboratedText || "");
-    }
-    for (const op of suggestedOps || []) {
-      chunks.push(op?.instructionText || "", op?.reason || "");
-    }
-    for (const op of routeOps || []) {
-      chunks.push(op?.instructionText || "", op?.reason || "");
-    }
-    const codes = extractRefCandidateCodes(chunks.join("\n"), refFolderCodes);
+    const codes = extractRefCandidateCodes(refDocScanText, refFolderCodes);
     if (!codes.length) {
       setRefDocsFound([]);
       return;
@@ -766,7 +841,7 @@ export default function RouteCardGenerationAlt() {
     return () => {
       cancelled = true;
     };
-  }, [extractedNotes, suggestedOps, routeOps, refFolderCodes]);
+  }, [refDocScanText, refFolderCodes]);
 
   useEffect(
     () => () => {
@@ -1243,31 +1318,122 @@ export default function RouteCardGenerationAlt() {
     proceedGenerate();
   };
 
-  const persistOps = async (rows) => {
-    if (!routeCardId) {
-      setRouteOps(rows);
-      return;
+  const clearPersistOpsTimer = () => {
+    if (persistOpsTimerRef.current) {
+      clearTimeout(persistOpsTimerRef.current);
+      persistOpsTimerRef.current = null;
     }
+    pendingRouteOpsRef.current = null;
+  };
+
+  const syncRouteStatusFromPayload = (payload) => {
+    if (!payload) return;
+    if (payload.id != null) setRouteCardId(payload.id);
+    const st = (payload.status || "").toLowerCase();
+    if (st === "approved") setReviewStatus("approved");
+    else if (st === "ied_review") setReviewStatus("ied_review");
+    else if (st === "ied_complete") setReviewStatus("ied_complete");
+    else if (st === "draft") setReviewStatus("draft");
+    else if (st) setReviewStatus("ready");
+  };
+
+  const persistOps = async (rows) => {
+    clearPersistOpsTimer();
+    setRouteOps(rows);
+    if (!routeCardId) return;
     try {
       const payload = await updateRouteCard(routeCardId, {
         operations: rows,
         inspection: inspectionChars,
       });
-      applyPayload(payload);
+      syncRouteStatusFromPayload(payload);
+      const serverOps = payload?.routeOperations;
+      if (Array.isArray(serverOps) && serverOps.length) {
+        const needsIdSync = serverOps.some(
+          (s, i) => String(s?.id) !== String(rows[i]?.id)
+        );
+        if (needsIdSync) {
+          suppressOpsPersistEchoRef.current = true;
+          setRouteOps(serverOps);
+          window.setTimeout(() => {
+            suppressOpsPersistEchoRef.current = false;
+          }, 50);
+        }
+      }
     } catch (error) {
       toast.error(error.message || "Could not save operations");
       setRouteOps(rows);
     }
   };
 
-  const openEdit = (row) => {
-    if (row) {
-      setEditIsNew(false);
-      setEditRow({ ...row });
-    } else {
-      setEditIsNew(true);
-      setEditRow({ ...EMPTY_OPERATION, id: `op-${Date.now()}`, opNo: nextOpNumber(routeOps) });
-    }
+  const updateRouteOp = (opId, patch) => {
+    if (suppressOpsPersistEchoRef.current) return;
+    setRouteOps((prev) => {
+      const list = prev || [];
+      const idx = list.findIndex((r) => String(r.id) === String(opId));
+      if (idx < 0) return list;
+      const row = list[idx];
+      const changed = Object.keys(patch).some((k) => {
+        const a = row[k];
+        const b = patch[k];
+        if (a === b) return false;
+        if (a == null && b == null) return false;
+        if (
+          (k === "setup" || k === "time" || k === "workCentreId") &&
+          a != null &&
+          b != null &&
+          Number(a) === Number(b)
+        ) {
+          return false;
+        }
+        return String(a ?? "") !== String(b ?? "");
+      });
+      if (!changed) return list;
+      const nextRows = list.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+      pendingRouteOpsRef.current = nextRows;
+      if (persistOpsTimerRef.current) clearTimeout(persistOpsTimerRef.current);
+      persistOpsTimerRef.current = setTimeout(() => {
+        persistOpsTimerRef.current = null;
+        const next = pendingRouteOpsRef.current;
+        pendingRouteOpsRef.current = null;
+        if (next) persistOps(next);
+      }, 500);
+      return nextRows;
+    });
+  };
+
+  const addRouteOp = async () => {
+    const newOp = {
+      ...EMPTY_OPERATION,
+      id: `op-${Date.now()}`,
+      opNo: nextOpNumber(routeOps),
+    };
+    const next = renumberRouteOps([...(routeOps || []), newOp]);
+    await persistOps(next);
+    toast.success("Route operation added.");
+  };
+
+  const onRouteOpsReorder = (e) => {
+    const proposed = e.value || [];
+    confirmDialog({
+      header: "Reorder operations",
+      message: "Reorder operations? Numbers will renumber 10, 20, 30…",
+      icon: "pi pi-sort-alt",
+      className: "p-confirm-dialog-sm",
+      acceptLabel: "Reorder",
+      rejectLabel: "Cancel",
+      acceptClassName: "p-button-sm",
+      rejectClassName: "p-button-sm p-button-outlined",
+      accept: async () => {
+        setSelectedRouteOps([]);
+        await persistOps(renumberRouteOps(proposed));
+        toast.success("Operations reordered.");
+      },
+    });
+  };
+
+  const openDetails = (row) => {
+    setEditRow({ ...row });
     setEditVisible(true);
   };
 
@@ -1421,9 +1587,9 @@ export default function RouteCardGenerationAlt() {
     toast.success("Instruction saved.");
   };
 
-  const saveEdit = async () => {
-    if (!editRow?.operation) {
-      toast.warn("Operation name is required.");
+  const saveDetails = async () => {
+    if (!editRow?.id) {
+      setEditVisible(false);
       return;
     }
     const nextRow = {
@@ -1431,18 +1597,19 @@ export default function RouteCardGenerationAlt() {
       linkStatus: "manual_override",
       type: editRow.workCentreName || editRow.workCentre || editRow.type,
     };
-    const exists = !editIsNew && routeOps.some((r) => String(r.id) === String(editRow.id));
-    const rows = exists
-      ? routeOps.map((r) => (String(r.id) === String(editRow.id) ? nextRow : r))
-      : [...routeOps, nextRow].sort((a, b) => Number(a.opNo) - Number(b.opNo));
+    const rows = (routeOps || []).map((r) =>
+      String(r.id) === String(editRow.id) ? nextRow : r
+    );
     setEditVisible(false);
-    setEditIsNew(false);
     await persistOps(rows);
-    toast.success(exists ? "Route operation updated." : "Route operation added.");
+    toast.success("Operation details updated.");
   };
 
   const removeOp = async (row) => {
-    await persistOps(routeOps.filter((r) => String(r.id) !== String(row.id)));
+    const next = renumberRouteOps(
+      (routeOps || []).filter((r) => String(r.id) !== String(row.id))
+    );
+    await persistOps(next);
     toast.info(`Removed OP ${row.opNo}.`);
   };
 
@@ -1624,6 +1791,8 @@ export default function RouteCardGenerationAlt() {
     (reviewStatus === "ied_review" && !isIedUser && !isAdminUser) ||
     (isIedUser && reviewStatus !== "ied_review");
   const iedFieldsOnly = reviewStatus === "ied_review" && isIedUser;
+  const canStructureOps = !opsReadOnly && !iedFieldsOnly;
+  const canEditTimes = !opsReadOnly;
 
   const shareToIed = async () => {
     if (!routeCardId) return;
@@ -1699,6 +1868,16 @@ export default function RouteCardGenerationAlt() {
       }
     })();
   }, []);
+
+  useEffect(
+    () => () => {
+      if (persistOpsTimerRef.current) {
+        clearTimeout(persistOpsTimerRef.current);
+        persistOpsTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const openSessionById = useCallback(
     async (sid, { fromUrl = false } = {}) => {
@@ -1850,10 +2029,10 @@ export default function RouteCardGenerationAlt() {
       ))}
 
         <div className="rca-content">
-          {(recentItems?.length > 0 || favorites?.length > 0) && (
+          {(sessionChips.recent.length > 0 || sessionChips.favorites.length > 0) && (
             <div className="rca-session-chips flex gap-2 flex-wrap mb-2 align-items-center">
               <span className="rca-session-chips__hint">Recent / favorites — click to reopen:</span>
-              {recentItems.slice(0, 5).map((r) => (
+              {sessionChips.recent.map((r) => (
                 <Button
                   key={`r-${r.sessionId}`}
                   type="button"
@@ -1866,7 +2045,7 @@ export default function RouteCardGenerationAlt() {
                   title={`Open session ${r.sessionId} in Generator`}
                 />
               ))}
-              {favorites.slice(0, 5).map((f) => (
+              {sessionChips.favorites.map((f) => (
                 <Button
                   key={`f-${f.id}`}
                   type="button"
@@ -1875,7 +2054,7 @@ export default function RouteCardGenerationAlt() {
                   severity={sessionId === f.sessionId ? undefined : "secondary"}
                   disabled={openingSession || !f.sessionId}
                   icon="pi pi-star"
-                  label={f.label || f.partNumber || `Fav ${f.id}`}
+                  label={f.partNumber || f.label || `Fav ${f.id}`}
                   onClick={() => f.sessionId && openSessionById(f.sessionId)}
                   title={f.sessionId ? `Open favorite session ${f.sessionId}` : "No session linked"}
                 />
@@ -2663,110 +2842,329 @@ export default function RouteCardGenerationAlt() {
               </TabPanel>
 
               <TabPanel header="Route Card">
-                <div id="rca-sec-route">
+                <div id="rca-sec-route" className="om-create-order-section">
                   {!showResults ? (
                     <Message severity="info" text="Route operations appear after analysis." className="w-full" />
                   ) : (
                     <>
-                      <div className="flex justify-content-end gap-2 mb-2 flex-wrap">
-                        
-                        <Button
-                          type="button"
-                          label="Merge same WC"
-                          icon="pi pi-objects-column"
-                          outlined
-                          size="small"
-                          disabled={opsReadOnly || iedFieldsOnly || !canMergeSameWc}
-                          onClick={mergeSameWcOps}
-                          tooltip={
-                            canMergeSameWc
-                              ? `Merge consecutive same-WC ops (${sameWcMergePreview.beforeCount} → ${sameWcMergePreview.afterCount})`
-                              : "No consecutive operations share the same work centre"
-                          }
-                          tooltipOptions={{ position: "top" }}
-                        />
-                        <Button
-                          type="button"
-                          label="Merge selected"
-                          icon="pi pi-compress"
-                          outlined
-                          size="small"
-                          disabled={
-                            opsReadOnly || iedFieldsOnly || (selectedRouteOps?.length || 0) < 2
-                          }
-                          onClick={mergeSelectedOps}
-                          tooltip="Merge consecutive selected ops into one (any WC)"
-                          tooltipOptions={{ position: "top" }}
-                        />
-                        <Button
-                          type="button"
-                          label="Add from template"
-                          icon="pi pi-list"
-                          outlined
-                          size="small"
-                          disabled={opsReadOnly || iedFieldsOnly}
-                          onClick={() => setTplPickerOpen(true)}
-                        />
-                        <Button
-                          type="button"
-                          label="Add operation"
-                          icon="pi pi-plus"
-                          outlined
-                          size="small"
-                          disabled={opsReadOnly || iedFieldsOnly}
-                          onClick={() => openEdit(null)}
-                        />
+                      <div className="om-create-order-section__toolbar">
+                        <span className="om-create-order-section__hint">
+                          {!canStructureOps
+                            ? canEditTimes
+                              ? "Edit setup and per-piece time (in hrs) only."
+                              : "Read-only — operations cannot be changed."
+                            : routeOps?.length
+                              ? "Drag rows to reorder. Operation numbers stay ascending (10, 20, 30…)."
+                              : "No operations yet. Click Add operation to start."}
+                        </span>
+                        {canStructureOps ? (
+                          <div className="flex gap-2 flex-wrap">
+                            <Button
+                              type="button"
+                              label="Merge same WC"
+                              icon="pi pi-objects-column"
+                              outlined
+                              size="small"
+                              disabled={!canMergeSameWc}
+                              onClick={mergeSameWcOps}
+                              tooltip={
+                                canMergeSameWc
+                                  ? `Merge consecutive same-WC ops (${sameWcMergePreview.beforeCount} → ${sameWcMergePreview.afterCount})`
+                                  : "No consecutive operations share the same work centre"
+                              }
+                              tooltipOptions={{ position: "top" }}
+                            />
+                            <Button
+                              type="button"
+                              label="Merge selected"
+                              icon="pi pi-compress"
+                              outlined
+                              size="small"
+                              disabled={(selectedRouteOps?.length || 0) < 2}
+                              onClick={mergeSelectedOps}
+                              tooltip="Merge consecutive selected ops into one (any WC)"
+                              tooltipOptions={{ position: "top" }}
+                            />
+                            <Button
+                              type="button"
+                              label="Add from template"
+                              icon="pi pi-list"
+                              outlined
+                              size="small"
+                              onClick={() => setTplPickerOpen(true)}
+                            />
+                            <Button
+                              type="button"
+                              label="Add operation"
+                              icon="pi pi-plus"
+                              size="small"
+                              onClick={addRouteOp}
+                            />
+                          </div>
+                        ) : null}
                       </div>
                       <DataTable
-                        className="rca-data-table"
+                        className="om-create-order-table"
                         value={routeOps}
-                        size="small"
-                        paginator
-                        rows={10}
-                        rowsPerPageOptions={[10, 25, 50, 100]}
-                        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
-                        currentPageReportTemplate="{first}-{last} of {totalRecords}"
-                        emptyMessage="No operations. Select consecutive rows to merge."
                         dataKey="id"
-                        {...(opsReadOnly || iedFieldsOnly
-                          ? {}
-                          : {
+                        size="small"
+                        scrollable
+                        scrollHeight="420px"
+                        tableStyle={{ minWidth: "64rem" }}
+                        reorderableRows={canStructureOps}
+                        onRowReorder={canStructureOps ? onRouteOpsReorder : undefined}
+                        emptyMessage={
+                          <div className="om-create-order-empty">
+                            <p>No operations added yet.</p>
+                            <p className="om-create-order-empty__sub">
+                              Click &quot;Add operation&quot; to start adding operations.
+                            </p>
+                          </div>
+                        }
+                        {...(canStructureOps
+                          ? {
                               selection: selectedRouteOps,
                               onSelectionChange: (e) => setSelectedRouteOps(e.value || []),
                               selectionMode: "checkbox",
-                            })}
+                            }
+                          : {})}
                       >
-                        {opsReadOnly || iedFieldsOnly ? null : (
+                        {canStructureOps ? (
                           <Column selectionMode="multiple" headerStyle={{ width: "2.5rem" }} />
-                        )}
-                        <Column field="opNo" header="Op No." style={{ width: "5rem" }} />
-                        <Column field="operation" header="Operation" />
-                        <Column field="workCentre" header="Work centre" />
-                        <Column field="machine" header="Machine" />
+                        ) : null}
+                        {canStructureOps ? (
+                          <Column rowReorder style={{ width: "3rem", minWidth: "3rem" }} />
+                        ) : null}
+                        <Column
+                          header="Op No."
+                          style={{ minWidth: "5rem", width: "5rem" }}
+                          body={(row) => <span className="om-oprn-no">{row.opNo}</span>}
+                        />
+                        <Column
+                          header="Operation"
+                          style={{ minWidth: "22rem" }}
+                          body={(row) => {
+                            const hasInstruction = Boolean(
+                              String(row.instructionText || row.reason || "").trim()
+                            );
+                            return (
+                              <div className="om-op-desc-field">
+                                <SafeInputText
+                                  profile="text"
+                                  value={row.operation || ""}
+                                  placeholder="Enter operation description"
+                                  className="om-op-desc-field__input w-full"
+                                  disabled={!canStructureOps}
+                                  onChange={(e) =>
+                                    updateRouteOp(row.id, { operation: e.target.value })
+                                  }
+                                />
+                                <div className="om-op-desc-field__actions">
+                                  <Button
+                                    type="button"
+                                    icon={hasInstruction ? "pi pi-file-edit" : "pi pi-align-left"}
+                                    className={`om-op-instruction-btn${hasInstruction ? " om-op-instruction-btn--filled" : ""}`}
+                                    rounded
+                                    text
+                                    size="small"
+                                    disabled={!canStructureOps && !hasInstruction}
+                                    tooltip={
+                                      canStructureOps
+                                        ? hasInstruction
+                                          ? "Edit instruction"
+                                          : "Add instruction"
+                                        : "View instruction"
+                                    }
+                                    tooltipOptions={{ position: "top" }}
+                                    aria-label={
+                                      canStructureOps
+                                        ? hasInstruction
+                                          ? "Edit instruction"
+                                          : "Add instruction"
+                                        : "View instruction"
+                                    }
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      openSuggestedInstruction(row);
+                                    }}
+                                  />
+                                  {hasInstruction ? (
+                                    <span className="om-op-instruction-dot" aria-hidden />
+                                  ) : null}
+                                </div>
+                              </div>
+                            );
+                          }}
+                        />
+                        <Column
+                          header="Work centre"
+                          style={{ minWidth: "14rem" }}
+                          body={(row) => {
+                            const selectedId = resolveWcDropdownValue(row);
+                            const orphanLabel = String(
+                              row.workCentre || row.workCentreName || ""
+                            ).trim();
+                            const options =
+                              selectedId != null || !orphanLabel
+                                ? wcDropdownOptions
+                                : [
+                                    {
+                                      label: `${orphanLabel} (not in SBU catalog)`,
+                                      value: -1,
+                                      raw: null,
+                                    },
+                                    ...wcDropdownOptions,
+                                  ];
+                            const value =
+                              selectedId != null
+                                ? selectedId
+                                : orphanLabel
+                                  ? -1
+                                  : null;
+                            if (!wcDropdownOptions.length && !orphanLabel) {
+                              return (
+                                <SafeInputText
+                                  profile="text"
+                                  value={row.workCentre || ""}
+                                  className="w-full"
+                                  placeholder="Work centre"
+                                  disabled={!canStructureOps}
+                                  onChange={(e) =>
+                                    updateRouteOp(row.id, {
+                                      workCentre: e.target.value,
+                                      workCentreId: null,
+                                      linkStatus: "manual_override",
+                                    })
+                                  }
+                                />
+                              );
+                            }
+                            if (!wcDropdownOptions.length) {
+                              return (
+                                <SafeInputText
+                                  profile="text"
+                                  value={row.workCentre || ""}
+                                  className="w-full"
+                                  placeholder="No SBU work centres loaded"
+                                  disabled={!canStructureOps}
+                                  onChange={(e) =>
+                                    updateRouteOp(row.id, {
+                                      workCentre: e.target.value,
+                                      workCentreId: null,
+                                      linkStatus: "manual_override",
+                                    })
+                                  }
+                                />
+                              );
+                            }
+                            return (
+                              <Dropdown
+                                value={value}
+                                options={options}
+                                optionLabel="label"
+                                optionValue="value"
+                                className="w-full rca-edit-dropdown"
+                                panelClassName="rca-edit-dropdown-panel"
+                                appendTo={
+                                  typeof document !== "undefined" ? document.body : null
+                                }
+                                placeholder="Select work centre"
+                                filter={options.length > 8}
+                                filterPlaceholder="Search…"
+                                showClear
+                                disabled={!canStructureOps}
+                                onChange={(e) => {
+                                  const id =
+                                    e.value != null && e.value !== "" && Number(e.value) > 0
+                                      ? Number(e.value)
+                                      : null;
+                                  const wc = (wcCatalog || []).find(
+                                    (w) => Number(w.id) === id
+                                  );
+                                  updateRouteOp(row.id, {
+                                    workCentreId: id,
+                                    workCentre: wc ? wc.code || wc.name : "",
+                                    workCentreName: wc?.name || "",
+                                    type: wc?.name || wc?.code || row.type || "",
+                                    linkStatus: "manual_override",
+                                  });
+                                }}
+                              />
+                            );
+                          }}
+                        />
+                        <Column
+                          header="Setup time (hrs)"
+                          style={{ minWidth: "8.5rem", width: "8.5rem" }}
+                          body={(row) => (
+                            <InputNumber
+                              value={
+                                row.setup === "" || row.setup == null ? null : Number(row.setup)
+                              }
+                              min={0}
+                              mode="decimal"
+                              minFractionDigits={0}
+                              maxFractionDigits={3}
+                              className="w-full"
+                              disabled={!canEditTimes}
+                              onValueChange={(e) =>
+                                updateRouteOp(row.id, {
+                                  setup: e.value == null ? "" : String(e.value),
+                                })
+                              }
+                            />
+                          )}
+                        />
+                        <Column
+                          header="Per piece (hrs)"
+                          style={{ minWidth: "8.5rem", width: "8.5rem" }}
+                          body={(row) => (
+                            <InputNumber
+                              value={
+                                row.time === "" || row.time == null ? null : Number(row.time)
+                              }
+                              min={0}
+                              mode="decimal"
+                              minFractionDigits={0}
+                              maxFractionDigits={3}
+                              className="w-full"
+                              disabled={!canEditTimes}
+                              onValueChange={(e) =>
+                                updateRouteOp(row.id, {
+                                  time: e.value == null ? "" : String(e.value),
+                                })
+                              }
+                            />
+                          )}
+                        />
                         <Column
                           header=""
-                          style={{ width: "7rem" }}
+                          style={{ minWidth: "6.5rem", width: "6.5rem" }}
                           body={(row) => (
                             <div className="flex gap-1">
                               <Button
                                 type="button"
-                                icon="pi pi-pencil"
+                                icon="pi pi-ellipsis-h"
                                 rounded
                                 text
                                 size="small"
-                                disabled={opsReadOnly}
-                                onClick={() => openEdit(row)}
+                                disabled={!canStructureOps}
+                                tooltip="Details (tool, items, …)"
+                                tooltipOptions={{ position: "top" }}
+                                onClick={() => openDetails(row)}
                               />
-                              <Button
-                                type="button"
-                                icon="pi pi-trash"
-                                rounded
-                                text
-                                size="small"
-                                severity="danger"
-                                disabled={opsReadOnly || iedFieldsOnly}
-                                onClick={() => removeOp(row)}
-                              />
+                              {canStructureOps ? (
+                                <Button
+                                  type="button"
+                                  icon="pi pi-trash"
+                                  rounded
+                                  text
+                                  size="small"
+                                  severity="danger"
+                                  onClick={() => removeOp(row)}
+                                />
+                              ) : null}
                             </div>
                           )}
                         />
@@ -3365,8 +3763,7 @@ export default function RouteCardGenerationAlt() {
         }
       >
         <p className="oarc-instr-dialog__hint">
-          Operator instructions. Click the text to edit. Shift+Enter for a new line, Enter to save.
-          Item names appear in preview only.
+          Operator instructions. Click the text to edit. Item names appear in preview only.
         </p>
         <InstructionClickEdit
           value={instrDialog.draft}
@@ -3576,14 +3973,10 @@ export default function RouteCardGenerationAlt() {
       </Dialog>
 
       <Dialog
-        header={
-          editIsNew
-            ? `Add operation (OP ${editRow?.opNo ?? ""})`
-            : `Edit OP ${editRow?.opNo ?? ""}`
-        }
+        header={`OP ${editRow?.opNo ?? ""} details`}
         visible={editVisible}
         onHide={() => setEditVisible(false)}
-        style={{ width: "min(92vw, 40rem)" }}
+        style={{ width: "min(92vw, 36rem)" }}
         className="rca-edit-dialog"
         footer={
           <div className="flex justify-content-end gap-2">
@@ -3593,206 +3986,36 @@ export default function RouteCardGenerationAlt() {
               label="Save"
               icon="pi pi-check"
               size="small"
-              disabled={opsReadOnly}
-              onClick={saveEdit}
+              disabled={opsReadOnly || iedFieldsOnly}
+              onClick={saveDetails}
             />
           </div>
         }
       >
         {editRow && (
           <div className="grid formgrid p-fluid">
-            <div className="field col-12">
-              <label htmlFor="rca-operation">Operation</label>
-              <SafeInputText
-                profile="text"
-                id="rca-operation"
-                value={editRow.operation ?? ""}
-                disabled={opsReadOnly || iedFieldsOnly}
-                onChange={(e) => setEditRow((r) => ({ ...r, operation: e.target.value }))}
-              />
-            </div>
-            <div className="field col-12 md:col-6">
-              <label htmlFor="rca-workCentre">Work centre</label>
-              {wcDropdownOptions.length > 0 ? (
-                <Dropdown
-                  inputId="rca-workCentre"
-                  className="w-full rca-edit-dropdown"
-                  panelClassName="rca-edit-dropdown-panel"
-                  appendTo={typeof document !== "undefined" ? document.body : null}
-                  value={
-                    editRow.workCentreId != null && editRow.workCentreId !== ""
-                      ? Number(editRow.workCentreId)
-                      : null
-                  }
-                  options={wcDropdownOptions}
-                  optionLabel="label"
-                  optionValue="value"
-                  placeholder="Select work centre"
-                  showClear
-                  filter={wcDropdownOptions.length > 8}
-                  filterPlaceholder="Search…"
-                  scrollHeight="12rem"
-                  disabled={opsReadOnly || iedFieldsOnly}
-                  onChange={(e) => {
-                    const id = e.value != null && e.value !== "" ? Number(e.value) : null;
-                    const wc = (wcCatalog || []).find((w) => Number(w.id) === id);
-                    setEditRow((r) => ({
-                      ...r,
-                      workCentreId: id,
-                      workCentre: wc ? wc.code || wc.name : "",
-                      workCentreName: wc?.name || "",
-                      machineId: null,
-                      machine: "",
-                      linkStatus: "manual_override",
-                    }));
-                  }}
-                />
-              ) : (
-                <SafeInputText
-                  profile="text"
-                  id="rca-workCentre"
-                  value={editRow.workCentre ?? ""}
-                  disabled={opsReadOnly || iedFieldsOnly}
-                  onChange={(e) =>
-                    setEditRow((r) => ({
-                      ...r,
-                      workCentre: e.target.value,
-                      workCentreId: null,
-                      linkStatus: "manual_override",
-                    }))
-                  }
-                />
-              )}
-            </div>
-            <div className="field col-12 md:col-6">
-              <label htmlFor="rca-machine">Machine</label>
-              {machineOptionsForEdit.length > 0 ? (
-                <Dropdown
-                  inputId="rca-machine"
-                  className="w-full rca-edit-dropdown"
-                  panelClassName="rca-edit-dropdown-panel"
-                  appendTo={typeof document !== "undefined" ? document.body : null}
-                  value={
-                    editRow.machineId != null && editRow.machineId !== ""
-                      ? Number(editRow.machineId)
-                      : null
-                  }
-                  options={machineOptionsForEdit.map((o) => ({
-                    ...o,
-                    value: Number(o.value),
-                  }))}
-                  optionLabel="label"
-                  optionValue="value"
-                  placeholder="Select machine"
-                  showClear
-                  scrollHeight="10rem"
-                  disabled={opsReadOnly || iedFieldsOnly}
-                  onChange={(e) => {
-                    const id = e.value != null && e.value !== "" ? Number(e.value) : null;
-                    const m = machineOptionsForEdit.find((o) => Number(o.value) === id)?.raw;
-                    setEditRow((r) => ({
-                      ...r,
-                      machineId: id,
-                      machine: m?.name || "",
-                      linkStatus: "manual_override",
-                    }));
-                  }}
-                />
-              ) : (
-                <SafeInputText
-                  profile="text"
-                  id="rca-machine"
-                  value={editRow.machine ?? ""}
-                  disabled={opsReadOnly || iedFieldsOnly}
-                  onChange={(e) =>
-                    setEditRow((r) => ({
-                      ...r,
-                      machine: e.target.value,
-                      machineId: null,
-                      linkStatus: "manual_override",
-                    }))
-                  }
-                />
-              )}
-            </div>
+            <p className="col-12 rca-section-note" style={{ marginBottom: "0.35rem" }}>
+              {editRow.operation || "Untitled operation"}
+              {editRow.workCentre ? ` · ${editRow.workCentre}` : ""}
+            </p>
             {[
               ["tool", "Tool"],
               ["items", "Items"],
               ["torqueSpec", "Torque"],
               ["reference", "Reference"],
               ["inspection", "Inspection"],
-            ].map(([key, label]) => {
-              const fieldDisabled = opsReadOnly || iedFieldsOnly;
-              return (
+            ].map(([key, label]) => (
               <div className="field col-12 md:col-6" key={key}>
                 <label htmlFor={`rca-${key}`}>{label}</label>
                 <SafeInputText
                   profile="text"
                   id={`rca-${key}`}
                   value={editRow[key] ?? ""}
-                  disabled={fieldDisabled}
+                  disabled={opsReadOnly || iedFieldsOnly}
                   onChange={(e) => setEditRow((r) => ({ ...r, [key]: e.target.value }))}
                 />
               </div>
-              );
-            })}
-            <div className="field col-12 md:col-6">
-              <label htmlFor="rca-setup">Setup time (in hrs)</label>
-              <InputNumber
-                inputId="rca-setup"
-                value={
-                  editRow.setup === "" || editRow.setup == null
-                    ? null
-                    : Number(editRow.setup)
-                }
-                min={0}
-                mode="decimal"
-                minFractionDigits={0}
-                maxFractionDigits={3}
-                className="w-full"
-                disabled={opsReadOnly}
-                onValueChange={(e) =>
-                  setEditRow((r) => ({
-                    ...r,
-                    setup: e.value == null ? "" : String(e.value),
-                  }))
-                }
-              />
-            </div>
-            <div className="field col-12 md:col-6">
-              <label htmlFor="rca-time">Per-piece time (in hrs)</label>
-              <InputNumber
-                inputId="rca-time"
-                value={
-                  editRow.time === "" || editRow.time == null
-                    ? null
-                    : Number(editRow.time)
-                }
-                min={0}
-                mode="decimal"
-                minFractionDigits={0}
-                maxFractionDigits={3}
-                className="w-full"
-                disabled={opsReadOnly}
-                onValueChange={(e) =>
-                  setEditRow((r) => ({
-                    ...r,
-                    time: e.value == null ? "" : String(e.value),
-                  }))
-                }
-              />
-            </div>
-            <div className="field col-12">
-              <label htmlFor="rca-instructionText">Operation instruction</label>
-              <SafeInputTextarea
-                profile="multiline"
-                id="rca-instructionText"
-                rows={4}
-                value={editRow.instructionText ?? ""}
-                disabled={opsReadOnly || iedFieldsOnly}
-                onChange={(e) => setEditRow((r) => ({ ...r, instructionText: e.target.value }))}
-              />
-            </div>
+            ))}
           </div>
         )}
       </Dialog>

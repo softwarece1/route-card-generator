@@ -78,13 +78,18 @@ export function concurrentSessionFromError(err) {
   return null;
 }
 
-export async function signup({ empId, name, sbu, dept, password }) {
+export async function signup({ empId, name, sbu, departmentId, password }) {
   const { cipher, alg } = await encryptedCredsBody(empId, password);
   const safeName = sanitizeInput(name, 'personName').value;
-  const safeSbu = sanitizeInput(sbu || dept, 'label').value;
+  const safeSbu = sanitizeInput(sbu, 'label').value;
+  const deptId = Number(departmentId);
+  if (!Number.isFinite(deptId) || deptId < 1) {
+    throw new Error('Select a department');
+  }
   const { data } = await http.post('/auth/signup', {
     name: safeName,
     sbu: safeSbu,
+    departmentId: deptId,
     cipher,
     alg,
   });
@@ -101,6 +106,14 @@ export async function fetchMe() {
 /** SBU master for signup dropdown. */
 export async function fetchSbus() {
   const { data } = await http.get('/auth/sbus');
+  return Array.isArray(data) ? data : [];
+}
+
+/** Departments under an SBU for signup dropdown. */
+export async function fetchSignupDepartments(sbu) {
+  const name = String(sbu || '').trim();
+  if (!name) return [];
+  const { data } = await http.get('/auth/departments', { params: { sbu: name } });
   return Array.isArray(data) ? data : [];
 }
 

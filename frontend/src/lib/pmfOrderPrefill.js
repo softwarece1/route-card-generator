@@ -339,7 +339,7 @@ export function templateStepToRouteOp(step) {
     itemsUsed: [],
     torqueSpec: "",
     reference: "",
-    setup: str(step?.setup) || "1",
+    setup: str(step?.setup),
     time: str(step?.time),
     inspection: str(step?.inspection),
     instructionText: str(step?.instructionText),

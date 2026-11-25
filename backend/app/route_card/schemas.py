@@ -82,7 +82,7 @@ class OperationOut(BaseModel):
     itemsUsed: list[dict[str, Any]] = Field(default_factory=list)
     torqueSpec: str = ""
     reference: str = ""
-    setup: str = "1"
+    setup: str = ""
     time: str = ""
     inspection: str = ""
     instructionText: str = ""
@@ -160,7 +160,7 @@ class OperationUpdate(BaseModel):
     itemsUsed: list[dict[str, Any]] = Field(default_factory=list)
     torqueSpec: str = ""
     reference: str = ""
-    setup: str = "1"
+    setup: str = ""
     time: str = ""
     inspection: str = ""
     instructionText: str = ""
