@@ -173,30 +173,30 @@ export default function PmfAnalyzeLoader({
             aria-valuenow={pct}
             role="progressbar"
           >
-            <div className="pmf-analyze-loader__progress-meta">
-              <span className="pmf-analyze-loader__progress-label">Progress</span>
-              <span className="pmf-analyze-loader__progress-pct">{pct}%</span>
-            </div>
-            <div className="pmf-analyze-loader__progress-row">
+            <div className="pmf-analyze-loader__progress-main">
+              <div className="pmf-analyze-loader__progress-meta">
+                <span className="pmf-analyze-loader__progress-label">Progress</span>
+                <span className="pmf-analyze-loader__progress-pct">{pct}%</span>
+              </div>
               <div className="pmf-analyze-loader__progress-track">
                 <div
                   className="pmf-analyze-loader__progress-fill"
                   style={{ width: `${pct}%` }}
                 />
               </div>
-              {typeof onCancel === "function" ? (
-                <Button
-                  type="button"
-                  label="Stop"
-                  icon="pi pi-stop"
-                  size="small"
-                  outlined
-                  severity="danger"
-                  className="pmf-analyze-loader__stop"
-                  onClick={onCancel}
-                />
-              ) : null}
             </div>
+            {typeof onCancel === "function" ? (
+              <Button
+                type="button"
+                label="Stop"
+                icon="pi pi-stop"
+                size="small"
+                outlined
+                severity="danger"
+                className="pmf-analyze-loader__stop"
+                onClick={onCancel}
+              />
+            ) : null}
           </div>
         </div>
       </div>

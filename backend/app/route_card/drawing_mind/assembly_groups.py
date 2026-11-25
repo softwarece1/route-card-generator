@@ -1561,41 +1561,168 @@ def groups_to_synthetic_notes(
     return notes
 
 
+def _note_item_set(note: dict[str, Any]) -> set[int]:
+    out: set[int] = set()
+    for i in note.get("items") or []:
+        try:
+            out.add(int(i))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _balloon_item_list(note: dict[str, Any]) -> list[int]:
+    items: list[int] = []
+    for i in note.get("items") or []:
+        try:
+            n = int(i)
+        except (TypeError, ValueError):
+            continue
+        if n not in items:
+            items.append(n)
+    return items
+
+
+def _is_drawing_placement_note(note: dict[str, Any]) -> bool:
+    """True for shop NOTES (stick/place as shown) — not synthetic balloon assemble lines."""
+    if note.get("assemblyGroup"):
+        return False
+    from app.route_card.drawing_mind.elaborate import needs_placement_elaboration
+
+    return needs_placement_elaboration(str(note.get("text") or ""), list(note.get("items") or []))
+
+
+def _attach_balloon_group(note: dict[str, Any], bn: dict[str, Any]) -> None:
+    groups = note.setdefault("balloonGroups", [])
+    if not isinstance(groups, list):
+        groups = []
+        note["balloonGroups"] = groups
+    payload = {
+        "rawText": bn.get("balloonRaw") or bn.get("text") or "",
+        "items": _balloon_item_list(bn),
+        "sourceFilename": bn.get("sourceFilename") or "",
+        "sourcePage": bn.get("sheet"),
+        "drawingZone": bn.get("drawingZone") or "",
+    }
+    groups.append(payload)
+    used = note.setdefault("itemsUsed", [])
+    if not isinstance(used, list):
+        used = []
+        note["itemsUsed"] = used
+    seen = set()
+    for u in used:
+        if isinstance(u, dict) and u.get("itemNo") is not None:
+            try:
+                seen.add(int(u["itemNo"]))
+            except (TypeError, ValueError):
+                continue
+    for u in bn.get("itemsUsed") or []:
+        if not isinstance(u, dict):
+            continue
+        try:
+            ino = int(u.get("itemNo"))
+        except (TypeError, ValueError):
+            continue
+        if ino in seen:
+            continue
+        used.append(dict(u))
+        seen.add(ino)
+
+
 def merge_notes_with_balloon_notes(
     notes: list[dict[str, Any]],
     balloon_notes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Append balloon notes whose item sets are not already covered by NOTES."""
+    """Club overlapping balloon callouts into NOTES; keep disjoint balloons separate.
+
+    - Shared item numbers → attach the balloon group onto the drawing note and do
+      not emit a synthetic ``Assemble Item N…`` step for those items.
+    - Single-item balloon not cited by a stick/place note on the same sheet, while
+      that note already clubs other balloons → treat as ``hostItemNo`` (body) and
+      suppress its assemble line.
+    - No shared items → append the balloon note as its own step (fastener clusters).
+    """
+    out = [dict(n) for n in (notes or [])]
     covered: set[int] = set()
-    for n in notes:
-        for i in n.get("items") or []:
-            try:
-                covered.add(int(i))
-            except (TypeError, ValueError):
-                continue
-    out = list(notes)
-    next_step = max((int(n.get("stepNo") or 0) for n in notes), default=0) + 1
-    for bn in balloon_notes:
-        items = []
-        for i in bn.get("items") or []:
-            try:
-                items.append(int(i))
-            except (TypeError, ValueError):
-                continue
+    for n in out:
+        covered |= _note_item_set(n)
+
+    next_step = max((int(n.get("stepNo") or 0) for n in out), default=0) + 1
+    host_candidates: list[tuple[dict[str, Any], list[int]]] = []
+
+    for bn_raw in balloon_notes or []:
+        bn = dict(bn_raw)
+        items = _balloon_item_list(bn)
         if not items:
             continue
+        item_set = set(items)
+        # Prefer a drawing note that shares items with this callout
+        matched: dict[str, Any] | None = None
+        for n in out:
+            if n.get("assemblyGroup"):
+                continue
+            shared = _note_item_set(n) & item_set
+            if shared:
+                matched = n
+                break
+        if matched is not None:
+            _attach_balloon_group(matched, bn)
+            covered |= item_set
+            continue
+
+        # Lone balloon with no note overlap — maybe the host body of a stick note
+        if len(items) == 1 and not (bn.get("itemsUsed") and len(bn.get("itemsUsed") or []) > 1):
+            # children would make items longer; also check empty children via itemsUsed
+            children = [
+                u
+                for u in (bn.get("itemsUsed") or [])
+                if isinstance(u, dict)
+                and u.get("itemNo") is not None
+                and int(u["itemNo"]) != items[0]
+            ]
+            if not children:
+                host_candidates.append((bn, items))
+                continue
+
+        # Fully covered already (e.g. items already clubbed via another note)
+        if item_set <= covered:
+            continue
+        bn["stepNo"] = next_step
+        next_step += 1
+        out.append(bn)
+        covered |= item_set
+
+    for bn, items in host_candidates:
         parent = items[0]
-        # Skip when this balloon's items are already covered by NOTES / prior balloons
-        new_items = [i for i in items if i not in covered]
-        if parent in covered and not new_items:
+        if parent in covered:
             continue
-        if parent in covered and not [i for i in items[1:] if i not in covered]:
+        host_note: dict[str, Any] | None = None
+        for n in out:
+            if not _is_drawing_placement_note(n):
+                continue
+            n_items = _note_item_set(n)
+            if parent in n_items:
+                continue
+            sheet_n = int(n.get("sheet") or 1)
+            sheet_b = int(bn.get("sheet") or 1)
+            if sheet_n != sheet_b:
+                continue
+            # Prefer notes that already clubbed sticker balloons on this sheet
+            if n.get("balloonGroups") or n_items:
+                if n.get("hostItemNo") is None:
+                    host_note = n
+                    break
+        if host_note is not None:
+            host_note["hostItemNo"] = parent
+            covered.add(parent)
             continue
+        # Not a host — keep as its own assemble step
         bn = dict(bn)
         bn["stepNo"] = next_step
         next_step += 1
         out.append(bn)
         covered.update(items)
+
     return out
 
 

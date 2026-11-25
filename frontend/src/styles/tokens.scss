@@ -350,6 +350,58 @@ body {
   padding-bottom: 1.05rem;
 }
 
+/* No focus outline / blue ring on buttons & inputs (app-wide) */
+.p-button,
+.p-button:focus,
+.p-button:focus-visible,
+.p-button:enabled:focus,
+.p-button:enabled:focus-visible,
+.p-inputtext,
+.p-inputtext:enabled:focus,
+.p-inputtext:focus,
+.p-inputtext:focus-visible,
+.p-inputtextarea,
+.p-inputtextarea:enabled:focus,
+.p-inputtextarea:focus,
+.p-inputtextarea:focus-visible,
+.p-dropdown,
+.p-dropdown:not(.p-disabled).p-focus,
+.p-dropdown:focus,
+.p-dropdown:focus-visible,
+.p-multiselect,
+.p-multiselect:not(.p-disabled).p-focus,
+.p-inputnumber-input,
+.p-inputnumber-input:enabled:focus,
+.p-password-input,
+.p-password input:focus,
+.p-checkbox:not(.p-checkbox-disabled) .p-checkbox-box.p-focus,
+.p-checkbox:not(.p-checkbox-disabled) .p-checkbox-box:focus,
+.p-radiobutton .p-radiobutton-box.p-focus,
+.p-radiobutton .p-radiobutton-box:focus,
+.p-calendar .p-inputtext:enabled:focus,
+.p-icon-field .p-inputtext:enabled:focus,
+button:focus,
+button:focus-visible,
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Shared list-page toolbars (title + search / Add) */
+.rc-org__tabs-row,
+.rc-users__tabs-row,
+.rc-wc__tabs-row,
+.rc-refdocs__pane-head {
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+  box-sizing: border-box;
+}
+
 /* Shared page shell — keep main content the same width across routes */
 .pmf-page,
 .rca-content,

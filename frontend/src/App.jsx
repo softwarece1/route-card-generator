@@ -17,13 +17,14 @@ import ReferenceSheetsPage from '@/pages/ReferenceSheetsPage';
 /** `/` → IED review queue, else generator when signed in; otherwise login. */
 function HomeRedirect() {
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
-  const role = getUser()?.role;
-  if (role === "ied") return <Navigate to="/history" replace />;
+  const u = getUser();
+  if (u?.isIedDept || u?.role === "ied") return <Navigate to="/history" replace />;
   return <Navigate to="/generator" replace />;
 }
 
 function IedBlockGenerator({ children }) {
-  if (getUser()?.role === "ied") return <Navigate to="/history" replace />;
+  const u = getUser();
+  if (u?.isIedDept || u?.role === "ied") return <Navigate to="/history" replace />;
   return children;
 }
 

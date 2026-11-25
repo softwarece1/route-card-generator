@@ -63,10 +63,15 @@ export function connectNotificationsWs(handlers = {}) {
       handlers.onError?.(ev);
     };
 
-    ws.onclose = () => {
-      handlers.onClose?.();
+    ws.onclose = (ev) => {
+      handlers.onClose?.(ev);
       ws = null;
-      if (!closed) scheduleReconnect();
+      if (closed) return;
+      // 1008 = auth/policy — back off harder so Vite proxy isn't spammed
+      if (ev?.code === 1008) {
+        retryMs = Math.max(retryMs, 30_000);
+      }
+      scheduleReconnect();
     };
   };
 
@@ -74,7 +79,7 @@ export function connectNotificationsWs(handlers = {}) {
     if (closed || timer) return;
     timer = window.setTimeout(() => {
       timer = null;
-      retryMs = Math.min(retryMs * 1.5, 20_000);
+      retryMs = Math.min(retryMs * 1.5, 45_000);
       connect();
     }, retryMs);
   };

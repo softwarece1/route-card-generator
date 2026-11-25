@@ -730,8 +730,10 @@ _WEAK_SURFACE = re.compile(
     r"^(the\s+)?(indicated|specified|shown|relevant|appropriate|given)\s+(face|surface|side|area)\.?$",
     re.I,
 )
+# Vague face fillers only — "as indicated in the figure" is an intentional fallback.
 _WEAK_ELAB = re.compile(
-    r"\b(specified surface|indicated face|as shown|as indicated)\b",
+    r"\b(specified surface|indicated face|as shown on the (?:drawing|face)|"
+    r"on the (?:indicated|specified|relevant) (?:face|surface|side))\b",
     re.I,
 )
 
@@ -837,39 +839,39 @@ def _compose_elaboration_from_placement(
     placements: list[dict[str, Any]],
     *,
     view_used: str = "",
+    view_refs: list[Any] | None = None,
+    host_item_no: int | None = None,
+    unit: str = "mm",
 ) -> str:
-    if not placements:
-        return ""
-    parts: list[str] = []
-    if re.search(r"adhesive|glue|stick|paste|bond", raw_note or "", re.I):
-        parts.append("Use proper adhesive (glue).")
-    surface = _sanitize_surface_label(
-        next((str(p.get("surface") or "") for p in placements if p.get("surface")), "")
+    from app.route_card.drawing_mind.elaborate import (
+        compose_placement_elaboration,
+        surface_confidence_threshold,
     )
-    view_bit = f" ({view_used})" if view_used else ""
-    if surface:
-        parts.append(f"Stick these parts on the {surface}{view_bit}.")
-    else:
-        parts.append(f"Stick these parts as marked on the drawing{view_bit}.")
-    for p in placements:
-        item = p.get("itemNo")
-        offs = p.get("offsets") or []
-        item_surface = _sanitize_surface_label(str(p.get("surface") or "")) or surface
-        bits: list[str] = []
-        for o in offs:
-            frm = o.get("from")
-            val = o.get("value")
-            unit = o.get("unit") or "mm"
-            if frm == "item" and o.get("relativeToItem") is not None:
-                if val is not None:
-                    bits.append(f"keep {val:g} {unit} relative to Item {o['relativeToItem']}")
-            elif val is not None and frm in {"left", "right", "top", "bottom"}:
-                bits.append(f"keep {val:g} {unit} from {frm}")
-        if bits:
-            parts.append(f"Item {item}: " + "; ".join(bits) + ".")
-        elif item_surface:
-            parts.append(f"Item {item}: stick on {item_surface}.")
-    return " ".join(parts).strip()
+
+    # Preserve Stage-B surface sanitization before shared composer; drop faces
+    # that do not meet the confidence gate (no FRONT/REAR invention).
+    cleaned: list[dict[str, Any]] = []
+    for p in placements or []:
+        if not isinstance(p, dict):
+            continue
+        row = dict(p)
+        surf = _sanitize_surface_label(str(row.get("surface") or ""))
+        try:
+            conf = float(row.get("confidence")) if row.get("confidence") is not None else None
+        except (TypeError, ValueError):
+            conf = None
+        if surf and conf is not None and conf < surface_confidence_threshold(surf):
+            surf = ""
+        row["surface"] = surf
+        cleaned.append(row)
+    return compose_placement_elaboration(
+        raw_note,
+        cleaned,
+        host_item_no=host_item_no,
+        unit=unit,
+        view_used=view_used,
+        view_refs=view_refs,
+    )
 
 
 def _normalize_step(step: dict[str, Any], *, sheet: int, step_no: int) -> dict[str, Any] | None:
@@ -1450,8 +1452,17 @@ class LocalVlmMind(DrawingMind):
                         note["placement"] = placed
                         note["needsVisualElaboration"] = False
                         stage_b_placements.extend(placed)
+                        host = note.get("hostItemNo")
+                        try:
+                            host_i = int(host) if host is not None else None
+                        except (TypeError, ValueError):
+                            host_i = None
                         composed = _compose_elaboration_from_placement(
-                            note.get("text") or "", placed
+                            note.get("text") or "",
+                            placed,
+                            host_item_no=host_i,
+                            view_used=str(note.get("viewUsed") or ""),
+                            view_refs=list(note.get("viewRefs") or []),
                         )
                         if composed and not _is_weak_elaboration(composed):
                             # Placement elaboration only — no "(From drawing: …)" suffix
@@ -1630,6 +1641,28 @@ class LocalVlmMind(DrawingMind):
                     assembly_groups, parts_list=parts_list
                 )
                 notes = merge_notes_with_balloon_notes(notes, balloon_notes)
+                # Re-compose placement text when clubbing attached a host body
+                for note in notes:
+                    if note.get("assemblyGroup"):
+                        continue
+                    host = note.get("hostItemNo")
+                    placed = note.get("placement") or []
+                    if host is None or not placed:
+                        continue
+                    try:
+                        host_i = int(host)
+                    except (TypeError, ValueError):
+                        continue
+                    composed = _compose_elaboration_from_placement(
+                        note.get("text") or "",
+                        placed if isinstance(placed, list) else [],
+                        host_item_no=host_i,
+                        view_used=str(note.get("viewUsed") or ""),
+                        view_refs=list(note.get("viewRefs") or []),
+                    )
+                    if composed and not _is_weak_elaboration(composed):
+                        note["elaboratedText"] = composed
+                        note["elaborated"] = True
                 warnings.append(
                     f"Drawing mind (local_vlm): Stage C found {len(assembly_groups)} "
                     f"balloon assembly group(s)."

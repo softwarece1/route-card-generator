@@ -20,15 +20,11 @@ import { isExcelFilename, triggerBlobDownload } from "@/lib/excelPreview";
 import {
   addFavorite,
   analyzeSession,
-  approveRouteCard,
   completeIedReview,
   cancelAnalyzeSession,
   openAnalyzeProgressStream,
-  copyJsonToClipboard,
   createSession,
   deleteSessionDocument,
-  downloadJson,
-  exportPmfOarc,
   fetchDrawingFileBlob,
   fetchDrawingViewCrop,
   fetchFavorites,
@@ -477,6 +473,7 @@ export default function RouteCardGenerationAlt() {
   const [crossRefs, setCrossRefs] = useState([]);
   const [reviewFlags, setReviewFlags] = useState([]);
   const [showLowReviewFlags, setShowLowReviewFlags] = useState(false);
+  const [showGaQtyMatch, setShowGaQtyMatch] = useState(false);
   const [itemLinkReport, setItemLinkReport] = useState(null);
   const [refFolderCodes, setRefFolderCodes] = useState([]);
   const [refDocsFound, setRefDocsFound] = useState([]);
@@ -500,6 +497,8 @@ export default function RouteCardGenerationAlt() {
   const [plants, setPlants] = useState([]);
   const [plantsLoading, setPlantsLoading] = useState(false);
   const [adminPlant, setAdminPlant] = useState(() => readStoredAdminPlant());
+  const [sessionSbu, setSessionSbu] = useState("");
+  const [sessionPlant, setSessionPlant] = useState("");
   const analyzeAbortRef = useRef(null);
   const analyzingRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
@@ -592,6 +591,15 @@ export default function RouteCardGenerationAlt() {
       setShowLowReviewFlags(false);
     }
     if (payload.itemLinkReport) setItemLinkReport(payload.itemLinkReport);
+    if (payload.sbu != null) setSessionSbu(String(payload.sbu || "").trim());
+    if (payload.plant != null) {
+      const p = String(payload.plant || "").trim();
+      setSessionPlant(p);
+      if (p && getUser()?.role === "admin") {
+        setAdminPlant(p);
+        storeAdminPlant(p);
+      }
+    }
     const tasks = payload.analysisTasks || [];
     setTaskProgress(Object.fromEntries(tasks.map((t) => [t.key, t.value ?? 100])));
   }, []);
@@ -803,6 +811,8 @@ export default function RouteCardGenerationAlt() {
     const s = await createSession();
     sessionIdRef.current = s.id;
     setSessionId(s.id);
+    if (s.sbu != null) setSessionSbu(String(s.sbu || "").trim());
+    if (s.plant != null) setSessionPlant(String(s.plant || "").trim());
     return s.id;
   };
 
@@ -869,6 +879,8 @@ export default function RouteCardGenerationAlt() {
     setRouteCardId(null);
     sessionIdRef.current = null;
     setSessionId(null);
+    setSessionSbu("");
+    setSessionPlant("");
     setZoom(1);
     setAnalyzing(false);
     setAnalyzeStatus({ message: "", detail: "", progress: 0 });
@@ -1572,9 +1584,6 @@ export default function RouteCardGenerationAlt() {
     }
   };
 
-  const unresolvedBlocking = (reviewFlags || []).filter(
-    (f) => !f.resolved && ["high", "medium"].includes((f.severity || "").toLowerCase()),
-  );
   const reviewFlagsPrimary = (reviewFlags || []).filter((f) =>
     ["high", "medium"].includes((f.severity || "").toLowerCase()),
   );
@@ -1586,13 +1595,22 @@ export default function RouteCardGenerationAlt() {
     : reviewFlagsPrimary;
   const currentUser = getUser();
   const userRole = currentUser?.role;
-  const isIedUser = userRole === "ied";
+  const isIedUser = Boolean(currentUser?.isIedDept) || userRole === "ied";
   const isAdminUser = userRole === "admin";
   const isSbuHeadUser = userRole === "sbu_head";
+  const isDeptHeadUser = userRole === "dept_head";
   const canShareToIed =
     Boolean(routeCardId) &&
     (reviewStatus === "draft" || reviewStatus === "ied_complete") &&
     !isIedUser;
+  const shareIedSbu =
+    (sessionSbu || "").trim() ||
+    (getUser()?.role === "admin"
+      ? ""
+      : String(getUser()?.sbu || "").trim());
+  const shareToIedLabel = shareIedSbu
+    ? `Share to ${shareIedSbu} IED for review`
+    : "Share to IED for review";
   const canCompleteIed =
     Boolean(routeCardId) &&
     reviewStatus === "ied_review" &&
@@ -1600,17 +1618,7 @@ export default function RouteCardGenerationAlt() {
   const canRecallIed =
     Boolean(routeCardId) &&
     reviewStatus === "ied_review" &&
-    (isAdminUser || isSbuHeadUser || !isIedUser);
-  const canApprove =
-    Boolean(routeCardId) &&
-    reviewStatus === "ied_complete" &&
-    userRole !== "ied" &&
-    (unresolvedBlocking.length === 0 || isAdminUser);
-  const canAdminOverrideApprove =
-    isAdminUser &&
-    Boolean(routeCardId) &&
-    reviewStatus !== "approved" &&
-    (reviewStatus !== "ied_complete" || unresolvedBlocking.length > 0);
+    (isAdminUser || isSbuHeadUser || isDeptHeadUser || !isIedUser);
   const opsReadOnly =
     reviewStatus === "approved" ||
     (reviewStatus === "ied_review" && !isIedUser && !isAdminUser) ||
@@ -1626,7 +1634,9 @@ export default function RouteCardGenerationAlt() {
       toast.success(
         wasAlready
           ? "Already awaiting IED review."
-          : "Shared to IED — awaiting review.",
+          : shareIedSbu
+            ? `Shared to ${shareIedSbu} IED — awaiting review.`
+            : "Shared to IED — awaiting review.",
       );
     } catch (error) {
       toast.error(error.message || "Share to IED failed");
@@ -1655,18 +1665,6 @@ export default function RouteCardGenerationAlt() {
     }
   };
 
-  const approveCard = async (override = false) => {
-    if (!routeCardId) return;
-    try {
-      const payload = await approveRouteCard(routeCardId, { adminOverride: override });
-      applyPayload(payload);
-      setReviewStatus("approved");
-      toast.success("Route card approved.");
-    } catch (error) {
-      toast.error(error.message || "Approve failed");
-    }
-  };
-
   const reviewStatusLabel = workflowStatusLabel(
     reviewStatus === "ready" ? "" : reviewStatus,
   );
@@ -1678,28 +1676,6 @@ export default function RouteCardGenerationAlt() {
         : routeStatusTone(reviewStatus) === "warn"
           ? "warning"
           : "secondary";
-
-  const downloadCreateOrder = async () => {
-    if (!routeCardId) return;
-    try {
-      const data = await exportPmfOarc(routeCardId);
-      downloadJson(`pmf-oarc-${routeCardId}.json`, data);
-      toast.success("Downloaded Create Order JSON");
-    } catch (e) {
-      toast.error(e.message || "Export failed");
-    }
-  };
-
-  const copyCreateOrder = async () => {
-    if (!routeCardId) return;
-    try {
-      const data = await exportPmfOarc(routeCardId);
-      await copyJsonToClipboard(data);
-      toast.success("Copied Create Order JSON");
-    } catch (e) {
-      toast.error(e.message || "Copy failed");
-    }
-  };
 
   const toggleFlag = async (flag, resolved) => {
     try {
@@ -1741,6 +1717,8 @@ export default function RouteCardGenerationAlt() {
         ]);
         sessionIdRef.current = id;
         setSessionId(id);
+        if (sess.sbu != null) setSessionSbu(String(sess.sbu || "").trim());
+        if (sess.plant != null) setSessionPlant(String(sess.plant || "").trim());
         syncDocsFromSession(
           sess.documents || [],
           sess.drawingIds || (sess.drawingId ? [sess.drawingId] : []),
@@ -2011,7 +1989,9 @@ export default function RouteCardGenerationAlt() {
                                 label={multi ? "Browse files" : "Browse file"}
                                 icon="pi pi-folder-open"
                                 outlined
+                                severity="secondary"
                                 size="small"
+                                className="rca-slot__browse"
                                 onClick={() => fileInputRefs.current[slot.role]?.click()}
                               />
                             </>
@@ -2170,13 +2150,6 @@ export default function RouteCardGenerationAlt() {
                 }
               />
             ) : null}
-            {!canAnalyze && !uploadingRole && (
-              <Message
-                className="mt-3 w-full"
-                severity="info"
-                text="Upload Drawing (GA) and Parts List to enable Generate OARC. Wire List is optional."
-              />
-            )}
           </section>
 
           <section className="rca-card" id="rca-sec-drawing">
@@ -2343,7 +2316,17 @@ export default function RouteCardGenerationAlt() {
                           </div>
                         ))}
                       </div>
-                      {bomItems.some((r) => bomQtyMatchState(r) === false) ? (
+                      <div className="rca-bom-toolbar">
+                        <Button
+                          type="button"
+                          size="small"
+                          outlined={!showGaQtyMatch}
+                          icon={showGaQtyMatch ? "pi pi-eye-slash" : "pi pi-eye"}
+                          label={showGaQtyMatch ? "Hide GA qty" : "Show GA qty"}
+                          onClick={() => setShowGaQtyMatch((v) => !v)}
+                        />
+                      </div>
+                      {showGaQtyMatch && bomItems.some((r) => bomQtyMatchState(r) === false) ? (
                         <Message
                           severity="warn"
                           className="w-full mb-2"
@@ -2353,6 +2336,7 @@ export default function RouteCardGenerationAlt() {
                         />
                       ) : null}
                       <DataTable
+                        key={showGaQtyMatch ? "bom-ga" : "bom-pl"}
                         className="rca-data-table rca-bom-table"
                         value={bomItems}
                         size="small"
@@ -2366,6 +2350,7 @@ export default function RouteCardGenerationAlt() {
                           const presence = bomGaPresence(row);
                           if (presence === "not_present") return "rca-bom-row--absent";
                           if (presence === "ga_only") return "rca-bom-row--ga-only";
+                          if (!showGaQtyMatch) return "";
                           const m = bomQtyMatchState(row);
                           if (m === false) return "rca-bom-row--mismatch";
                           if (m === true) return "rca-bom-row--match";
@@ -2384,19 +2369,21 @@ export default function RouteCardGenerationAlt() {
                           style={{ width: "4.5rem" }}
                           body={(row) => formatBomQty(row.qty)}
                         />
-                        <Column
-                          field="extractedQty"
-                          header={
-                            <span title="Quantity summed from GA balloon / callout extraction">
-                              GA qty
-                            </span>
-                          }
-                          style={{ width: "4.5rem" }}
-                          body={(row) => {
-                            if (bomGaPresence(row) === "not_present") return "—";
-                            return formatBomQty(row.extractedQty);
-                          }}
-                        />
+                        {showGaQtyMatch ? (
+                          <Column
+                            field="extractedQty"
+                            header={
+                              <span title="Quantity summed from GA balloon / callout extraction">
+                                GA qty
+                              </span>
+                            }
+                            style={{ width: "4.5rem" }}
+                            body={(row) => {
+                              if (bomGaPresence(row) === "not_present") return "—";
+                              return formatBomQty(row.extractedQty);
+                            }}
+                          />
+                        ) : null}
                         <Column
                           header="On GA"
                           style={{ width: "7rem" }}
@@ -2432,53 +2419,55 @@ export default function RouteCardGenerationAlt() {
                             return <Tag value="—" severity="secondary" />;
                           }}
                         />
-                        <Column
-                          header="Match"
-                          style={{ width: "6.5rem" }}
-                          body={(row) => {
-                            const presence = bomGaPresence(row);
-                            if (presence === "not_present") {
-                              return (
-                                <Tag
-                                  className="rca-bom-match-tag"
-                                  value="Not on GA"
-                                  severity="secondary"
-                                />
-                              );
-                            }
-                            if (presence === "ga_only") {
-                              return (
-                                <Tag
-                                  className="rca-bom-match-tag"
-                                  value="No PL"
-                                  severity="warning"
-                                />
-                              );
-                            }
-                            const m = bomQtyMatchState(row);
-                            if (m === true) {
-                              return (
-                                <Tag
-                                  className="rca-bom-match-tag"
-                                  value="Match"
-                                  severity="success"
-                                  icon="pi pi-check-circle"
-                                />
-                              );
-                            }
-                            if (m === false) {
-                              return (
-                                <Tag
-                                  className="rca-bom-match-tag"
-                                  value="Mismatch"
-                                  severity="danger"
-                                  icon="pi pi-times-circle"
-                                />
-                              );
-                            }
-                            return <Tag value="—" severity="secondary" />;
-                          }}
-                        />
+                        {showGaQtyMatch ? (
+                          <Column
+                            header="Match"
+                            style={{ width: "6.5rem" }}
+                            body={(row) => {
+                              const presence = bomGaPresence(row);
+                              if (presence === "not_present") {
+                                return (
+                                  <Tag
+                                    className="rca-bom-match-tag"
+                                    value="Not on GA"
+                                    severity="secondary"
+                                  />
+                                );
+                              }
+                              if (presence === "ga_only") {
+                                return (
+                                  <Tag
+                                    className="rca-bom-match-tag"
+                                    value="No PL"
+                                    severity="warning"
+                                  />
+                                );
+                              }
+                              const m = bomQtyMatchState(row);
+                              if (m === true) {
+                                return (
+                                  <Tag
+                                    className="rca-bom-match-tag"
+                                    value="Match"
+                                    severity="success"
+                                    icon="pi pi-check-circle"
+                                  />
+                                );
+                              }
+                              if (m === false) {
+                                return (
+                                  <Tag
+                                    className="rca-bom-match-tag"
+                                    value="Mismatch"
+                                    severity="danger"
+                                    icon="pi pi-times-circle"
+                                  />
+                                );
+                              }
+                              return <Tag value="—" severity="secondary" />;
+                            }}
+                          />
+                        ) : null}
                         <Column field="partNumber" header="Part No." />
                         <Column
                           field="description"
@@ -3081,10 +3070,15 @@ export default function RouteCardGenerationAlt() {
                     {canShareToIed && (
                       <Button
                         type="button"
-                        label="Share to IED for review"
+                        label={shareToIedLabel}
                         icon="pi pi-send"
                         size="small"
                         onClick={shareToIed}
+                        title={
+                          sessionPlant
+                            ? `Plant ${sessionPlant} → ${shareIedSbu || "?"} IED`
+                            : shareToIedLabel
+                        }
                       />
                     )}
                     {canCompleteIed && (
@@ -3106,27 +3100,6 @@ export default function RouteCardGenerationAlt() {
                         onClick={recallIed}
                       />
                     )}
-                    <Button
-                      type="button"
-                      label="Approve"
-                      icon="pi pi-check"
-                      size="small"
-                      disabled={!canApprove}
-                      onClick={() => approveCard(false)}
-                    />
-                    {canAdminOverrideApprove && (
-                      <Button
-                        type="button"
-                        label="Admin override approve"
-                        icon="pi pi-shield"
-                        outlined
-                        severity="warning"
-                        size="small"
-                        onClick={() => approveCard(true)}
-                      />
-                    )}
-                    <Button type="button" label="Download for Create Order" icon="pi pi-download" outlined size="small" onClick={downloadCreateOrder} disabled={!routeCardId} />
-                    <Button type="button" label="Copy JSON" icon="pi pi-copy" outlined size="small" onClick={copyCreateOrder} disabled={!routeCardId} />
                     <Button
                       type="button"
                       label="Favorite"
@@ -3392,12 +3365,13 @@ export default function RouteCardGenerationAlt() {
         }
       >
         <p className="oarc-instr-dialog__hint">
-          Operator instructions. Click the text to edit. Item names from the Parts List appear in
-          preview only — they are not written into the saved text.
+          Operator instructions. Click the text to edit. Shift+Enter for a new line, Enter to save.
+          Item names appear in preview only.
         </p>
         <InstructionClickEdit
           value={instrDialog.draft}
           onChange={(e) => setInstrDialog((s) => ({ ...s, draft: e.target.value }))}
+          onSave={saveSuggestedInstruction}
           itemLookup={plItemLookup}
           viewCrops={tableCrops}
           onOpenViewCrop={(crop, el) => {
@@ -3543,13 +3517,20 @@ export default function RouteCardGenerationAlt() {
         </OverlayPanel>
         {(instrDialog.itemsUsed || []).length > 0 ? (
           <div className="oarc-instr-dialog__meta" aria-label="Items from Parts List">
-            <span className="oarc-instr-dialog__meta-label">Items:</span>
+            <span className="oarc-instr-dialog__meta-label">Items</span>
             <div className="oarc-instr-dialog__chips">
-              {(instrDialog.itemsUsed || []).map((item, idx) => (
-                <span key={`${item.itemNo}-${idx}`} className="oarc-instr-chip oarc-instr-chip--item">
-                  {formatItemChip(item, plItemLookup)}
-                </span>
-              ))}
+              {(instrDialog.itemsUsed || []).map((item, idx) => {
+                const chip = formatItemChip(item, plItemLookup);
+                return (
+                  <span
+                    key={`${item.itemNo}-${idx}`}
+                    className="oarc-instr-chip oarc-instr-chip--item"
+                    title={chip}
+                  >
+                    {chip}
+                  </span>
+                );
+              })}
             </div>
           </div>
         ) : null}

@@ -312,7 +312,12 @@ def classify_offset_role(
     span_y = max(ey1 - ey0, 1.0)
     dx = dim["cx"] - balloon["cx"]
     dy = dim["cy"] - balloon["cy"]
-    # Dimension between balloon and left edge of view
+    # Prefer the dominant axis so a dim above-and-slightly-left is "top", not "left".
+    if abs(dy) >= abs(dx):
+        if abs(dy) < span_y * 0.25 and dim["cy"] < balloon["cy"] and abs(dx) < span_x * 0.25:
+            return "top"
+        if abs(dy) < span_y * 0.25 and dim["cy"] > balloon["cy"] and abs(dx) < span_x * 0.25:
+            return "gap_below"
     if abs(dx) < span_x * 0.25 and dim["cx"] < balloon["cx"] and abs(dy) < span_y * 0.15:
         return "left"
     if abs(dy) < span_y * 0.25 and dim["cy"] < balloon["cy"] and abs(dx) < span_x * 0.2:

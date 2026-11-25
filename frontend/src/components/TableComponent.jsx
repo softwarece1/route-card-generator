@@ -168,9 +168,11 @@ export default function TableComponent({
               sortable={Boolean(col.sortable)}
               style={col.style}
               className={col.className}
+              bodyClassName={col.bodyClassName || col.className}
               body={bodyFor(col)}
               headerClassName={col.headerClassName}
               sortField={col.sortField}
+              sortFunction={col.sortFunction}
             />
           );
         })}

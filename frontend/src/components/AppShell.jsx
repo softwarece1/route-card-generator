@@ -33,16 +33,17 @@ function readSidebarCollapsed() {
   }
 }
 
-function roleLabel(role) {
+function roleLabel(role, user) {
   if (role === "admin") return "Admin";
   if (role === "sbu_head") return "SBU head";
-  if (role === "ied") return "IED";
+  if (role === "dept_head") return "Dept head";
+  if (user?.isIedDept || role === "ied") return "IED";
   return "Engineer";
 }
 
-function navItemsForRole(role) {
-  // IED: review queue only — no drawing extraction / generator
-  if (role === "ied") {
+function navItemsForRole(role, user) {
+  // IED department: review queue only — no drawing extraction / generator
+  if (user?.isIedDept || role === "ied") {
     return [
       {
         to: "/history",
@@ -71,14 +72,16 @@ function navItemsForRole(role) {
     { to: "/generator", end: true, icon: "pi pi-home", label: "Generator", id: "generator" },
     { to: "/history", end: false, icon: "pi pi-history", label: "Extractions", id: "history" },
   ];
-  if (role === "admin") {
+  if (role === "admin" || role === "sbu_head") {
     base.push({
       to: "/org",
       end: false,
       icon: "pi pi-sitemap",
-      label: "SBUs",
+      label: role === "admin" ? "Org" : "Departments",
       id: "org",
     });
+  }
+  if (role === "admin") {
     base.push({
       to: "/uploads",
       end: false,
@@ -94,7 +97,7 @@ function navItemsForRole(role) {
       id: "system",
     });
   }
-  if (role === "admin" || role === "sbu_head") {
+  if (role === "admin" || role === "sbu_head" || role === "dept_head") {
     base.push({
       to: "/users",
       end: false,
@@ -102,6 +105,8 @@ function navItemsForRole(role) {
       label: "Users",
       id: "users",
     });
+  }
+  if (role === "admin" || role === "sbu_head") {
     base.push({
       to: "/work-centers",
       end: false,
@@ -143,7 +148,7 @@ export default function AppShell({ active = "generator", children }) {
   const location = useLocation();
   const [currentUser, setCurrentUser] = useState(() => getUser());
   const user = currentUser;
-  const items = navItemsForRole(user?.role);
+  const items = navItemsForRole(user?.role, user);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unread, setUnread] = useState(0);
@@ -175,6 +180,9 @@ export default function AppShell({ active = "generator", children }) {
   }, []);
 
   useEffect(() => {
+    // Only open WS when a session cookie should exist — unauthenticated
+    // upgrades were closing abruptly and flooding the Vite proxy log.
+    if (!currentUser) return undefined;
     const client = connectNotificationsWs({
       onHello: (msg) => {
         setNotifications(msg.items || []);
@@ -196,7 +204,7 @@ export default function AppShell({ active = "generator", children }) {
       },
     });
     return () => client.close();
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     if ("scrollRestoration" in window.history) {
@@ -299,8 +307,12 @@ export default function AppShell({ active = "generator", children }) {
             </Button>
             <span className="rca-chip">
               <i className="pi pi-id-card" />
-              {roleLabel(user?.role)}
-              {user?.sbu ? ` · ${user.sbu}` : ""}
+              {roleLabel(user?.role, user)}
+              {user?.departmentName
+                ? ` · ${user.departmentName}`
+                : user?.sbu
+                  ? ` · ${user.sbu}`
+                  : ""}
             </span>
             <span className="rca-chip">
               <i className="pi pi-user" />

@@ -115,7 +115,7 @@ function rowUpdatedDate(row) {
 export default function ExtractionsPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
-  const isIed = user?.role === "ied";
+  const isIed = Boolean(user?.isIedDept) || user?.role === "ied";
   const isSbuHead = user?.role === "sbu_head";
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);

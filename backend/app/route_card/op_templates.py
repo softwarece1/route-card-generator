@@ -10,7 +10,7 @@ from pony.orm import db_session, flush, select
 from app.route_card.models import RcSbu, RcOperationTemplate, RcOperationTemplateStep, RcUser
 
 VALID_PLACEMENTS = {"pre", "post", "any"}
-VALID_ROLES = {"admin", "sbu_head", "engineer", "ied"}
+VALID_ROLES = {"admin", "sbu_head", "dept_head", "engineer"}
 
 
 def _role(user: dict | None) -> str:
@@ -29,8 +29,14 @@ def _is_sbu_head(user: dict | None) -> bool:
     return _role(user) == "sbu_head"
 
 
+def _is_dept_head(user: dict | None) -> bool:
+    return _role(user) == "dept_head"
+
+
 def _is_ied(user: dict | None) -> bool:
-    return _role(user) == "ied"
+    from app.route_card.departments import user_in_ied_dept
+
+    return user_in_ied_dept(user)
 
 
 def _can_write_dept(user: dict | None, dept: str) -> bool:
@@ -38,17 +44,19 @@ def _can_write_dept(user: dict | None, dept: str) -> bool:
         return True
     if _is_sbu_head(user) and _dept(user) and _dept(user) == (dept or "").strip():
         return True
+    if _is_dept_head(user) and _dept(user) and _dept(user) == (dept or "").strip():
+        return True
     return False
 
 
 def _can_manage_templates(user: dict | None, dept: str) -> bool:
-    """Admin any dept; sbu_head / IED own department only."""
+    """Admin any SBU; sbu_head / dept_head / IED-dept users own SBU only."""
     if _is_admin(user):
         return True
     d = _dept(user)
     if not d or d != (dept or "").strip():
         return False
-    return _is_sbu_head(user) or _is_ied(user)
+    return _is_sbu_head(user) or _is_dept_head(user) or _is_ied(user)
 
 
 def _can_read_template(user: dict | None, tpl: RcOperationTemplate) -> bool:
@@ -316,7 +324,7 @@ def get_template(template_id: int, user: dict | None) -> dict:
 
 @db_session
 def create_template(body: dict, user: dict | None) -> dict:
-    if not (_is_admin(user) or _is_sbu_head(user) or _is_ied(user)):
+    if not (_is_admin(user) or _is_sbu_head(user) or _is_dept_head(user) or _is_ied(user)):
         raise HTTPException(403, "Department head, IED, or admin access required")
 
     name = (body.get("name") or "").strip()
@@ -401,7 +409,7 @@ def delete_template(template_id: int, user: dict | None) -> dict:
 
 @db_session
 def duplicate_template(template_id: int, body: dict, user: dict | None) -> dict:
-    if not (_is_admin(user) or _is_sbu_head(user) or _is_ied(user)):
+    if not (_is_admin(user) or _is_sbu_head(user) or _is_dept_head(user) or _is_ied(user)):
         raise HTTPException(403, "Department head, IED, or admin access required")
 
     src = RcOperationTemplate.get(id=template_id)

@@ -106,6 +106,10 @@ export default function OarcPreviewDialog({
   // IED may only change setup / per-piece hours — no structural op actions
   const canStructureOps = canEditStandards && !isIedMode;
   const canEditTimes = canEditStandards;
+  // IED: only setup / per-piece times + remarks are editable
+  const canEditHeader = !isIedMode;
+  const canEditMaterials = !isIedMode;
+  const canEditDocs = !isIedMode;
   const routeCardId = payload?.id || null;
 
   useEffect(() => {
@@ -544,7 +548,11 @@ export default function OarcPreviewDialog({
             <Message
               severity="info"
               className="w-full mb-3"
-              text="Fields filled from GA / NOTES / Parts List extract. Production Order, SO, WBS, and Plant stay empty until you enter them."
+              text={
+                isIedMode
+                  ? "IED can edit setup / per-piece time and remarks only. Header, raw materials, and documents are read-only."
+                  : "Fields filled from GA / NOTES / Parts List extract. Production Order, SO, WBS, and Plant stay empty until you enter them."
+              }
             />
 
             <div className="om-order-form om-order-form--two-col">
@@ -561,6 +569,7 @@ export default function OarcPreviewDialog({
                       value={header.production_order}
                       onChange={(e) => setH("production_order", e.target.value)}
                       placeholder="Enter production order"
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12">
@@ -570,6 +579,7 @@ export default function OarcPreviewDialog({
                       value={header.wbs_element}
                       onChange={(e) => setH("wbs_element", e.target.value)}
                       placeholder="WBS element"
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12">
@@ -579,6 +589,7 @@ export default function OarcPreviewDialog({
                       value={header.sale_order}
                       onChange={(e) => setH("sale_order", e.target.value)}
                       placeholder="Enter sales order"
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12">
@@ -588,6 +599,7 @@ export default function OarcPreviewDialog({
                       value={header.project_name}
                       onChange={(e) => setH("project_name", e.target.value)}
                       placeholder="Project name"
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12">
@@ -597,6 +609,7 @@ export default function OarcPreviewDialog({
                       value={header.priority}
                       onChange={(e) => setH("priority", e.target.value)}
                       placeholder="Priority"
+                      disabled={!canEditHeader}
                     />
                   </div>
                 </div>
@@ -615,6 +628,7 @@ export default function OarcPreviewDialog({
                       value={header.part_number}
                       onChange={(e) => setH("part_number", e.target.value)}
                       placeholder="Part number"
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12">
@@ -624,6 +638,7 @@ export default function OarcPreviewDialog({
                       value={header.part_description}
                       onChange={(e) => setH("part_description", e.target.value)}
                       placeholder="Part description"
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12 md:col-6">
@@ -633,6 +648,7 @@ export default function OarcPreviewDialog({
                       value={header.required_quantity}
                       onValueChange={(e) => onRequiredQty(e.value)}
                       min={1}
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12 md:col-6">
@@ -642,6 +658,7 @@ export default function OarcPreviewDialog({
                       value={header.launched_quantity}
                       onValueChange={(e) => setH("launched_quantity", e.value ?? 0)}
                       min={0}
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12 md:col-6">
@@ -651,6 +668,7 @@ export default function OarcPreviewDialog({
                       value={header.plant_id === "" || header.plant_id == null ? "" : String(header.plant_id)}
                       onChange={(e) => setH("plant_id", e.target.value)}
                       placeholder="Plant ID"
+                      disabled={!canEditHeader}
                     />
                   </div>
                   <div className="field col-12 md:col-6">
@@ -660,6 +678,7 @@ export default function OarcPreviewDialog({
                       value={operations.length || header.total_operations || 0}
                       onValueChange={(e) => setH("total_operations", e.value ?? 0)}
                       min={0}
+                      disabled={!canEditHeader}
                     />
                   </div>
                 </div>
@@ -1004,16 +1023,20 @@ export default function OarcPreviewDialog({
                   <div className="om-create-order-section">
                     <div className="om-create-order-section__toolbar">
                       <span className="om-create-order-section__hint">
-                        {rawMaterials.length
-                          ? "Edit raw materials data below:"
-                          : "No raw materials found. Click 'Add Material' to add a new material:"}
+                        {isIedMode
+                          ? "Raw materials are read-only for IED."
+                          : rawMaterials.length
+                            ? "Edit raw materials data below:"
+                            : "No raw materials found. Click 'Add Material' to add a new material:"}
                       </span>
-                      <Button
-                        type="button"
-                        label="Add Material"
-                        size="small"
-                        onClick={() => setRawMaterials((rows) => [...rows, emptyRawMaterial(rows)])}
-                      />
+                      {canEditMaterials ? (
+                        <Button
+                          type="button"
+                          label="Add Material"
+                          size="small"
+                          onClick={() => setRawMaterials((rows) => [...rows, emptyRawMaterial(rows)])}
+                        />
+                      ) : null}
                     </div>
                     <DataTable
                       value={rawMaterials}
@@ -1025,9 +1048,11 @@ export default function OarcPreviewDialog({
                       emptyMessage={
                         <div className="om-create-order-empty">
                           <p>No raw materials added yet.</p>
-                          <p className="om-create-order-empty__sub">
-                            Click &quot;Add Material&quot; to add a new material.
-                          </p>
+                          {!isIedMode ? (
+                            <p className="om-create-order-empty__sub">
+                              Click &quot;Add Material&quot; to add a new material.
+                            </p>
+                          ) : null}
                         </div>
                       }
                     >
@@ -1039,6 +1064,7 @@ export default function OarcPreviewDialog({
                             value={row["Sl.No"]}
                             min={1}
                             className="w-full"
+                            disabled={!canEditMaterials}
                             onValueChange={(e) => updateMat(row._rowId, "Sl.No", e.value)}
                           />
                         )}
@@ -1050,6 +1076,7 @@ export default function OarcPreviewDialog({
                           <SafeInputText profile="text"
                             value={row["Child Part No"]}
                             className="w-full"
+                            disabled={!canEditMaterials}
                             onChange={(e) => updateMat(row._rowId, "Child Part No", e.target.value)}
                           />
                         )}
@@ -1061,6 +1088,7 @@ export default function OarcPreviewDialog({
                           <SafeInputText profile="text"
                             value={row.Description}
                             className="w-full"
+                            disabled={!canEditMaterials}
                             onChange={(e) => updateMat(row._rowId, "Description", e.target.value)}
                           />
                         )}
@@ -1072,6 +1100,7 @@ export default function OarcPreviewDialog({
                           <InputNumber
                             value={row["Qty Per Set"]}
                             className="w-full"
+                            disabled={!canEditMaterials}
                             onValueChange={(e) => updateMat(row._rowId, "Qty Per Set", e.value)}
                           />
                         )}
@@ -1083,6 +1112,7 @@ export default function OarcPreviewDialog({
                           <SafeInputText profile="text"
                             value={row.UoM}
                             className="w-full"
+                            disabled={!canEditMaterials}
                             onChange={(e) => updateMat(row._rowId, "UoM", e.target.value)}
                           />
                         )}
@@ -1094,22 +1124,24 @@ export default function OarcPreviewDialog({
                           <InputNumber value={row["Total Qty"]} className="w-full" disabled />
                         )}
                       />
-                      <Column
-                        header="Actions"
-                        style={{ minWidth: "6rem", width: "6rem" }}
-                        body={(row) => (
-                          <Button
-                            type="button"
-                            label="Delete"
-                            severity="danger"
-                            text
-                            size="small"
-                            onClick={() =>
-                              setRawMaterials((rows) => rows.filter((r) => r._rowId !== row._rowId))
-                            }
-                          />
-                        )}
-                      />
+                      {canEditMaterials ? (
+                        <Column
+                          header="Actions"
+                          style={{ minWidth: "6rem", width: "6rem" }}
+                          body={(row) => (
+                            <Button
+                              type="button"
+                              label="Delete"
+                              severity="danger"
+                              text
+                              size="small"
+                              onClick={() =>
+                                setRawMaterials((rows) => rows.filter((r) => r._rowId !== row._rowId))
+                              }
+                            />
+                          )}
+                        />
+                      ) : null}
                     </DataTable>
                   </div>
                 </TabPanel>
@@ -1118,7 +1150,9 @@ export default function OarcPreviewDialog({
                   <div className="om-create-order-section">
                     <div className="om-create-order-section__toolbar">
                       <span className="om-create-order-section__hint">
-                        Document Information — prefilled from uploaded Drawing and Parts List.
+                        {isIedMode
+                          ? "Documents are read-only for IED. View or download only."
+                          : "Document Information — prefilled from uploaded Drawing and Parts List."}
                       </span>
                     </div>
                     <div className="grid">
@@ -1136,6 +1170,7 @@ export default function OarcPreviewDialog({
                                 value={drawingMeta.name}
                                 onChange={(e) => setDrawingMeta((m) => ({ ...m, name: e.target.value }))}
                                 placeholder="Enter document name"
+                                disabled={!canEditDocs}
                               />
                             </div>
                             <div className="field">
@@ -1148,6 +1183,7 @@ export default function OarcPreviewDialog({
                                   setDrawingMeta((m) => ({ ...m, description: e.target.value }))
                                 }
                                 placeholder="Enter description"
+                                disabled={!canEditDocs}
                               />
                             </div>
                             <div className="field">
@@ -1158,6 +1194,7 @@ export default function OarcPreviewDialog({
                                 onChange={(e) =>
                                   setDrawingMeta((m) => ({ ...m, version: e.target.value }))
                                 }
+                                disabled={!canEditDocs}
                               />
                             </div>
                             <div className="flex gap-2 flex-wrap">
@@ -1222,6 +1259,7 @@ export default function OarcPreviewDialog({
                                 value={plMeta.name}
                                 onChange={(e) => setPlMeta((m) => ({ ...m, name: e.target.value }))}
                                 placeholder="Enter document name"
+                                disabled={!canEditDocs}
                               />
                             </div>
                             <div className="field">
@@ -1234,6 +1272,7 @@ export default function OarcPreviewDialog({
                                   setPlMeta((m) => ({ ...m, description: e.target.value }))
                                 }
                                 placeholder="Enter description"
+                                disabled={!canEditDocs}
                               />
                             </div>
                             <div className="field">
@@ -1242,6 +1281,7 @@ export default function OarcPreviewDialog({
                                 className="w-full om-input"
                                 value={plMeta.version}
                                 onChange={(e) => setPlMeta((m) => ({ ...m, version: e.target.value }))}
+                                disabled={!canEditDocs}
                               />
                             </div>
                             <div className="flex gap-2 flex-wrap">
@@ -1330,12 +1370,13 @@ export default function OarcPreviewDialog({
         <p className="oarc-instr-dialog__hint">
           Operator instructions (printed on OARC).
           {canStructureOps
-            ? " Click the text to edit. Item names from the Parts List appear in preview only — they are not written into the saved text."
+            ? " Click the text to edit. Shift+Enter for a new line, Enter to save. Item names appear in preview only."
             : " Read-only for IED — only setup and per-piece time can be changed."}
         </p>
         <InstructionClickEdit
           value={instr.draft}
           onChange={(e) => setInstr((s) => ({ ...s, draft: e.target.value }))}
+          onSave={canStructureOps ? saveInstruction : undefined}
           itemLookup={itemLookup}
           resetKey={`${instr.visible}:${instr.rowId || ""}`}
           rows={6}
@@ -1343,27 +1384,42 @@ export default function OarcPreviewDialog({
         />
         {(instr.itemsUsed?.length > 0 || instr.reference || instr.torqueSpec) && (
           <div className="oarc-instr-dialog__meta" aria-label="Reference only — not printed">
-            <span className="oarc-instr-dialog__meta-label">Ref:</span>
-            <div className="oarc-instr-dialog__chips">
-              {(instr.itemsUsed || []).map((item, idx) => (
-                <span
-                  key={`${item.itemNo}-${idx}`}
-                  className="oarc-instr-chip oarc-instr-chip--item"
-                >
-                  {formatItemChip(item, itemLookup)}
-                </span>
-              ))}
-              {instr.reference ? (
-                <span className="oarc-instr-chip oarc-instr-chip--ref" title={instr.reference}>
-                  Ref: {instr.reference}
-                </span>
-              ) : null}
-              {instr.torqueSpec ? (
-                <span className="oarc-instr-chip oarc-instr-chip--torque" title={instr.torqueSpec}>
-                  Torque: {instr.torqueSpec}
-                </span>
-              ) : null}
-            </div>
+            {instr.itemsUsed?.length > 0 ? (
+              <>
+                <span className="oarc-instr-dialog__meta-label">Items</span>
+                <div className="oarc-instr-dialog__chips">
+                  {(instr.itemsUsed || []).map((item, idx) => {
+                    const chip = formatItemChip(item, itemLookup);
+                    return (
+                      <span
+                        key={`${item.itemNo}-${idx}`}
+                        className="oarc-instr-chip oarc-instr-chip--item"
+                        title={chip}
+                      >
+                        {chip}
+                      </span>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+            {(instr.reference || instr.torqueSpec) ? (
+              <>
+                <span className="oarc-instr-dialog__meta-label">Reference</span>
+                <div className="oarc-instr-dialog__chips">
+                  {instr.reference ? (
+                    <span className="oarc-instr-chip oarc-instr-chip--ref" title={instr.reference}>
+                      {instr.reference}
+                    </span>
+                  ) : null}
+                  {instr.torqueSpec ? (
+                    <span className="oarc-instr-chip oarc-instr-chip--torque" title={instr.torqueSpec}>
+                      Torque: {instr.torqueSpec}
+                    </span>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
           </div>
         )}
       </Dialog>

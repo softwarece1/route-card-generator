@@ -168,6 +168,52 @@ def test_synthetic_notes_and_route_merge():
     assert note_ops
 
 
+def test_club_overlapping_stick_note_with_balloons():
+    """Stick note citing 2&3 clubs balloons 2/3; lone balloon 1 becomes host — no assemble lines."""
+    pl = {
+        "items": [
+            {"itemNo": 1, "qty": 1, "description": "PSU BODY"},
+            {"itemNo": 2, "qty": 1, "description": "Label"},
+            {"itemNo": 3, "qty": 1, "description": "Label"},
+        ]
+    }
+    pl_nos = {1, 2, 3}
+    balloon_notes = []
+    for ino in (1, 2, 3):
+        g = validate_assembly_group(
+            {
+                "parentItemNo": ino,
+                "parentQty": 1,
+                "children": [],
+                "rawText": str(ino),
+                "confidence": 0.8,
+            },
+            pl_nos,
+            source_page=1,
+            source_filename="112185749834 - GA.pdf",
+        )
+        g.pop("warnings", None)
+        balloon_notes.extend(groups_to_synthetic_notes([g], parts_list=pl))
+
+    notes = [
+        {
+            "stepNo": 1,
+            "sheet": 1,
+            "text": "STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE.",
+            "items": [2, 3],
+        }
+    ]
+    merged = merge_notes_with_balloon_notes(notes, balloon_notes)
+    assert len(merged) == 1
+    note = merged[0]
+    assert not note.get("assemblyGroup")
+    assert note.get("hostItemNo") == 1
+    assert note.get("balloonGroups")
+    clubbed_items = {i for g in note["balloonGroups"] for i in (g.get("items") or [])}
+    assert 2 in clubbed_items and 3 in clubbed_items
+    assert not any(n.get("assemblyGroup") for n in merged)
+
+
 def test_item_link_includes_assembly_groups():
     g = validate_assembly_group(
         parse_callout_cluster("480, 230x4, 340x4"),

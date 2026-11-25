@@ -520,6 +520,12 @@ def _user_dept(user: dict | None) -> str:
     return ((user or {}).get("sbu") or "").strip()
 
 
+def _is_ied_user(user: dict | None) -> bool:
+    from app.route_card.departments import user_in_ied_dept
+
+    return user_in_ied_dept(user)
+
+
 def _session_route_card(session: RcSession) -> RcRouteCard | None:
     drawing = session.drawings.select().order_by(desc(RcDrawing.created_at)).first()
     if not drawing:
@@ -527,14 +533,112 @@ def _session_route_card(session: RcSession) -> RcRouteCard | None:
     return drawing.route_cards.select().order_by(desc(RcRouteCard.created_at)).first()
 
 
+def _bind_session_plant_sbu(
+    session: RcSession,
+    *,
+    plant: str | None = None,
+    user: dict | None = None,
+) -> None:
+    """Persist plant + SBU on the session (admin plant override, else owner SBU).
+
+    Must be called inside an open db_session (uses undecorated plant helpers).
+    """
+    from app.route_card.plants import _plant_id_for_sbu, _sbu_for_plant
+
+    want_plant = (plant or "").strip()
+    if want_plant:
+        session.plant = want_plant
+        sbu_row = _sbu_for_plant(want_plant)
+        if sbu_row:
+            session.sbu = (sbu_row.name or sbu_row.code or "").strip()
+        return
+
+    owner_sbu = ""
+    if user and (user.get("sbu") or "").strip():
+        owner_sbu = (user.get("sbu") or "").strip()
+    elif session.user and (session.user.sbu or "").strip():
+        owner_sbu = (session.user.sbu or "").strip()
+
+    if owner_sbu:
+        session.sbu = owner_sbu
+        if not (session.plant or "").strip():
+            session.plant = _plant_id_for_sbu(owner_sbu) or ""
+
+
 def _session_owner_dept(session: RcSession) -> str:
+    """SBU name/code that owns this session (plant-bound sbu preferred)."""
+    bound = (getattr(session, "sbu", None) or "").strip()
+    if bound:
+        return bound
+    # Fallback: latest analyze job plant → SBU
+    plant = (getattr(session, "plant", None) or "").strip()
+    if not plant:
+        try:
+            jobs = sorted(
+                session.analyze_jobs,
+                key=lambda j: j.id,
+                reverse=True,
+            )
+            for j in jobs:
+                p = (getattr(j, "plant", None) or "").strip()
+                if p:
+                    plant = p
+                    break
+        except Exception:
+            plant = ""
+    if plant:
+        from app.route_card.plants import _sbu_for_plant
+
+        sbu_row = _sbu_for_plant(plant)
+        if sbu_row:
+            return (sbu_row.name or sbu_row.code or "").strip()
     owner = session.user
     return (owner.sbu or "").strip() if owner else ""
 
 
+def _session_plant(session: RcSession) -> str:
+    plant = (getattr(session, "plant", None) or "").strip()
+    if plant:
+        return plant
+    try:
+        jobs = sorted(session.analyze_jobs, key=lambda j: j.id, reverse=True)
+        for j in jobs:
+            p = (getattr(j, "plant", None) or "").strip()
+            if p:
+                return p
+    except Exception:
+        pass
+    sbu = (getattr(session, "sbu", None) or "").strip()
+    if not sbu:
+        owner = session.user
+        sbu = (owner.sbu or "").strip() if owner else ""
+    if not sbu:
+        return ""
+    from app.route_card.plants import _plant_id_for_sbu
+
+    return _plant_id_for_sbu(sbu) or ""
+
+
 def _same_sbu(user: dict | None, session: RcSession) -> bool:
     dept = _user_dept(user)
-    return bool(dept) and dept == _session_owner_dept(session)
+    session_sbu = _session_owner_dept(session)
+    if not dept or not session_sbu:
+        return False
+    if dept == session_sbu:
+        return True
+    # Match code vs name (user.sbu may be either)
+    from app.route_card.models import RcSbu
+
+    rows = select(
+        s
+        for s in RcSbu
+        if s.is_active
+        and (s.name == session_sbu or s.code == session_sbu)
+    )[:1]
+    if not rows:
+        return False
+    s = rows[0]
+    return dept in {(s.name or "").strip(), (s.code or "").strip()}
 
 
 def _is_direct_report(owner: RcUser | None, manager_id: int | None) -> bool:
@@ -559,7 +663,7 @@ def _assert_session_access(session: RcSession, user: dict | None, *, write: bool
     role = _user_role(user)
     card = _session_route_card(session)
     card_status = (card.status if card else "") or ""
-    if role == "ied" and _same_sbu(user, session) and card_status in {
+    if _is_ied_user(user) and _same_sbu(user, session) and card_status in {
         "ied_review",
         "ied_complete",
     }:
@@ -567,7 +671,7 @@ def _assert_session_access(session: RcSession, user: dict | None, *, write: bool
             raise HTTPException(403, "IED cannot modify session documents")
         return
     if (
-        role == "sbu_head"
+        role in {"sbu_head", "dept_head"}
         and _same_sbu(user, session)
         and _is_direct_report(owner, uid)
         and card_status in {"ied_review", "ied_complete", "approved"}
@@ -591,7 +695,7 @@ def _assert_can_share_ied(card: RcRouteCard, user: dict | None) -> None:
     uid = user.get("id")
     if owner and uid and owner.id == int(uid):
         return
-    if role == "sbu_head" and _same_sbu(user, session) and _is_direct_report(owner, uid):
+    if role in {"sbu_head", "dept_head"} and _same_sbu(user, session) and _is_direct_report(owner, uid):
         return
     raise HTTPException(
         403, "Only the owner, their reporting officer, or admin can share to IED"
@@ -603,8 +707,8 @@ def _assert_ied_same_sbu(card: RcRouteCard, user: dict | None) -> None:
         raise HTTPException(401, "Not authenticated")
     if _is_admin(user):
         return
-    if _user_role(user) != "ied":
-        raise HTTPException(403, "IED role required")
+    if not _is_ied_user(user):
+        raise HTTPException(403, "IED department membership required")
     session = card.drawing.session if card.drawing else None
     if not session or not _same_sbu(user, session):
         raise HTTPException(403, "Route card is not in your SBU")
@@ -876,6 +980,14 @@ def build_payload(
             else None
         ),
         "iedCompletedById": getattr(route, "ied_completed_by_id", None) if route else None,
+        "sbu": (
+            _session_owner_dept(drawing.session)
+            if drawing and drawing.session
+            else ""
+        ),
+        "plant": (
+            _session_plant(drawing.session) if drawing and drawing.session else ""
+        ),
     }
 
 
@@ -1127,18 +1239,19 @@ def update_route(route_id: int, body: dict, user: dict | None = None) -> dict:
     role = _user_role(user)
     if status == "approved" and not _is_admin(user):
         raise HTTPException(400, "Approved route cards cannot be edited")
+    is_ied = _is_ied_user(user)
     if status == "ied_review":
-        if not (_is_admin(user) or role == "ied"):
+        if not (_is_admin(user) or is_ied):
             raise HTTPException(403, "Only IED can edit the route during IED review")
-        if role == "ied":
+        if is_ied:
             _assert_ied_same_sbu(card, user)
-    elif role == "ied":
+    elif is_ied:
         raise HTTPException(403, "IED can only edit routes in IED review")
-    elif status == "ied_complete" and role not in {"admin", "sbu_head", "engineer"}:
+    elif status == "ied_complete" and role not in {"admin", "sbu_head", "dept_head", "engineer"}:
         raise HTTPException(403, "Not allowed to edit this route")
 
     ops = body.get("operations") or []
-    if status == "ied_review" and role == "ied":
+    if status == "ied_review" and is_ied:
         # Rebuild from DB order; overlay only setup / time (hours). Ignore add/delete/reorder.
         by_client = {}
         for o in ops:
@@ -1221,7 +1334,7 @@ def update_route(route_id: int, body: dict, user: dict | None = None) -> dict:
         ]
         or None,
     }
-    if status == "ied_review" and role == "ied":
+    if status == "ied_review" and is_ied:
         # Keep inspection chars unchanged for IED edits
         generated["inspection"] = None
     extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
@@ -1290,8 +1403,7 @@ def set_route_status(
                     "blockingFlags": blocking,
                 },
             )
-        role = _user_role(user)
-        if role == "ied" and not (admin_override and is_admin):
+        if _is_ied_user(user) and not (admin_override and is_admin):
             raise HTTPException(403, "IED cannot approve; mark IED review complete instead")
     if status == "draft" and current == "ied_review" and not is_admin:
         # Use recall-ied for this transition
@@ -1323,14 +1435,32 @@ def set_route_status(
 
 def _notify_ied_users(dept: str, title: str, body: str, link: str = "/history") -> int:
     from app.route_card import notifications
+    from app.route_card.models import RcSbu
 
     dept_n = (dept or "").strip()
     if not dept_n:
         return 0
+    # Accept SBU name or code
+    aliases = {dept_n}
+    sbu_rows = select(
+        s for s in RcSbu if s.is_active and (s.name == dept_n or s.code == dept_n)
+    )[:1]
+    if sbu_rows:
+        aliases.add((sbu_rows[0].name or "").strip())
+        aliases.add((sbu_rows[0].code or "").strip())
+    aliases.discard("")
+
     count = 0
-    for u in select(
-        u for u in RcUser if u.is_active and u.role == "ied" and (u.sbu or "") == dept_n
-    ):
+    # Prefer users assigned to the SBU's IED department; fall back to legacy role=ied
+    for u in select(u for u in RcUser if u.is_active):
+        if (u.sbu or "").strip() not in aliases:
+            continue
+        dept_ent = getattr(u, "department", None)
+        is_ied = (
+            dept_ent is not None and (dept_ent.code or "").strip().upper() == "IED"
+        ) or (u.role or "").strip().lower() == "ied"
+        if not is_ied:
+            continue
         notifications.create_notification(u.id, title, body, link=link)
         count += 1
     return count
@@ -1358,6 +1488,13 @@ def share_route_to_ied(route_id: int, user: dict | None = None) -> dict:
         )
     if not card.operations:
         raise HTTPException(400, "Generate route operations before sharing to IED")
+    session = card.drawing.session if card.drawing else None
+    dept = _session_owner_dept(session) if session else ""
+    if not dept:
+        raise HTTPException(
+            400,
+            "Session has no SBU/plant. Admin must re-analyze with a plant selected.",
+        )
     now = datetime.utcnow()
     actor = _resolve_user(user)
     card.status = "ied_review"
@@ -1367,12 +1504,10 @@ def share_route_to_ied(route_id: int, user: dict | None = None) -> dict:
     card.ied_completed_by_id = None
     card.updated_at = now
     commit()
-    session = card.drawing.session if card.drawing else None
-    dept = _session_owner_dept(session) if session else ""
     notified = _notify_ied_users(
         dept,
-        "Route card shared for IED review",
-        f"Route card #{route_id} needs setup / per-piece time and WC review.",
+        f"Route card shared for {dept} IED review",
+        f"Route card #{route_id} needs setup / per-piece time and WC review ({dept}).",
         link="/history",
     )
     audit.record_audit(
@@ -1380,7 +1515,11 @@ def share_route_to_ied(route_id: int, user: dict | None = None) -> dict:
         user=user,
         route_card_id=route_id,
         session_id=session.id if session else None,
-        detail={"notifiedIed": notified, "sbu": dept},
+        detail={
+            "notifiedIed": notified,
+            "sbu": dept,
+            "plant": _session_plant(session) if session else "",
+        },
     )
     extraction = card.drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
     return build_payload(card.drawing, extraction, card)
@@ -1669,6 +1808,7 @@ def _session_drawing_ids(session: RcSession) -> list[int]:
 def create_session(user: dict | None = None) -> dict:
     owner = _resolve_user(user)
     session = RcSession(status="open", user=owner)
+    _bind_session_plant_sbu(session, user=user)
     commit()
     return {
         "id": session.id,
@@ -1676,6 +1816,8 @@ def create_session(user: dict | None = None) -> dict:
         "documents": [],
         "drawingIds": [],
         "userId": owner.id if owner else None,
+        "sbu": (session.sbu or "").strip(),
+        "plant": (session.plant or "").strip(),
     }
 
 
@@ -1694,6 +1836,8 @@ def get_session(session_id: int, user: dict | None = None) -> dict:
         "drawingId": drawing.id if drawing else None,
         "drawingIds": [d.id for d in drawings],
         "userId": session.user.id if session.user else None,
+        "sbu": _session_owner_dept(session),
+        "plant": _session_plant(session),
     }
 
 
@@ -1965,6 +2109,7 @@ def analyze_session(
         message="Please wait — preparing documents…",
         detail="",
     )
+    _bind_session_plant_sbu(session, plant=plant, user=user)
     session.status = "analyzing"
     for drawing in drawings:
         drawing.status = "analyzing"
@@ -1979,7 +2124,7 @@ def analyze_session(
             cancel_event=cancel_event,
             user=user,
             vlm_page_indexes=vlm_page_indexes,
-            plant=plant,
+            plant=plant or (session.plant or None),
         )
     except AnalysisCancelled:
         session.status = "cancelled"
@@ -3173,7 +3318,7 @@ def list_my_extractions(user: dict | None) -> dict:
         raise HTTPException(401, "Not authenticated")
     role = _user_role(user)
     dept = _user_dept(user)
-    if role == "ied" and dept:
+    if _is_ied_user(user) and dept:
         # IED queue: same-SBU cards awaiting IED (and recently completed)
         sessions = []
         seen = set()
@@ -3185,7 +3330,7 @@ def list_my_extractions(user: dict | None) -> dict:
             session = card.drawing.session if card.drawing else None
             if not session or session.id in seen:
                 continue
-            if _session_owner_dept(session) != dept:
+            if not _same_sbu(user, session):
                 continue
             seen.add(session.id)
             sessions.append(session)
@@ -3288,16 +3433,31 @@ def _reports_to_fields(u: RcUser) -> dict:
     }
 
 
+def _department_fields(u: RcUser) -> dict:
+    dept = getattr(u, "department", None)
+    return {
+        "departmentId": dept.id if dept else None,
+        "departmentCode": (dept.code if dept else "") or "",
+        "departmentName": (dept.name if dept else "") or "",
+        "isIedDept": bool(dept and (dept.code or "").strip().upper() == "IED"),
+    }
+
+
 def _user_rows(
     dept: str | None = None,
     *,
     reports_to_id: int | None = None,
+    department_id: int | None = None,
 ) -> list[dict]:
     dept_n = (dept or "").strip()
     rows = []
     for u in RcUser.select().order_by(RcUser.emp_id)[:]:
         if dept_n and (u.sbu or "") != dept_n:
             continue
+        if department_id is not None:
+            ud = getattr(u, "department", None)
+            if not ud or ud.id != int(department_id):
+                continue
         if reports_to_id is not None:
             boss = getattr(u, "reports_to", None)
             if not boss or boss.id != int(reports_to_id):
@@ -3321,6 +3481,7 @@ def _user_rows(
                 "createdAt": u.created_at.isoformat() if u.created_at else None,
                 "sessionCount": session_count,
                 "analyzedCount": analyzed,
+                **_department_fields(u),
                 **_reports_to_fields(u),
             }
         )
@@ -3329,21 +3490,27 @@ def _user_rows(
 
 @db_session
 def list_dept_users(user: dict | None) -> dict:
-    """Dept head: direct reports only. Admin: all users."""
+    """sbu_head: users in SBU. dept_head: direct reports. Admin: all."""
     if not user:
         raise HTTPException(401, "Not authenticated")
     role = user.get("role") or ""
     if role == "admin":
         rows = _user_rows()
         return {"users": rows, "total": len(rows)}
-    if role != "sbu_head":
-        raise HTTPException(403, "Department head or admin access required")
-    dept = (user.get("sbu") or "").strip()
-    actor_id = user.get("id")
-    if not dept or not actor_id:
-        return {"users": [], "total": 0, "sbu": dept or ""}
-    rows = _user_rows(dept, reports_to_id=int(actor_id))
-    return {"users": rows, "total": len(rows), "sbu": dept}
+    if role == "sbu_head":
+        dept = (user.get("sbu") or "").strip()
+        if not dept:
+            return {"users": [], "total": 0, "sbu": ""}
+        rows = _user_rows(dept)
+        return {"users": rows, "total": len(rows), "sbu": dept}
+    if role == "dept_head":
+        actor_id = user.get("id")
+        dept = (user.get("sbu") or "").strip()
+        if not actor_id:
+            return {"users": [], "total": 0, "sbu": dept or ""}
+        rows = _user_rows(dept or None, reports_to_id=int(actor_id))
+        return {"users": rows, "total": len(rows), "sbu": dept or ""}
+    raise HTTPException(403, "Department head, SBU head, or admin access required")
 
 
 def update_admin_user_role(user: dict | None, user_id: int, role: str) -> dict:
@@ -3362,6 +3529,7 @@ def _public_user_row(u: RcUser) -> dict:
         "mustChangePassword": bool(getattr(u, "must_change_password", False)),
         "approvalStatus": (getattr(u, "approval_status", None) or "approved"),
         "approvalRemark": (getattr(u, "approval_remark", None) or ""),
+        **_department_fields(u),
         **_reports_to_fields(u),
     }
 
@@ -3444,17 +3612,40 @@ def approve_signup(actor: dict | None, user_id: int, remark: str | None = None) 
     actor_role = (actor.get("role") or "").strip().lower()
     actor_entity = RcUser.get(id=int(actor["id"])) if actor.get("id") else None
     boss = None
-    if actor_role == "sbu_head" and actor_entity:
+    if actor_role == "dept_head" and actor_entity:
         boss = actor_entity
+        if actor_entity.department and not target.department:
+            target.department = actor_entity.department
+    elif actor_role == "sbu_head" and actor_entity:
+        # Prefer an active dept_head in the signup's department (or PMG)
+        dept_ent = getattr(target, "department", None)
+        if dept_ent:
+            heads = select(
+                u
+                for u in RcUser
+                if u.is_active and u.role == "dept_head" and u.department == dept_ent
+            ).order_by(RcUser.name)[:1]
+            boss = heads[0] if heads else None
+        if not boss:
+            boss = actor_entity
     else:
-        heads = select(
-            u
-            for u in RcUser
-            if u.is_active
-            and u.role == "sbu_head"
-            and u.sbu == (target.sbu or "")
-        ).order_by(RcUser.name)[:1]
-        boss = heads[0] if heads else None
+        dept_ent = getattr(target, "department", None)
+        if dept_ent:
+            heads = select(
+                u
+                for u in RcUser
+                if u.is_active and u.role == "dept_head" and u.department == dept_ent
+            ).order_by(RcUser.name)[:1]
+            boss = heads[0] if heads else None
+        if not boss:
+            heads = select(
+                u
+                for u in RcUser
+                if u.is_active
+                and u.role == "sbu_head"
+                and u.sbu == (target.sbu or "")
+            ).order_by(RcUser.name)[:1]
+            boss = heads[0] if heads else None
 
     target.is_active = True
     target.approval_status = "approved"
@@ -3524,29 +3715,110 @@ def reject_signup(actor: dict | None, user_id: int, remark: str | None = None) -
 
 def _resolve_reports_to(
     *,
-    dept_n: str,
+    employee_role: str,
+    sbu_name: str,
+    department: "RcDepartment | None",
     reports_to_id: int | None,
     actor: dict | None,
     required: bool,
 ) -> RcUser | None:
-    """Validate reporting officer is an active sbu_head in the same department."""
+    """Validate reporting officer for engineer→dept_head or dept_head→sbu_head."""
+    role_n = (employee_role or "").strip().lower()
+    if role_n not in {"engineer", "dept_head"}:
+        return None
+
     if reports_to_id is None:
         if required:
-            # Default to actor when sbu_head creates an engineer
             actor_role = ((actor or {}).get("role") or "").strip().lower()
             actor_id = (actor or {}).get("id")
-            if actor_role == "sbu_head" and actor_id:
+            # Default: dept_head creating engineer → self; sbu_head creating dept_head → self
+            if actor_id and (
+                (role_n == "engineer" and actor_role == "dept_head")
+                or (role_n == "dept_head" and actor_role == "sbu_head")
+            ):
                 reports_to_id = int(actor_id)
             else:
-                raise HTTPException(400, "reportsToId (reporting officer) is required for engineers")
+                raise HTTPException(
+                    400,
+                    "reportsToId (reporting officer) is required",
+                )
         else:
             return None
+
     boss = RcUser.get(id=int(reports_to_id))
-    if not boss or not boss.is_active or boss.role != "sbu_head":
-        raise HTTPException(400, "Reporting officer must be an active department head")
-    if (boss.sbu or "").strip() != (dept_n or "").strip():
-        raise HTTPException(400, "Reporting officer must be in the same department")
+    if not boss or not boss.is_active:
+        raise HTTPException(400, "Reporting officer must be an active user")
+
+    sbu_n = (sbu_name or "").strip()
+    if role_n == "engineer":
+        if boss.role != "dept_head":
+            raise HTTPException(400, "Reporting officer must be an active department head")
+        if not department or not boss.department or boss.department.id != department.id:
+            raise HTTPException(
+                400, "Reporting officer must be in the same department"
+            )
+    else:  # dept_head
+        if boss.role != "sbu_head":
+            raise HTTPException(400, "Reporting officer must be an active SBU head")
+        if (boss.sbu or "").strip() != sbu_n:
+            raise HTTPException(400, "Reporting officer must be in the same SBU")
     return boss
+
+
+def _assert_single_sbu_head(sbu_name: str, exclude_user_id: int | None = None) -> None:
+    sbu_n = (sbu_name or "").strip()
+    if not sbu_n:
+        return
+    eid = int(exclude_user_id) if exclude_user_id is not None else None
+    if eid is not None:
+        clash = select(
+            u
+            for u in RcUser
+            if u.is_active
+            and u.role == "sbu_head"
+            and u.sbu == sbu_n
+            and u.id != eid
+        )[:1]
+    else:
+        clash = select(
+            u
+            for u in RcUser
+            if u.is_active and u.role == "sbu_head" and u.sbu == sbu_n
+        )[:1]
+    if clash:
+        other = clash[0]
+        raise HTTPException(
+            400,
+            f"SBU '{sbu_n}' already has an active SBU head ({other.emp_id} — {other.name})",
+        )
+
+
+def _assert_single_dept_head(department, exclude_user_id: int | None = None) -> None:
+    if not department:
+        return
+    eid = int(exclude_user_id) if exclude_user_id is not None else None
+    if eid is not None:
+        clash = select(
+            u
+            for u in RcUser
+            if u.is_active
+            and u.role == "dept_head"
+            and u.department == department
+            and u.id != eid
+        )[:1]
+    else:
+        clash = select(
+            u
+            for u in RcUser
+            if u.is_active and u.role == "dept_head" and u.department == department
+        )[:1]
+    if clash:
+        other = clash[0]
+        raise HTTPException(
+            400,
+            f"Department '{department.name}' already has an active department head "
+            f"({other.emp_id} — {other.name})",
+        )
 
 
 def _assert_can_manage_target(actor: dict | None, target: RcUser) -> None:
@@ -3555,35 +3827,58 @@ def _assert_can_manage_target(actor: dict | None, target: RcUser) -> None:
     actor_role = (actor.get("role") or "").strip().lower()
     if actor_role == "admin":
         return
-    if actor_role != "sbu_head":
-        raise HTTPException(403, "Department head or admin access required")
-    actor_dept = (actor.get("sbu") or "").strip()
+    actor_sbu = (actor.get("sbu") or "").strip()
     actor_id = actor.get("id")
-    if not actor_dept or not actor_id:
-        raise HTTPException(400, "Your account has no department assigned")
     if target.role == "admin":
         raise HTTPException(403, "Cannot manage the admin account")
-    if (target.sbu or "").strip() != actor_dept:
-        raise HTTPException(403, "User is not in your department")
-    # Direct reports only — engineers who report to this head
-    if target.role != "engineer":
-        raise HTTPException(
-            403,
-            "Department heads can only manage engineers who report to them",
-        )
-    boss = getattr(target, "reports_to", None)
-    if not boss or boss.id != int(actor_id):
-        raise HTTPException(403, "User does not report to you")
+
+    if actor_role == "sbu_head":
+        if not actor_sbu or not actor_id:
+            raise HTTPException(400, "Your account has no SBU assigned")
+        if (target.sbu or "").strip() != actor_sbu:
+            raise HTTPException(403, "User is not in your SBU")
+        if target.role not in {"dept_head", "engineer"}:
+            raise HTTPException(403, "SBU heads can only manage dept heads and engineers")
+        return
+
+    if actor_role == "dept_head":
+        if not actor_id:
+            raise HTTPException(400, "Not authenticated")
+        if target.role != "engineer":
+            raise HTTPException(403, "Department heads can only manage engineers")
+        boss = getattr(target, "reports_to", None)
+        if not boss or boss.id != int(actor_id):
+            raise HTTPException(403, "User does not report to you")
+        return
+
+    raise HTTPException(403, "Department head, SBU head, or admin access required")
 
 
-def _validate_dept_name(dept: str) -> str:
-    dept_n = (dept or "").strip()
-    if not dept_n:
-        raise HTTPException(400, "dept is required")
-    master = select(d for d in RcSbu if d.is_active and d.name == dept_n)[:1]
+def _validate_sbu_name(sbu: str) -> str:
+    sbu_n = (sbu or "").strip()
+    if not sbu_n:
+        raise HTTPException(400, "sbu is required")
+    master = select(d for d in RcSbu if d.is_active and d.name == sbu_n)[:1]
     if not master:
+        raise HTTPException(400, "Select a valid SBU")
+    return sbu_n
+
+
+def _validate_department(department_id, *, sbu_name: str | None = None):
+    from app.route_card.models import RcDepartment
+
+    if department_id is None or str(department_id).strip() == "":
+        raise HTTPException(400, "departmentId is required")
+    dept = RcDepartment.get(id=int(department_id))
+    if not dept or not dept.is_active:
         raise HTTPException(400, "Select a valid department")
-    return dept_n
+    if sbu_name and (dept.sbu.name or "").strip() != (sbu_name or "").strip():
+        raise HTTPException(400, "Department does not belong to the selected SBU")
+    return dept
+
+
+# Back-compat alias
+_validate_dept_name = _validate_sbu_name
 
 
 @db_session
@@ -3591,8 +3886,8 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
     if not actor:
         raise HTTPException(401, "Not authenticated")
     actor_role = (actor.get("role") or "").strip().lower()
-    if actor_role not in {"admin", "sbu_head"}:
-        raise HTTPException(403, "Department head or admin access required")
+    if actor_role not in {"admin", "sbu_head", "dept_head"}:
+        raise HTTPException(403, "Department head, SBU head, or admin access required")
 
     from app.auth import validate_employee_id
     from app.input_safe import require_safe
@@ -3608,40 +3903,62 @@ def create_managed_user(actor: dict | None, body: dict) -> dict:
     from app.password_policy import validate_password_complexity
     validate_password_complexity(str(password))
 
+    department = None
     if actor_role == "admin":
-        if role_n not in {"sbu_head", "engineer", "ied"}:
-            raise HTTPException(400, "role must be sbu_head, engineer, or ied")
-        dept_n = _validate_dept_name(body.get("sbu") or "")
-    else:
+        if role_n not in {"sbu_head", "dept_head", "engineer"}:
+            raise HTTPException(400, "role must be sbu_head, dept_head, or engineer")
+        sbu_n = _validate_sbu_name(body.get("sbu") or "")
+        if role_n in {"dept_head", "engineer"}:
+            department = _validate_department(body.get("departmentId"), sbu_name=sbu_n)
+    elif actor_role == "sbu_head":
+        if role_n not in {"dept_head", "engineer"}:
+            raise HTTPException(403, "SBU heads can only create dept_head or engineer accounts")
+        sbu_n = (actor.get("sbu") or "").strip()
+        if not sbu_n:
+            raise HTTPException(400, "Your account has no SBU assigned")
+        department = _validate_department(body.get("departmentId"), sbu_name=sbu_n)
+    else:  # dept_head
         if role_n != "engineer":
-            raise HTTPException(
-                403, "Department heads can only create engineer accounts"
-            )
-        dept_n = (actor.get("sbu") or "").strip()
-        if not dept_n:
+            raise HTTPException(403, "Department heads can only create engineer accounts")
+        sbu_n = (actor.get("sbu") or "").strip()
+        actor_dept_id = actor.get("departmentId")
+        if not sbu_n or not actor_dept_id:
             raise HTTPException(400, "Your account has no department assigned")
+        department = _validate_department(actor_dept_id, sbu_name=sbu_n)
 
     if RcUser.get(emp_id=emp_id):
         raise HTTPException(400, f"Employee ID '{emp_id}' is already registered")
 
+    if role_n == "sbu_head":
+        _assert_single_sbu_head(sbu_n)
+    if role_n == "dept_head":
+        _assert_single_dept_head(department)
+
     boss = None
-    if role_n == "engineer":
+    if role_n in {"engineer", "dept_head"}:
         raw_rid = body.get("reportsToId")
         rid = int(raw_rid) if raw_rid is not None and str(raw_rid).strip() != "" else None
         boss = _resolve_reports_to(
-            dept_n=dept_n, reports_to_id=rid, actor=actor, required=True
+            employee_role=role_n,
+            sbu_name=sbu_n,
+            department=department,
+            reports_to_id=rid,
+            actor=actor,
+            required=True,
         )
 
     from app.security import hash_password
 
-    user = RcUser(emp_id=emp_id,
+    user = RcUser(
+        emp_id=emp_id,
         name=name,
-        sbu=dept_n,
+        sbu=sbu_n,
         password_hash=hash_password(str(password)),
         role=role_n,
         is_active=True,
         must_change_password=True,
         reports_to=boss,
+        department=department,
     )
     commit()
     return {
@@ -3657,8 +3974,8 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
     if not actor:
         raise HTTPException(401, "Not authenticated")
     actor_role = (actor.get("role") or "").strip().lower()
-    if actor_role not in {"admin", "sbu_head"}:
-        raise HTTPException(403, "Department head or admin access required")
+    if actor_role not in {"admin", "sbu_head", "dept_head"}:
+        raise HTTPException(403, "Department head, SBU head, or admin access required")
 
     target = RcUser.get(id=int(user_id))
     if not target:
@@ -3666,16 +3983,22 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
     if target.role == "admin":
         raise HTTPException(400, "Cannot change the admin account")
 
-    if actor_role == "sbu_head":
+    prev_role = (target.role or "").strip().lower()
+    prev_sbu = (target.sbu or "").strip()
+    prev_dept_id = target.department.id if getattr(target, "department", None) else None
+
+    if actor_role in {"sbu_head", "dept_head"}:
         _assert_can_manage_target(actor, target)
-        # Dept head: name / empId only for engineers in own dept
-        if "role" in body and body.get("role") is not None:
-            role_n = str(body.get("role") or "").strip().lower()
-            if role_n and role_n != target.role:
-                raise HTTPException(403, "Department heads cannot change roles")
-        if "sbu" in body and body.get("sbu") is not None:
-            dept_n = str(body.get("sbu") or "").strip()
-            if dept_n and dept_n != (target.sbu or "").strip():
+        if actor_role == "dept_head":
+            if "role" in body and body.get("role") is not None:
+                role_n = str(body.get("role") or "").strip().lower()
+                if role_n and role_n != target.role:
+                    raise HTTPException(403, "Department heads cannot change roles")
+            if "sbu" in body and body.get("sbu") is not None:
+                sbu_n = str(body.get("sbu") or "").strip()
+                if sbu_n and sbu_n != (target.sbu or "").strip():
+                    raise HTTPException(403, "Department heads cannot change SBU")
+            if "departmentId" in body and body.get("departmentId") is not None:
                 raise HTTPException(403, "Department heads cannot change department")
 
     if "empId" in body and body.get("empId") is not None:
@@ -3700,39 +4023,77 @@ def update_managed_user(actor: dict | None, user_id: int, body: dict) -> dict:
             raise HTTPException(400, "name is required")
         target.name = name
 
-    if actor_role == "admin":
-        if "sbu" in body and body.get("sbu") is not None:
-            target.sbu = _validate_dept_name(body.get("sbu") or "")
+    if actor_role in {"admin", "sbu_head"}:
+        if actor_role == "admin" and "sbu" in body and body.get("sbu") is not None:
+            target.sbu = _validate_sbu_name(body.get("sbu") or "")
         if "role" in body and body.get("role") is not None:
             role_n = str(body.get("role") or "").strip().lower()
-            if role_n not in {"sbu_head", "engineer", "ied"}:
-                raise HTTPException(400, "role must be sbu_head, engineer, or ied")
+            allowed = (
+                {"sbu_head", "dept_head", "engineer"}
+                if actor_role == "admin"
+                else {"dept_head", "engineer"}
+            )
+            if role_n not in allowed:
+                raise HTTPException(400, f"role must be one of: {', '.join(sorted(allowed))}")
             target.role = role_n
+        if "departmentId" in body:
+            raw_did = body.get("departmentId")
+            if raw_did is None or str(raw_did).strip() == "":
+                if (target.role or "") in {"dept_head", "engineer"}:
+                    raise HTTPException(400, "departmentId is required for this role")
+                target.department = None
+            else:
+                target.department = _validate_department(
+                    raw_did, sbu_name=(target.sbu or "").strip()
+                )
+                target.sbu = (target.department.sbu.name or "").strip()
 
-    # Reporting officer (engineers only)
     effective_role = (target.role or "").strip().lower()
-    if "reportsToId" in body or (
-        actor_role == "admin" and "role" in body and effective_role != "engineer"
-    ):
-        if effective_role != "engineer":
+    effective_sbu = (target.sbu or "").strip()
+    effective_dept_id = (
+        target.department.id if getattr(target, "department", None) else None
+    )
+    if effective_role == "sbu_head":
+        # Skip uniqueness when this user already holds that SBU head seat
+        if prev_role != "sbu_head" or prev_sbu != effective_sbu:
+            _assert_single_sbu_head(effective_sbu, exclude_user_id=target.id)
+        target.department = None
+        target.reports_to = None
+    elif effective_role == "dept_head":
+        if (
+            prev_role != "dept_head"
+            or prev_dept_id != effective_dept_id
+        ):
+            _assert_single_dept_head(target.department, exclude_user_id=target.id)
+
+    if "reportsToId" in body or (actor_role == "admin" and "role" in body):
+        if effective_role not in {"engineer", "dept_head"}:
             target.reports_to = None
         elif "reportsToId" in body:
             raw_rid = body.get("reportsToId")
             if raw_rid is None or str(raw_rid).strip() == "":
-                raise HTTPException(400, "reportsToId is required for engineers")
+                raise HTTPException(400, "reportsToId is required for this role")
             target.reports_to = _resolve_reports_to(
-                dept_n=(target.sbu or "").strip(),
+                employee_role=effective_role,
+                sbu_name=(target.sbu or "").strip(),
+                department=target.department,
                 reports_to_id=int(raw_rid),
                 actor=actor,
                 required=True,
             )
 
-    # If dept changed for an engineer, re-validate boss still same dept
     if effective_role == "engineer" and target.reports_to:
-        if (target.reports_to.sbu or "").strip() != (target.sbu or "").strip():
+        boss = target.reports_to
+        if not boss.department or not target.department or boss.department.id != target.department.id:
             raise HTTPException(
                 400,
                 "Reporting officer must be in the same department — update reportsToId",
+            )
+    if effective_role == "dept_head" and target.reports_to:
+        if (target.reports_to.sbu or "").strip() != (target.sbu or "").strip():
+            raise HTTPException(
+                400,
+                "Reporting officer must be in the same SBU — update reportsToId",
             )
 
     commit()
@@ -3744,8 +4105,8 @@ def reset_managed_user_password(actor: dict | None, user_id: int, password: str)
     if not actor:
         raise HTTPException(401, "Not authenticated")
     actor_role = (actor.get("role") or "").strip().lower()
-    if actor_role not in {"admin", "sbu_head"}:
-        raise HTTPException(403, "Department head or admin access required")
+    if actor_role not in {"admin", "sbu_head", "dept_head"}:
+        raise HTTPException(403, "Department head, SBU head, or admin access required")
     from app.input_safe import require_safe
     from app.security import hash_password, verify_password
 

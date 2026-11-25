@@ -8,6 +8,7 @@ Run from backend/:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -142,11 +143,11 @@ def test_item_order_from_note():
     assert _item_order_from_note("STICK ITEM 3 AND 2 AS SHOWN", [2, 3]) == [3, 2]
 
 
-def test_label_fixing_known_part_gets_detailed_placement():
-    """Temporary: 1121 857 498 34 Label Fixing always gets 5 mm / DC OUT shop wording."""
+def test_label_fixing_clubs_balloons_with_host_item():
+    """Note citing 2&3 + balloons 1/2/3 → one stick instruction with host item 1."""
     note_text = "STICK ITEM 2 & 3 AS SHOWN USING SUITABLE ADHESIVE."
     ga = {
-        "raw_text": note_text + "\nALL DIMENSIONS ARE IN MM\n1121 857 498 34",
+        "raw_text": note_text + "\nALL DIMENSIONS ARE IN MM\n1121 857 498 34\nDC OUT",
         "title_block": {"unit": "mm", "drawingNumber": "1121 857 498 34"},
         "notes": [
             {
@@ -162,21 +163,43 @@ def test_label_fixing_known_part_gets_detailed_placement():
         ],
         "bom_items": [],
     }
+    pages = _sticker_spatial_pages()
+    # Body / host balloon near the sticker stack (Item 1)
+    pages[0]["words"].append({"text": "1", "x0": 200, "y0": 120, "x1": 215, "y1": 140})
     mind = CpuSpatialMind()
-    # No spatial pages — must still elaborate for this known PN
     result = mind.understand(
         pdf_bytes=None,
         ga_extraction=ga,
-        spatial_pages=None,
+        spatial_pages=pages,
+        parts_list={
+            "items": [
+                {"itemNo": 1, "qty": 1, "description": "PSU BODY"},
+                {"itemNo": 2, "qty": 1, "description": "Label"},
+                {"itemNo": 3, "qty": 1, "description": "Label"},
+            ]
+        },
         source_filename="112185749834 - GA.pdf",
     )
-    elab = (result.notes[0].get("elaboratedText") or "").upper()
+    stick_notes = [n for n in result.notes if not n.get("assemblyGroup")]
+    assert len(stick_notes) == 1, result.notes
+    note = stick_notes[0]
+    elab = (note.get("elaboratedText") or "").upper()
     assert "5 MM" in elab or "5MM" in elab.replace(" ", "")
     assert "TOP" in elab and "LEFT" in elab
     assert "BELOW ITEM 2" in elab
     assert "DC OUT" in elab
-    assert result.notes[0].get("placement")
-    assert any("Label Fixing" in w for w in result.warnings)
+    assert "ON ITEM 1" in elab
+    assert note.get("hostItemNo") == 1
+    assert note.get("placement")
+    assert not any("Label Fixing" in w for w in result.warnings)
+    # No separate Assemble Item 1/2/3 steps
+    assemble = [
+        n
+        for n in result.notes
+        if n.get("assemblyGroup")
+        and re.search(r"Assemble Item No\.?\s*[123]\b", n.get("text") or "", re.I)
+    ]
+    assert not assemble, assemble
 
 
 def test_as_shown_without_measured_offsets_keeps_source():
@@ -321,6 +344,9 @@ def test_rear_view_title_does_not_invent_rear_side():
     elaborated = (result.notes[0].get("elaboratedText") or "").upper()
     assert "REAR SIDE" not in elaborated
     assert "ON THE REAR" not in elaborated
+    assert "FRONT" not in elaborated.split("(FROM DRAWING")[0]
+    # No high-confidence face → fall back to the figure, not a invented side
+    assert "AS INDICATED IN THE FIGURE" in elaborated
     for p in result.placements:
         assert not (p.surface or "").strip() or "DC OUT" in (p.surface or "").upper()
 
@@ -592,10 +618,50 @@ def test_assemble_verb_triggers_placement_path():
     assert not needs_placement_elaboration("VERIFY DIMENSIONS AFTER ASSEMBLY.", [])
 
 
+def test_surface_phrase_needs_high_confidence():
+    """Bare FRONT/REAR never print; weak FRONT FACE falls back to the figure."""
+    from app.route_card.drawing_mind.elaborate import (
+        _surface_side_phrase,
+        compose_placement_elaboration,
+    )
+
+    assert _surface_side_phrase("FRONT", confidence=0.99) == ""
+    assert _surface_side_phrase("REAR VIEW", confidence=0.99) == ""
+    assert _surface_side_phrase("FRONT FACE", confidence=0.5) == ""
+    assert "FRONT FACE" in _surface_side_phrase("FRONT FACE", confidence=0.8)
+    assert "DC OUT" in _surface_side_phrase("DC OUT", confidence=0.55)
+
+    low = compose_placement_elaboration(
+        "STICK ITEM 2 AS SHOWN",
+        [{"itemNo": 2, "surface": "FRONT FACE", "offsets": [], "confidence": 0.4}],
+        view_used="ISOMETRIC VIEW",
+    )
+    up = low.upper()
+    assert "FRONT" not in up
+    assert "AS INDICATED IN THE" in up
+    assert "ISOMETRIC" in up
+
+    high = compose_placement_elaboration(
+        "STICK ITEM 2 AS SHOWN",
+        [
+            {
+                "itemNo": 2,
+                "surface": "DC OUT",
+                "offsets": [{"from": "top", "value": 5.0, "unit": "mm"}],
+                "confidence": 0.7,
+            }
+        ],
+    )
+    assert "DC OUT" in high.upper()
+    assert "AS INDICATED IN THE FIGURE" not in high.upper()
+
+
 if __name__ == "__main__":
     test_spatial_graph_surfaces()
     test_item_order_from_note()
     test_sticker_elaboration()
+    test_label_fixing_clubs_balloons_with_host_item()
+    test_as_shown_without_measured_offsets_keeps_source()
     test_as_shown_without_spatial_warns()
     test_rear_view_title_does_not_invent_rear_side()
     test_multi_ga_cross_ref_missing()
@@ -606,6 +672,7 @@ if __name__ == "__main__":
     test_wiring_ga_view_refs_sheet2_figure_table()
     test_every_note_gets_torque_enrichment_without_parts_appendix()
     test_assemble_verb_triggers_placement_path()
+    test_surface_phrase_needs_high_confidence()
     print("OK — CPU drawing-mind feasibility checks passed.")
     print(
         "Failure modes for VLM phase: low OCR word boxes, graphics-only balloons, "

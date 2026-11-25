@@ -75,6 +75,9 @@ def enqueue_analyze(
     want_plant = (plant or "").strip()
     if want_plant:
         job_kwargs["plant"] = want_plant
+    from app.route_card.service import _bind_session_plant_sbu
+
+    _bind_session_plant_sbu(session, plant=plant, user=user)
     job = RcAnalyzeJob(**job_kwargs)
     session.status = "queued"
     session.updated_at = datetime.utcnow()

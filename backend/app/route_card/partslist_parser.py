@@ -11,19 +11,24 @@ from app.route_card.pdf_ingest import ingest_pdf, tables_to_tsv_lines
 PART_NO_RE = re.compile(r"(\d{4}\s+\d{3}\s+\d{3}\s+\d{2})")
 # Truncated / partial part nos common in poor PDF text layers: 4 3 1-3
 PART_NO_FLEX = re.compile(r"(\d{4}\s+\d{3}\s+\d{1,3}(?:\s+\d{1,2})?)")
+# Compact 12-digit PN, optional drawing suffix: 112184802920AA.
+# Leading zero rejects title-block change numbers (000005813050).
+PART_NO_COMPACT = re.compile(r"(?<!\d)((?:[1-9]\d{11})(?:[A-Za-z]{1,3})?)(?!\d)")
 # item + designation letters glued to part digits, e.g. "0010 POWERSUP4579 229 8"
-# BEL PL item nos are always 4 digits (0010, 0020, 0100, 0500).
+# Item nos are 1–4 digits: 0010 (MR) and 1 / 0001 (ADSN, MS, NS2).
 GLUED_ROW = re.compile(
-    r"^\s*(\d{4})\s+([A-Za-z][A-Za-z0-9 /().\-]{0,60}?)(\d{4}\s+\d{3}\s+\d{1,3}(?:\s+\d{1,2})?)\s*$"
+    r"^\s*(\d{1,4})\s+([A-Za-z][A-Za-z0-9 /().\-]{0,60}?)(\d{4}\s+\d{3}\s+\d{1,3}(?:\s+\d{1,2})?)\s*$"
 )
-# Line starts with 4-digit item no (space optional: 0010THERMAL…), then designation letter
-LINE_START = re.compile(r"^\s*(\d{4})\s*([A-Za-z/(].*)$")
-# Qty: integers and decimals (wire length 0.5 / .5 / 1.25 MTR)
-_QTY_NUM = r"(\d+\.\d+|\.\d+|\d+)"
-_QTY_UNIT = r"(NO|MM|EA|PCS|SET|MTR|KG|M|ST)"
+# Item then designation. Letter-first so "316-M4x12" stays a wrap, not item 316.
+# 0010THERMAL…, 1 MECHANICAL…, 10 THERMAL PAD…
+LINE_START = re.compile(r"^\s*(\d{1,4})\s*([A-Za-z/(].*)$")
+# Qty: integers, decimals, and thousands commas (0.5 / .5 / 1.25 / 1,536)
+_QTY_NUM = r"(\d{1,3}(?:,\d{3})+|\d+\.\d+|\.\d+|\d+)"
+# Longer tokens before shorter ones so MM/MTR/CM/SET win over M/ST.
+_QTY_UNIT = r"(NO|MM|MTR|EA|PCS|SET|KG|CM|PAR|ST|G|M)"
 QTY_RE = re.compile(rf"^{_QTY_NUM}\s*{_QTY_UNIT}?", re.I)
 QTY_LINE = re.compile(rf"^\s*{_QTY_NUM}\s*{_QTY_UNIT}?\s*$", re.I)
-# Qty with trailing circuit-ref junk: "6 NO ITEM002,,," or "0.5 MTR ,,"
+# Qty with trailing circuit-ref junk: "6 NO ITEM002,,," or "0.5 MTR ,," or "600 MM Cir…"
 QTY_LINE_LOOSE = re.compile(
     rf"^\s*{_QTY_NUM}\s*{_QTY_UNIT}?\b",
     re.I,
@@ -31,12 +36,16 @@ QTY_LINE_LOOSE = re.compile(
 # Standalone BEL part-number line (pymupdf often puts each column on its own line)
 PART_NO_LINE = re.compile(r"^\s*(\d{4}\s+\d{3}\s+\d{3}\s+\d{2})\s*$")
 PART_NO_LINE_FLEX = re.compile(r"^\s*(\d{4}\s+\d{3}\s+\d{1,3}(?:\s+\d{1,2})?)\s*$")
-# Item number alone: always 4 digits (0010 / 0020 / 0100 / 0500)
-ITEM_ONLY_LINE = re.compile(r"^\s*(\d{4})\s*$")
+PART_NO_LINE_COMPACT = re.compile(r"^\s*((?:[1-9]\d{11})(?:[A-Za-z]{1,3})?)\s*$")
+# Item number alone: 0010 / 10 / 1. Zero is never an item (title-block VER 00).
+ITEM_ONLY_LINE = re.compile(r"^\s*(\d{1,4})\s*$")
 # Bare 1–4 digit token (qty or unpadded next-item in messy PDF text)
-BARE_NUM_LINE = re.compile(r"^\s*(\d{1,4})\s*$")
-UNIT_ONLY_LINE = re.compile(r"^\s*(NO|MM|EA|PCS|SET|MTR|KG|M|ST)\s*$", re.I)
+BARE_NUM_LINE = ITEM_ONLY_LINE
+UNIT_ONLY_LINE = re.compile(rf"^\s*{_QTY_UNIT}\s*$", re.I)
 JUNK_LINE = re.compile(r"^[\s,]+$")
+# Unit tokens that are not designation words. SET and UNIT can be wrapped words
+# ("CABLE" / "SET", "DISTRIBUTION" / "UNIT") so they stay in the description.
+_UNIT_STOP = re.compile(rf"^\s*{_QTY_UNIT}\s*$", re.I)
 
 # BEL PL title block (end of each sheet) — skip entirely; only item rows matter.
 _TB_STRONG = re.compile(
@@ -50,7 +59,10 @@ _TB_STRONG = re.compile(
     r"NO\.?\s*OF\s*SH\.?\b|"
     r"SHEET\s*NO\.?\b|"
     r"THIRD\s+ANGLE|"
-    r"CHANGE\s*NO\.?\b"
+    r"CHANGE\s*NO\.?\b|"
+    r"PARTS\s+LIST\b|"
+    r"BASE\s+QTY\b|"
+    r"PRINTED\s+(?:DATE|TIME|BY)\b"
     r")"
 )
 _TB_LABEL = re.compile(
@@ -88,7 +100,8 @@ _TB_DESC_NOISE = re.compile(
     r"HELD\s+IN|SHEET\s*NO\.?|NO\.?\s*OF\s*SH\.?|ALT\s*BOM|"
     r"CHANGE\s*NO\.?|CHANGE|DATE|APVD|APPROVED|SCALE|"
     r"BHARAT\s+ELECTRONICS|PROVISIONAL|ORIGINAL|REFER\s+ECR|"
-    r"DESIGNATION|DESCRIPTION|DESC|ITEM|QTY|UNT|UNIT|CIRCUIT|REMARKS?"
+    r"DESIGNATION|DESCRIPTION|DESC|ITEM|QTY|UNT|UNIT|CIRCUIT|REMARKS?|"
+    r"PARTS\s+LIST|BASE\s+QTY|PRINTED\s+(?:DATE|TIME|BY)"
     r")\s*:?\s*$"
 )
 
@@ -138,8 +151,45 @@ def _is_pl_table_header_line(raw: str) -> bool:
     s = re.sub(r"[ \t]+", " ", (raw or "")).strip()
     if _PL_TABLE_HEADER.search(s):
         return True
-    up = s.upper()
-    return up in {"ITEM", "DESIGNATION", "PART NO", "PART NUMBER", "QTY", "UNT", "UNIT"}
+    up = s.upper().rstrip(".")
+    return up in {
+        "ITEM",
+        "DESIGNATION",
+        "PART NO",
+        "PART NUMBER",
+        "QTY",
+        "UNT",
+        "UNIT",
+        "CIRCUIT",
+        "REFERENCE",
+        "CIRCUIT REFERENCE",
+        "GRP",
+        "ITM",
+        "ENV",
+        "REL",
+        "REM",
+        "PARTS LIST",
+    }
+
+
+def _is_following_item_row(lines: list[str], i: int) -> bool:
+    """True when ``lines[i]`` starts a BOM row, not a title-block revision index.
+
+    Change-table rows are bare numbers (``00``, ``07``, ``10``, ``12``) followed
+    by a change number or date. A real item is followed by a designation or part no.
+    """
+    raw = re.sub(r"[ \t]+", " ", lines[i] if 0 <= i < len(lines) else "").strip()
+    started = _match_item_line(raw)
+    if started and not _is_title_block_desc(started[1]):
+        return True
+    im = ITEM_ONLY_LINE.match(raw)
+    if not im or int(im.group(1)) <= 0:
+        return False
+    j = _next_nonempty(lines, i + 1)
+    if j < 0:
+        return False
+    nxt = re.sub(r"[ \t]+", " ", lines[j]).strip()
+    return bool(_part_no_from_line(nxt) or _looks_like_designation(nxt))
 
 
 def _title_block_end(lines: list[str], start: int) -> int:
@@ -154,12 +204,14 @@ def _title_block_end(lines: list[str], start: int) -> int:
             if i - last_tb > 6:
                 break
             continue
-        # Next sheet resumes with a 4-digit item row — stop (do not consume it)
-        if ITEM_ONLY_LINE.match(raw) or (
-            LINE_START.match(raw)
-            and not _is_title_block_desc(LINE_START.match(raw).group(2))
-        ):
+        # Next sheet resumes with an item row — stop (do not consume it).
+        # Bare revision indexes (10, 12, …) stay inside the block.
+        if _is_following_item_row(lines, i):
             break
+        if ITEM_ONLY_LINE.match(raw):
+            last_tb = i
+            i += 1
+            continue
         if _is_pl_table_header_line(raw) and i > start:
             break
         if _is_title_block_line(raw) or _TB_STRONG.search(raw):
@@ -248,8 +300,12 @@ def _norm_pl_text(raw: str) -> str:
 
 
 def _qty_value(raw: str) -> int | float:
-    """Parse qty; keep decimals (0.5 / .5 m braid) as float, whole numbers as int."""
-    s = str(raw).strip()
+    """Parse qty. Decimals stay float (0.5). Thousands commas are integers (1,536)."""
+    s = str(raw).strip().replace(" ", "")
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+", s):
+        s = s.replace(",", "")
+    elif re.fullmatch(r"\d+,\d+", s):
+        s = s.replace(",", ".")
     if s.startswith("."):
         s = "0" + s
     val = float(s)
@@ -288,9 +344,9 @@ def _looks_like_designation(line: str) -> bool:
         return False
     if ITEM_ONLY_LINE.match(s) or _part_no_from_line(s) or UNIT_ONLY_LINE.match(s):
         return False
-    if QTY_LINE.match(s) and not re.search(r"[A-Za-z]", s):
+    if _is_qty_text(s):
         return False
-    if _is_title_block_desc(s) or _is_title_block_line(s):
+    if _is_title_block_desc(s) or _is_title_block_line(s) or _is_pl_table_header_line(s):
         return False
     upper = s.upper()
     if upper.startswith(
@@ -303,7 +359,6 @@ def _looks_like_designation(line: str) -> bool:
             "ITEM",
             "QTY",
             "UNT",
-            "UNIT",
             "CIRCUIT",
             "REMARK",
             "VERSION",
@@ -316,11 +371,75 @@ def _looks_like_designation(line: str) -> bool:
             "REFER ECR",
             "ORIGINAL",
             "PROVISIONAL",
+            "PARTS LIST",
+            "BASE QTY",
+            "PRINTED ",
         )
-    ) or upper == "VER":
+    ) or upper in {"VER", "UNIT", "UNT"}:
         return False
-    # Letter-first, or "24 SLOT…" / "12 SLOT…" style
-    return bool(re.match(r"(?:[A-Za-z/(]|\d{1,4}\s+[A-Za-z])", s))
+    # Letter-first, "24 SLOT…", "2W 18GHZ…", "316-M3x6", "25dBm"
+    return bool(re.match(r"(?:[A-Za-z/(]|\d)", s))
+
+
+def _is_qty_text(line: str) -> bool:
+    """True when the line is a quantity, including ``600 MM Cir…`` circuit-ref tails.
+
+    ``2MM PTH`` is a designation (pitch), not qty 2 MM — the unit is glued to the number.
+    """
+    s = re.sub(r"[ \t]+", " ", (line or "")).strip()
+    if QTY_LINE.match(s):
+        return True
+    qm = QTY_LINE_LOOSE.match(s)
+    if not qm or not qm.group(2):
+        if not qm:
+            return False
+        rest = s[qm.end() :]
+        return not bool(re.search(r"[A-Za-z]", rest))
+    unit_at = qm.start(2)
+    if unit_at > 0 and s[unit_at - 1].isdigit():
+        return False
+    return True
+
+
+def _match_item_line(raw: str) -> tuple[int, str] | None:
+    """Item number plus designation on one line.
+
+    4-digit items may be glued (``0010THERMAL``). Shorter items need a space
+    so ``2MM PTH`` is not read as item 2.
+    """
+    s = re.sub(r"[ \t]+", " ", (raw or "")).strip()
+    m = re.match(r"^(\d{1,4})(\s*)([A-Za-z/(].*)$", s)
+    if not m:
+        return None
+    digits, gap, rest = m.group(1), m.group(2), m.group(3)
+    if not gap and len(digits) < 4:
+        return None
+    n = int(digits)
+    if n <= 0:
+        return None
+    return n, rest
+
+
+def _is_desc_continuation(line: str) -> bool:
+    """Wrapped designation text before the part-number column.
+
+    Keeps ``UNIT`` / ``SET`` / ``316-M3x6`` / ``25dBm`` and stops at the next
+    item, part number, or quantity.
+    """
+    s = re.sub(r"[ \t]+", " ", (line or "")).strip()
+    if not s or not re.search(r"[A-Za-z]", s):
+        return False
+    if _part_no_from_line(s) or ITEM_ONLY_LINE.match(s) or _is_qty_text(s):
+        return False
+    # Wrapped English words that also appear in title-block / unit vocabularies.
+    if s.upper() in {"UNIT", "SET"}:
+        return True
+    if _is_title_block_line(s) or _is_pl_table_header_line(s) or _is_title_block_desc(s):
+        return False
+    # Pure unit column. SET is also a wrapped word ("CABLE" / "SET").
+    if _UNIT_STOP.match(s) and s.upper() != "SET":
+        return False
+    return True
 
 
 def _bare_number_is_next_item(lines: list[str], idx: int) -> bool:
@@ -370,17 +489,21 @@ def _parse_qty_at(lines: list[str], idx: int) -> tuple[int | float, str, int] | 
         return None
     if _bare_number_is_next_item(lines, idx):
         return None
+    # PDF text sometimes splits one qty across lines: "0.40" / "0" / "KG", "1,53" / "6" / "NO".
+    joined = _join_split_qty(lines, idx)
+    if joined is not None:
+        return joined
     qm = QTY_LINE.match(qty_raw) or QTY_LINE_LOOSE.match(qty_raw)
     if not qm:
         return None
     rest_after_num = qty_raw[len(qm.group(1)) :].lstrip()
-    is_decimal = "." in qm.group(1)
+    is_decimal = "." in qm.group(1) or "," in qm.group(1)
     next_itemish = (
         not is_decimal
         and LINE_START.match(qty_raw)
         and rest_after_num
         and not rest_after_num.upper().startswith(
-            ("NO", "MM", "EA", "PCS", "SET", "MTR", "KG", "M", "ST")
+            ("NO", "MM", "EA", "PCS", "SET", "MTR", "KG", "CM", "PAR", "G", "M", "ST")
         )
     )
     unit_ok = bool(qm.group(2)) or (not rest_after_num) or is_decimal
@@ -400,6 +523,35 @@ def _parse_qty_at(lines: list[str], idx: int) -> tuple[int | float, str, int] | 
     return qty, unit, end_idx
 
 
+def _join_split_qty(lines: list[str], idx: int) -> tuple[int | float, str, int] | None:
+    """Rejoin a qty token pymupdf broke before the unit line."""
+    qty_raw = re.sub(r"[ \t]+", " ", lines[idx]).strip()
+    n1 = _next_nonempty(lines, idx + 1)
+    if n1 < 0:
+        return None
+    frag = re.sub(r"[ \t]+", " ", lines[n1]).strip()
+    n2 = _next_nonempty(lines, n1 + 1)
+    unit_line = ""
+    if n2 >= 0:
+        unit_line = re.sub(r"[ \t]+", " ", lines[n2]).strip()
+    um = UNIT_ONLY_LINE.match(unit_line) if unit_line else None
+    if not um:
+        return None
+    joined = ""
+    if re.fullmatch(r"\d+\.\d+", qty_raw) and re.fullmatch(r"\d", frag):
+        joined = qty_raw + frag
+    elif re.fullmatch(r"\d{1,3},\d{1,2}", qty_raw) and re.fullmatch(r"\d{1,3}", frag):
+        candidate = qty_raw + frag
+        if re.fullmatch(r"\d{1,3}(?:,\d{3})+", candidate):
+            joined = candidate
+    if not joined:
+        return None
+    try:
+        return _qty_value(joined), um.group(1).upper(), n2
+    except (TypeError, ValueError):
+        return None
+
+
 def _next_nonempty(lines: list[str], start: int) -> int:
     j = start
     while j < len(lines):
@@ -413,14 +565,19 @@ def _next_nonempty(lines: list[str], start: int) -> int:
 def _part_no_from_line(line: str) -> re.Match | None:
     """Return a match if the line is (mostly) a BEL part number alone."""
     s = line.strip()
-    m = PART_NO_LINE.match(s) or PART_NO_LINE_FLEX.match(s)
+    m = PART_NO_LINE.match(s) or PART_NO_LINE_COMPACT.match(s) or PART_NO_LINE_FLEX.match(s)
     if m:
         return m
     # Part no with trailing whitespace/junk but nothing before it
-    m = PART_NO_RE.search(s) or PART_NO_FLEX.search(s)
+    m = PART_NO_RE.search(s) or PART_NO_COMPACT.search(s) or PART_NO_FLEX.search(s)
     if m and not s[: m.start()].strip():
         return m
     return None
+
+
+def _pn_in_cell(cell: str) -> re.Match | None:
+    s = (cell or "").strip().strip('"')
+    return PART_NO_RE.search(s) or PART_NO_COMPACT.search(s) or PART_NO_FLEX.search(s)
 
 
 def _item_from_stacked_columns(lines: list[str], i: int) -> tuple[dict, int] | None:
@@ -438,7 +595,7 @@ def _item_from_stacked_columns(lines: list[str], i: int) -> tuple[dict, int] | N
     im = ITEM_ONLY_LINE.match(raw)
     if not im:
         return None
-    # 4-digit item nos only; title-block VER "02" is 2 digits and never matches here
+    # 1–4 digits (0010 / 10 / 1). Zero is a title-block revision, not an item.
     item_no = int(im.group(1))
     if item_no <= 0:
         return None
@@ -464,13 +621,7 @@ def _item_from_stacked_columns(lines: list[str], i: int) -> tuple[dict, int] | N
         if n < 0:
             break
         cont = re.sub(r"[ \t]+", " ", lines[n]).strip()
-        if _part_no_from_line(cont) or ITEM_ONLY_LINE.match(cont):
-            break
-        if UNIT_ONLY_LINE.match(cont):
-            break
-        if QTY_LINE.match(cont) and not re.search(r"[A-Za-z]", cont):
-            break
-        if not _looks_like_designation(cont):
+        if not _is_desc_continuation(cont):
             break
         desc_chunks.append(cont)
         desc_end = n
@@ -512,11 +663,10 @@ def _item_from_multiline(lines: list[str], i: int) -> tuple[dict, int] | None:
         ,,,
     """
     raw = re.sub(r"[ \t]+", " ", lines[i]).strip()
-    start = LINE_START.match(raw)
-    if not start:
+    started = _match_item_line(raw)
+    if not started:
         return None
-    item_no = int(start.group(1))
-    rest = start.group(2)
+    item_no, rest = started
     upper = rest.upper()
     if (
         upper.startswith("DESIGNATION")
@@ -537,7 +687,7 @@ def _item_from_multiline(lines: list[str], i: int) -> tuple[dict, int] | None:
     if _is_title_block_desc(rest):
         return None
     # Same-line part no belongs to _item_from_text_line
-    if PART_NO_RE.search(rest) or PART_NO_FLEX.search(rest):
+    if PART_NO_RE.search(rest) or PART_NO_COMPACT.search(rest) or PART_NO_FLEX.search(rest):
         return None
     desc = re.sub(r"\s+", " ", rest).strip()[:200]
     if not desc or not _looks_like_designation(desc):
@@ -569,6 +719,21 @@ def _item_from_multiline(lines: list[str], i: int) -> tuple[dict, int] | None:
     return hit, consumed_end - i + 1
 
 
+def _prev_content(lines: list[str], i: int) -> int:
+    p = i - 1
+    while p >= 0 and (not lines[p].strip() or JUNK_LINE.match(lines[p].strip())):
+        p -= 1
+    return p
+
+
+def _is_overflow_fragment(line: str) -> bool:
+    """Designation tail carried onto the next sheet (not a circuit reference)."""
+    s = re.sub(r"[ \t]+", " ", (line or "")).strip()
+    if not s or len(s) > 80 or not _is_desc_continuation(s):
+        return False
+    return bool(re.search(r"\d", s) or len(s.split()) >= 2)
+
+
 def _parse_pl_line_items(text: str) -> list[dict]:
     items: list[dict] = []
     # Drop end-of-sheet BEL title blocks (VERSION/VER/SHEET NO/…) before row parse
@@ -582,12 +747,39 @@ def _parse_pl_line_items(text: str) -> list[dict]:
         if _is_title_block_line(raw_line) or _is_pl_table_header_line(raw_line):
             i += 1
             continue
+        # Sheet-break leftover of the previous designation ("316-M4x12", "ROPE & RING")
+        # lands after the repeated column header and before the next item number.
+        stripped = re.sub(r"[ \t]+", " ", raw_line).strip()
+        if items and _is_overflow_fragment(stripped):
+            prev_i = _prev_content(lines, i)
+            nxt_i = _next_nonempty(lines, i + 1)
+            prev = re.sub(r"[ \t]+", " ", lines[prev_i]).strip() if prev_i >= 0 else ""
+            nxt = re.sub(r"[ \t]+", " ", lines[nxt_i]).strip() if nxt_i >= 0 else ""
+            nxt_item = ITEM_ONLY_LINE.match(nxt)
+            if (
+                prev
+                and (_is_pl_table_header_line(prev) or _is_title_block_line(prev))
+                and nxt_item
+                and int(nxt_item.group(1)) > 0
+            ):
+                desc = items[-1].get("description") or ""
+                if stripped.upper() not in desc.upper():
+                    items[-1]["description"] = re.sub(
+                        r"\s+", " ", f"{desc} {stripped}"
+                    ).strip()[:200]
+                i += 1
+                continue
         if "\t" in raw_line:
             cells = [c.strip() for c in raw_line.split("\t") if str(c).strip()]
             hit = _item_from_cells(cells)
             if hit:
-                # qty may be on next line: "1 NO" (never bare next-item numbers)
-                parsed_qty = _parse_qty_at(lines, i + 1) if i + 1 < len(lines) else None
+                # qty may be on next line: "1 NO" (never the next TSV row)
+                nxt_raw = lines[i + 1] if i + 1 < len(lines) else ""
+                parsed_qty = (
+                    _parse_qty_at(lines, i + 1)
+                    if nxt_raw and "\t" not in nxt_raw
+                    else None
+                )
                 if parsed_qty:
                     hit["qty"], hit["unit"], end_idx = parsed_qty
                     i = end_idx
@@ -621,12 +813,22 @@ def _parse_pl_line_items(text: str) -> list[dict]:
 
 
 def _norm_part_no(raw: str) -> str:
-    raw = re.sub(r"\s+", " ", str(raw or "")).strip()
+    raw = re.sub(r"\s+", " ", str(raw or "")).strip().strip('"')
+    compact = re.sub(r"\s+", "", raw)
+    # 112184802920AA → 1121 848 029 20 AA. Leading-zero 12-digit strings are
+    # title-block change numbers, not part numbers.
+    m = re.fullmatch(r"([1-9]\d{11})([A-Za-z]{1,3})?", compact)
+    if m:
+        d = m.group(1)
+        base = f"{d[0:4]} {d[4:7]} {d[7:10]} {d[10:12]}"
+        return f"{base} {m.group(2).upper()}" if m.group(2) else base
+    spaced = PART_NO_RE.search(raw)
+    if spaced:
+        d = re.sub(r"\D", "", spaced.group(1))
+        if len(d) == 12:
+            return f"{d[0:4]} {d[4:7]} {d[7:10]} {d[10:12]}"
     digits = re.sub(r"\D", "", raw)
-    if len(digits) == 12:
-        return f"{digits[0:4]} {digits[4:7]} {digits[7:10]} {digits[10:12]}"
     if len(digits) >= 8:
-        # Keep readable spacing for partial numbers from broken PDF text
         return raw
     return raw
 
@@ -660,12 +862,15 @@ def _finalize(items: list[dict], filename: str, warnings: list[str], raw_text: s
             it_digits = re.sub(r"\D", "", str(row.get("partNumber") or ""))
             if it_digits == doc_pn_digits:
                 continue
-        # Keep first designation when duplicate item numbers appear (e.g. alt RAM)
+        # Keep the first complete row when item numbers repeat (alt RAM, etc.)
         if ino not in by_no:
             by_no[ino] = row
         else:
             existing = by_no[ino]
-            if row.get("description") and len(row["description"]) > len(existing.get("description") or ""):
+            existing_ok = bool(existing.get("description") and existing.get("partNumber"))
+            if not existing_ok and row.get("description") and len(row["description"]) > len(
+                existing.get("description") or ""
+            ):
                 by_no[ino] = row
     items = [by_no[k] for k in sorted(by_no)]
     if not items:
@@ -690,20 +895,39 @@ def _finalize(items: list[dict], filename: str, warnings: list[str], raw_text: s
     }
 
 
+def _qty_from_cell(cell: str) -> tuple[int | float, str | None] | None:
+    """Qty cell, including PDF splits glued into one cell (``0.40 0``, ``1,53 6``)."""
+    s = re.sub(r"\s+", " ", (cell or "").strip().strip('"'))
+    if not s:
+        return None
+    m = re.fullmatch(r"(\d+\.\d+)\s+(\d)", s)
+    if m:
+        return _qty_value(m.group(1) + m.group(2)), None
+    m = re.fullmatch(r"(\d{1,3},\d{1,2})\s+(\d{1,3})", s)
+    if m:
+        candidate = m.group(1) + m.group(2)
+        if re.fullmatch(r"\d{1,3}(?:,\d{3})+", candidate):
+            return _qty_value(candidate), None
+    qm = QTY_RE.fullmatch(s)
+    if not qm:
+        return None
+    unit = qm.group(2).upper() if qm.group(2) else None
+    return _qty_value(qm.group(1)), unit
+
+
 def _item_from_cells(cells: list[str]) -> dict | None:
     if len(cells) < 3:
         return None
-    item_raw = cells[0].strip()
-    if not re.fullmatch(r"\d{4}", item_raw):
+    item_raw = cells[0].strip().strip('"')
+    if not re.fullmatch(r"\d{1,4}", item_raw):
         return None
     item_no = int(item_raw)
-    pn_idx = next(
-        (i for i, c in enumerate(cells[1:], 1) if PART_NO_RE.search(c) or PART_NO_FLEX.search(c)),
-        None,
-    )
+    if item_no <= 0:
+        return None
+    pn_idx = next((i for i, c in enumerate(cells[1:], 1) if _pn_in_cell(c)), None)
     if pn_idx is None:
         return None
-    pn_m = PART_NO_RE.search(cells[pn_idx]) or PART_NO_FLEX.search(cells[pn_idx])
+    pn_m = _pn_in_cell(cells[pn_idx])
     if not pn_m:
         return None
     desc_parts: list[str] = []
@@ -713,20 +937,20 @@ def _item_from_cells(cells: list[str]) -> dict | None:
     for i, c in enumerate(cells[1:], 1):
         if i == pn_idx:
             continue
-        cell = c.strip()
+        cell = c.strip().strip('"')
         if not cell or JUNK_LINE.match(cell) or re.fullmatch(r"[,.\s]+", cell):
             continue
         if UNIT_ONLY_LINE.match(cell):
             unit = UNIT_ONLY_LINE.match(cell).group(1).upper()
             continue
-        qm = QTY_RE.fullmatch(cell)
-        if qm:
-            qty = _qty_value(qm.group(1))
-            if qm.group(2):
-                unit = qm.group(2).upper()
+        parsed_cell_qty = _qty_from_cell(cell)
+        if parsed_cell_qty:
+            qty, qty_unit = parsed_cell_qty
+            if qty_unit:
+                unit = qty_unit
             seen_qty = True
             continue
-        if PART_NO_RE.search(cell) or PART_NO_FLEX.search(cell):
+        if _pn_in_cell(cell):
             continue
         up = cell.upper()
         if up in {"CIRCUIT REFERENCE", "REMARKS", "ENV REL", "GR", "UNT", "UNIT", "UOM"}:
@@ -763,11 +987,10 @@ def _item_from_text_line(line: str) -> dict | None:
             "qty": 1,
             "unit": "NO",
         }
-    start = LINE_START.match(line)
-    if not start:
+    started = _match_item_line(line)
+    if not started:
         return None
-    item_no = int(start.group(1))
-    rest = start.group(2)
+    item_no, rest = started
     up = rest.upper()
     if (
         up.startswith("DESIGNATION")
@@ -786,7 +1009,7 @@ def _item_from_text_line(line: str) -> dict | None:
         or _is_title_block_desc(rest)
     ):
         return None
-    pn = PART_NO_RE.search(rest) or PART_NO_FLEX.search(rest)
+    pn = PART_NO_RE.search(rest) or PART_NO_COMPACT.search(rest) or PART_NO_FLEX.search(rest)
     if not pn:
         return None
     desc = re.sub(r"\s+", " ", rest[: pn.start()]).strip()[:200]
@@ -858,15 +1081,19 @@ def parse_partslist_pdf(data: bytes, filename: str = "", *, format_aliases: dict
     return out
 
 
+def _decode_pl_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
 def parse_partslist_xls(data: bytes, filename: str = "") -> dict:
     warnings: list[str] = []
     # Some "PL.xls" exports are actually TSV/CSV text with an .xls extension
-    head = data[:64]
+    head = data[:256]
     if b"ITEM" in head.upper() and (b"\t" in head or b"," in head) and not head.startswith(b"\xd0\xcf"):
-        try:
-            text = data.decode("utf-8", errors="ignore")
-        except Exception:
-            text = data.decode("latin-1", errors="ignore")
+        text = _decode_pl_text(data)
         items = _parse_pl_line_items(text)
         if items:
             return _finalize(items, filename, ["Parts List .xls was plain text/TSV; parsed as table text."], text)
@@ -883,10 +1110,7 @@ def parse_partslist_xls(data: bytes, filename: str = "") -> dict:
         book = xlrd.open_workbook(file_contents=data)
     except Exception as exc:
         # Fallback: try as tab/CSV text when xlrd rejects the file
-        try:
-            text = data.decode("utf-8", errors="ignore")
-        except Exception:
-            text = data.decode("latin-1", errors="ignore")
+        text = _decode_pl_text(data)
         items = _parse_pl_line_items(text)
         if items:
             return _finalize(

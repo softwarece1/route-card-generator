@@ -1287,6 +1287,140 @@ def run_migrations():
                 ("admin", "Administrator", "Software", hash_password("admin123"), "admin"),
             )
             print("seeded default admin user (empId=admin / admin123)")
+
+        # --- Departments live under SBU; users.department_id; retire ied role ---
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS route_card.departments (
+                id SERIAL PRIMARY KEY,
+                sbu INTEGER NOT NULL
+                    REFERENCES route_card.sbus(id) ON DELETE CASCADE,
+                code VARCHAR(64) NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE (sbu, code)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.users
+            ADD COLUMN IF NOT EXISTS department_id INTEGER
+                REFERENCES route_card.departments(id) ON DELETE SET NULL;
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_users_department_id
+            ON route_card.users (department_id);
+            """
+        )
+        # Seed PMG + IED for every SBU
+        cursor.execute(
+            """
+            INSERT INTO route_card.departments (sbu, code, name, is_active, sort_order)
+            SELECT s.id, v.code, v.name, TRUE, v.sort_order
+            FROM route_card.sbus s
+            CROSS JOIN (VALUES
+                ('PMG', 'PMG', 10),
+                ('IED', 'IED', 20)
+            ) AS v(code, name, sort_order)
+            WHERE NOT EXISTS (
+                SELECT 1 FROM route_card.departments d
+                WHERE d.sbu = s.id AND d.code = v.code
+            );
+            """
+        )
+        # Former ied-role users → engineer in that SBU's IED department
+        cursor.execute(
+            """
+            UPDATE route_card.users u
+            SET role = 'engineer',
+                department_id = d.id
+            FROM route_card.departments d
+            JOIN route_card.sbus s ON s.id = d.sbu
+            WHERE u.role = 'ied'
+              AND d.code = 'IED'
+              AND d.is_active = TRUE
+              AND TRIM(COALESCE(u.sbu, '')) = TRIM(s.name);
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE route_card.users SET role = 'engineer' WHERE role = 'ied';
+            """
+        )
+        # Assign remaining users (non-admin) without department to PMG of their SBU
+        cursor.execute(
+            """
+            UPDATE route_card.users u
+            SET department_id = d.id
+            FROM route_card.departments d
+            JOIN route_card.sbus s ON s.id = d.sbu
+            WHERE u.department_id IS NULL
+              AND u.role <> 'admin'
+              AND d.code = 'PMG'
+              AND d.is_active = TRUE
+              AND TRIM(COALESCE(u.sbu, '')) = TRIM(s.name);
+            """
+        )
+        print(
+            "departments: ensured PMG/IED per SBU; users.department_id; "
+            "migrated ied→engineer+IED dept"
+        )
+
+        # Session plant/SBU for admin analyze → Share-to-IED routing
+        cursor.execute(
+            """
+            ALTER TABLE route_card.sessions
+            ADD COLUMN IF NOT EXISTS plant VARCHAR(32) NOT NULL DEFAULT '';
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE route_card.sessions
+            ADD COLUMN IF NOT EXISTS sbu VARCHAR(128) NOT NULL DEFAULT '';
+            """
+        )
+        # Backfill from latest analyze job plant when session.plant empty
+        cursor.execute(
+            """
+            UPDATE route_card.sessions s
+            SET plant = j.plant
+            FROM (
+                SELECT DISTINCT ON (session) session, plant
+                FROM route_card.analyze_jobs
+                WHERE TRIM(COALESCE(plant, '')) <> ''
+                ORDER BY session, id DESC
+            ) j
+            WHERE s.id = j.session
+              AND TRIM(COALESCE(s.plant, '')) = '';
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE route_card.sessions s
+            SET sbu = sb.name
+            FROM route_card.sbus sb
+            WHERE TRIM(COALESCE(s.plant, '')) <> ''
+              AND TRIM(COALESCE(s.sbu, '')) = ''
+              AND TRIM(COALESCE(sb.plant_id, '')) = TRIM(s.plant)
+              AND sb.is_active = TRUE;
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE route_card.sessions s
+            SET sbu = u.sbu
+            FROM route_card.users u
+            WHERE s."user" = u.id
+              AND TRIM(COALESCE(s.sbu, '')) = ''
+              AND TRIM(COALESCE(u.sbu, '')) <> '';
+            """
+        )
+        print("sessions: plant/sbu columns for Share-to-IED routing")
     finally:
         cursor.close()
         conn.close()

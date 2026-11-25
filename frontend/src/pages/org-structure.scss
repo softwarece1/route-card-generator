@@ -7,37 +7,16 @@
     box-shadow: var(--pmf-shadow-card);
   }
 
-  &__tabs-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem 1rem;
-    flex-wrap: wrap;
-    padding: 0 0.85rem;
-    min-height: 3.1rem;
-    border-bottom: 1px solid var(--pmf-border, #e2e8f0);
-    background: var(--pmf-surface);
-  }
-
-  &__pane-title {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--pmf-text-heading, #0f172a);
-    padding: 0.55rem 0;
-  }
-
-  &__tabs-tools {
+  &__header-actions {
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 0.5rem;
-    flex: 1 1 auto;
-    min-width: 0;
-    margin-left: auto;
+    flex-wrap: wrap;
   }
 
   &__search {
-    width: 15.5rem;
+    width: 14rem;
     max-width: 100%;
 
     .p-inputtext {
@@ -51,12 +30,102 @@
   &__panel {
     padding: 0.85rem;
   }
+
+  &__sbu-table {
+    .rc-org__name-cell {
+      max-width: 14rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &__count-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.4rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: var(--pmf-surface-muted, #f8fafc);
+    color: var(--pmf-text-secondary, #1e293b);
+    border: 1px solid var(--pmf-border, #e2e8f0);
+    font-size: 0.6875rem;
+    font-weight: 600;
+  }
+
+  &__row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+
+    .p-button {
+      font-size: 0.8rem;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+  }
+
+  &__add-dept-btn {
+    white-space: nowrap !important;
+
+    .p-button-label {
+      white-space: nowrap;
+    }
+  }
+
+  &__nested {
+    padding: 0.4rem 0.85rem 0.55rem 2rem;
+    background: var(--pmf-surface-muted, #f8fafc);
+    border-top: 1px solid var(--pmf-border, #e2e8f0);
+    overflow: hidden; // no nested horizontal scrollbar
+  }
+
+  &__nested-table {
+    // Fill the expanded pane (slightly inset via parent padding)
+    width: 100%;
+    max-width: none;
+
+    &.p-datatable,
+    .p-datatable-wrapper {
+      overflow: hidden !important;
+    }
+
+    .p-datatable-table {
+      width: 100%;
+      table-layout: fixed;
+    }
+
+    .p-datatable-thead > tr > th {
+      font-size: 0.7rem;
+      font-weight: 600;
+      background: transparent;
+      color: var(--pmf-text-muted, #64748b);
+      padding-top: 0.4rem;
+      padding-bottom: 0.4rem;
+    }
+
+    .p-datatable-tbody > tr > td {
+      font-size: 0.75rem;
+      background: transparent;
+      padding-top: 0.35rem;
+      padding-bottom: 0.35rem;
+    }
+  }
+
+  &__dept-name-cell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 720px) {
-  .rc-org__tabs-tools {
+  .rc-org__header-actions {
     width: 100%;
-    flex-wrap: wrap;
+    justify-content: stretch;
   }
 
   .rc-org__search {

@@ -230,6 +230,7 @@ class ManagedUserCreate(BaseModel):
     empId: str = Field(..., min_length=1, max_length=64)
     name: str = Field(..., min_length=1, max_length=255)
     sbu: Optional[str] = Field(None, max_length=128)
+    departmentId: Optional[int] = None
     role: str = Field("engineer", min_length=1, max_length=32)
     password: str = Field(..., min_length=4, max_length=128)
     reportsToId: Optional[int] = None
@@ -239,6 +240,7 @@ class ManagedUserUpdate(BaseModel):
     empId: Optional[str] = Field(None, min_length=1, max_length=64)
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     sbu: Optional[str] = Field(None, max_length=128)
+    departmentId: Optional[int] = None
     role: Optional[str] = Field(None, min_length=1, max_length=32)
     reportsToId: Optional[int] = None
 

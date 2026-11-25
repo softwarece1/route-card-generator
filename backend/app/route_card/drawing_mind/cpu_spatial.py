@@ -7,12 +7,10 @@ from typing import Any
 
 from app.route_card.drawing_mind.base import DrawingMind
 from app.route_card.drawing_mind.elaborate import (
-    AS_SHOWN,
     ITEM_APPEAR,
-    PLACEMENT_VERB,
     apply_grounded_elaboration,
     bom_index,
-    elaborate_note_cpu,
+    compose_placement_elaboration,
     needs_placement_elaboration,
     note_is_enriched,
 )
@@ -28,80 +26,8 @@ from app.route_card.drawing_mind.types import MindResult, PlacementFact, PcbLink
 # Re-export for tests / callers that imported from this module
 _bom_index = bom_index
 
-ADHESIVE = re.compile(r"\b(ADHESIVE|GLUE|STICK|PASTE|BOND)\b", re.I)
 # Named port / mounting faces only — bare FRONT/REAR view titles are excluded
 FACE_SURFACE_PREFS = ("DC OUT", "AC OUT", "AC IN", "MOUNTING FACE", "FRONT FACE", "REAR FACE")
-
-# Temporary known shop wording for Label Fixing GA (1121 857 498 34) until
-# general border/balloon spatial decode is reliable on this pack.
-_LABEL_FIXING_PN = "112185749834"
-_LABEL_FIXING_STICK_23 = re.compile(
-    r"\bSTICK\b.*\bITEM\b.*\b2\b.*\b3\b.*\bAS\s+SHOWN\b",
-    re.I | re.S,
-)
-
-
-def _compact_drawing_id(*parts: str) -> str:
-    return re.sub(r"\D+", "", " ".join(p for p in parts if p))
-
-
-def _is_label_fixing_drawing(
-    ga_extraction: dict[str, Any] | None,
-    *,
-    source_filename: str = "",
-) -> bool:
-    tb = (ga_extraction or {}).get("title_block") or {}
-    blob = _compact_drawing_id(
-        str(tb.get("drawingNumber") or ""),
-        str(tb.get("partNumber") or ""),
-        str((ga_extraction or {}).get("drawingNumber") or ""),
-        str(source_filename or ""),
-        str((ga_extraction or {}).get("raw_text") or "")[:400],
-    )
-    return _LABEL_FIXING_PN in blob
-
-
-def _label_fixing_stick_23_elaboration(note: dict[str, Any], unit: str = "mm") -> tuple[str, list[PlacementFact]]:
-    """Hard-coded placement for Label Fixing stickers Item 2 & 3 on DC OUT."""
-    text = str(note.get("text") or "").strip()
-    unit = unit or "mm"
-    elaborated = (
-        f"Stick Item 2 on the DC OUT side, keep 5 {unit} gap from the top edge, "
-        f"keep 5 {unit} gap from the left edge. "
-        f"Stick Item 3 on the DC OUT side, 5 {unit} below Item 2. "
-        f"Use proper adhesive (glue). "
-        f"(All sizes are in {unit}.)"
-    )
-    if text and text.upper() not in elaborated.upper():
-        elaborated = f"{elaborated} (From drawing: {text})"
-    facts = [
-        PlacementFact(
-            item_no=2,
-            surface="DC OUT",
-            offsets=[
-                {"from": "top", "value": 5.0, "unit": unit, "relativeToItem": None},
-                {"from": "left", "value": 5.0, "unit": unit, "relativeToItem": None},
-            ],
-            confidence=0.9,
-            source_page=int(note.get("sheet") or 1),
-        ),
-        PlacementFact(
-            item_no=3,
-            surface="DC OUT",
-            offsets=[
-                {
-                    "from": "item",
-                    "value": 5.0,
-                    "unit": unit,
-                    "relativeToItem": 2,
-                    "relation": "below",
-                }
-            ],
-            confidence=0.9,
-            source_page=int(note.get("sheet") or 1),
-        ),
-    ]
-    return elaborated, facts
 
 
 def _item_order_from_note(text: str, items: list[int]) -> list[int]:
@@ -121,6 +47,90 @@ def _item_order_from_note(text: str, items: list[int]) -> list[int]:
         if n not in ordered:
             ordered.append(n)
     return ordered
+
+
+def _single_item_groups_from_graph(
+    graph: dict[str, Any],
+    *,
+    pl_nos: set[int] | None = None,
+    source_drawing_id: int | None = None,
+    source_filename: str = "",
+) -> list[dict[str, Any]]:
+    """Promote lone spatial balloons into assembly groups for clubbing / host pick."""
+    balloons = graph.get("allBalloons") or []
+    seen: set[int] = set()
+    groups: list[dict[str, Any]] = []
+    for b in balloons:
+        try:
+            ino = int(b.get("itemNo"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if ino <= 0 or ino in seen:
+            continue
+        if pl_nos and ino not in pl_nos:
+            continue
+        seen.add(ino)
+        groups.append(
+            {
+                "parentItemNo": ino,
+                "parentQty": 1,
+                "children": [],
+                "rawText": str(ino),
+                "confidence": 0.65,
+                "sourcePage": int(b.get("page") or 1),
+                "sourceDrawingId": source_drawing_id,
+                "sourceFilename": source_filename or "",
+                "source": "spatial_balloon",
+            }
+        )
+    return groups
+
+
+def _infer_host_item_no(
+    note: dict[str, Any],
+    graph: dict[str, Any],
+    ordered: list[int],
+) -> int | None:
+    """Pick an uncited body balloon near stickers (e.g. Item 1 under labels 2 & 3)."""
+    existing = note.get("hostItemNo")
+    if existing is not None:
+        try:
+            h = int(existing)
+            if h > 0:
+                return h
+        except (TypeError, ValueError):
+            pass
+    cited = set(ordered)
+    balloons = graph.get("allBalloons") or []
+    sticker_balls = [b for b in balloons if b.get("itemNo") in cited]
+    if not sticker_balls:
+        return None
+    page = int(sticker_balls[0].get("page") or 1)
+    sx = sum(float(b["cx"]) for b in sticker_balls) / len(sticker_balls)
+    sy = sum(float(b["cy"]) for b in sticker_balls) / len(sticker_balls)
+    candidates: list[tuple[float, int]] = []
+    for b in balloons:
+        try:
+            ino = int(b.get("itemNo"))
+        except (TypeError, ValueError):
+            continue
+        if ino in cited or ino <= 0:
+            continue
+        if int(b.get("page") or 1) != page:
+            continue
+        # Prefer balloons near the sticker cluster (same view)
+        dist = abs(float(b["cx"]) - sx) + abs(float(b["cy"]) - sy)
+        if dist > 280:
+            continue
+        candidates.append((dist, ino))
+    if not candidates:
+        return None
+    candidates.sort()
+    # Only claim a host when a single nearby uncited balloon stands out
+    best_dist, best = candidates[0]
+    if len(candidates) > 1 and candidates[1][0] < best_dist + 40:
+        return None
+    return best
 
 
 def _pick_face_surface(surfaces: list[dict], item_balloons: dict[int, dict]) -> str:
@@ -150,16 +160,6 @@ def _pick_face_surface(surfaces: list[dict], item_balloons: dict[int, dict]) -> 
         if "DC OUT" in lab or "AC OUT" in lab or "AC IN" in lab or "MOUNTING FACE" in lab:
             return lab
     return strong[0]["label"] if len(strong) == 1 else ""
-
-
-def _surface_phrase(surface: str) -> str:
-    """Format mounting face for operator text; empty when surface is unknown/weak."""
-    surf = re.sub(r"\s+", " ", (surface or "").strip())
-    if not surf or not is_strong_mounting_surface(surf):
-        return ""
-    if re.search(r"\b(SIDE|FACE|SURFACE|PANEL)\b", surf, re.I):
-        return f"on the {surf}"
-    return f"on the {surf} side"
 
 
 def _balloons_form_clear_stack(ordered: list[int], item_balloons: dict[int, dict]) -> bool:
@@ -206,27 +206,67 @@ class CpuSpatialMind(DrawingMind):
                 "Drawing mind: no spatial word boxes available — placement elaboration limited to text heuristics."
             )
 
+        # Soft balloon-cluster salvage first — club overlapping callouts into NOTES
+        # before placement elaboration so stick/place notes absorb measured balloons.
+        assembly_groups: list[dict[str, Any]] = []
+        try:
+            from app.route_card.drawing_mind.assembly_groups import (
+                dedupe_groups,
+                groups_to_synthetic_notes,
+                merge_notes_with_balloon_notes,
+                pl_item_set,
+                scan_text_for_clusters,
+                validate_assembly_group,
+            )
+
+            pl_nos = pl_item_set(parts_list)
+            blob = raw + "\n" + "\n".join(str(n.get("text") or "") for n in notes)
+            for g in scan_text_for_clusters(blob):
+                ng = validate_assembly_group(
+                    g,
+                    pl_nos,
+                    source_page=1,
+                    source_drawing_id=source_drawing_id,
+                    source_filename=source_filename,
+                )
+                if ng:
+                    ng.pop("warnings", None)
+                    assembly_groups.append(ng)
+            # Also promote lone balloons from the spatial graph so stick notes can
+            # club shared items and pick a host body (e.g. Item 1 under stickers).
+            assembly_groups.extend(
+                _single_item_groups_from_graph(
+                    graph,
+                    pl_nos=pl_nos,
+                    source_drawing_id=source_drawing_id,
+                    source_filename=source_filename,
+                )
+            )
+            assembly_groups = dedupe_groups(assembly_groups)
+            if assembly_groups:
+                balloon_notes = groups_to_synthetic_notes(
+                    assembly_groups, parts_list=parts_list
+                )
+                notes = merge_notes_with_balloon_notes(notes, balloon_notes)
+                warnings.append(
+                    f"Drawing mind (CPU): found {len(assembly_groups)} balloon "
+                    "assembly group(s) from OCR callouts."
+                )
+        except Exception as exc:
+            warnings.append(f"Drawing mind (CPU): balloon scan skipped ({exc}).")
+
         placements: list[PlacementFact] = []
-        label_fixing = _is_label_fixing_drawing(
-            ga_extraction, source_filename=source_filename
-        )
         for note in notes:
             check_cancelled(cancel_event)
             text = note.get("text") or ""
             items = list(note.get("items") or [])
+            if note.get("assemblyGroup"):
+                continue
             if not needs_placement_elaboration(text, items):
                 continue
-            # Temporary: known Label Fixing GA wording (5 mm top/left + 5 mm stack on DC OUT)
-            if label_fixing and _LABEL_FIXING_STICK_23.search(text):
-                elaborated, place_facts = _label_fixing_stick_23_elaboration(note, unit)
-                note_warns = [
-                    "Drawing mind: using known Label Fixing placement for "
-                    f"part {_LABEL_FIXING_PN} (temporary until spatial decode is fixed)."
-                ]
-            else:
-                elaborated, place_facts, note_warns = self._elaborate_placement(
-                    note, graph, unit, source_drawing_id=source_drawing_id
-                )
+            elaborated, place_facts, note_warns = self._elaborate_placement(
+                note, graph, unit, source_drawing_id=source_drawing_id
+            )
             warnings.extend(note_warns)
             if elaborated:
                 note["elaboratedText"] = elaborated
@@ -267,44 +307,6 @@ class CpuSpatialMind(DrawingMind):
                 "Verify against the GA view; switch to local_vlm when GPU is available."
             )
 
-        # Soft balloon-cluster salvage from OCR/raw text (no VLM required)
-        assembly_groups: list[dict[str, Any]] = []
-        try:
-            from app.route_card.drawing_mind.assembly_groups import (
-                dedupe_groups,
-                groups_to_synthetic_notes,
-                merge_notes_with_balloon_notes,
-                pl_item_set,
-                scan_text_for_clusters,
-                validate_assembly_group,
-            )
-
-            pl_nos = pl_item_set(parts_list)
-            blob = raw + "\n" + "\n".join(str(n.get("text") or "") for n in notes)
-            for g in scan_text_for_clusters(blob):
-                ng = validate_assembly_group(
-                    g,
-                    pl_nos,
-                    source_page=1,
-                    source_drawing_id=source_drawing_id,
-                    source_filename=source_filename,
-                )
-                if ng:
-                    ng.pop("warnings", None)
-                    assembly_groups.append(ng)
-            assembly_groups = dedupe_groups(assembly_groups)
-            if assembly_groups:
-                balloon_notes = groups_to_synthetic_notes(
-                    assembly_groups, parts_list=parts_list
-                )
-                notes = merge_notes_with_balloon_notes(notes, balloon_notes)
-                warnings.append(
-                    f"Drawing mind (CPU): found {len(assembly_groups)} balloon "
-                    "assembly group(s) from OCR callouts."
-                )
-        except Exception as exc:
-            warnings.append(f"Drawing mind (CPU): balloon scan skipped ({exc}).")
-
         return MindResult(
             engine=self.engine,
             notes=notes,
@@ -338,13 +340,22 @@ class CpuSpatialMind(DrawingMind):
         pages = {p["page"]: p for p in (graph.get("pages") or [])}
 
         item_balloons: dict[int, dict] = {}
+        # Prefer left-side balloons; when duplicates exist, keep note-order stack
+        # (later items should sit below earlier ones).
+        prev_cy: float | None = None
         for it in items:
             cands = [b for b in balloons if b["itemNo"] == it]
             if not cands:
                 continue
-            # Prefer left-side balloons (stickers often on left of view)
             cands.sort(key=lambda b: (b["cx"], b["cy"]))
-            item_balloons[it] = cands[0]
+            pick = cands[0]
+            if prev_cy is not None and len(cands) > 1:
+                below = [b for b in cands if float(b["cy"]) > prev_cy + 2]
+                if below:
+                    below.sort(key=lambda b: (b["cx"], b["cy"]))
+                    pick = below[0]
+            item_balloons[it] = pick
+            prev_cy = float(pick["cy"])
 
         # If balloon Y-order contradicts note order, drop balloons for stacking
         # (keep them only when they clearly confirm the note stack).
@@ -370,10 +381,9 @@ class CpuSpatialMind(DrawingMind):
         offset_dims = [d for d in dimensions if d["value"] <= 50]
 
         facts: list[PlacementFact] = []
-        sentences: list[str] = []
 
         for idx, it in enumerate(ordered):
-            ball = item_balloons.get(it) if (use_balloon_stack or idx == 0) else item_balloons.get(it)
+            ball = item_balloons.get(it)
             # For offset geometry of the top item, prefer the topmost balloon of that item
             if idx == 0 and it in item_balloons:
                 cands = [b for b in balloons if b["itemNo"] == it]
@@ -408,11 +418,7 @@ class CpuSpatialMind(DrawingMind):
                 prev = ordered[idx - 1]
                 gap_val = None
                 conf = 0.42
-                if (
-                    use_balloon_stack
-                    and ball
-                    and prev in item_balloons
-                ):
+                if ball and prev in item_balloons:
                     prev_b = item_balloons[prev]
                     gap_dims = [
                         d
@@ -430,6 +436,8 @@ class CpuSpatialMind(DrawingMind):
                         )
                         gap_val = g["value"]
                         conf = 0.6
+                    elif use_balloon_stack:
+                        conf = 0.5
                 entry: dict = {
                     "from": "item",
                     "unit": unit,
@@ -438,6 +446,13 @@ class CpuSpatialMind(DrawingMind):
                 }
                 if gap_val is not None:
                     entry["value"] = gap_val
+                # Same-X stack → left-aligned stickers
+                if (
+                    ball
+                    and prev in item_balloons
+                    and abs(float(ball["cx"]) - float(item_balloons[prev]["cx"])) < 25
+                ):
+                    entry["alignedLeft"] = True
                 offsets = [entry]
 
             fact = PlacementFact(
@@ -448,7 +463,6 @@ class CpuSpatialMind(DrawingMind):
                 source_page=page_no,
             )
             facts.append(fact)
-            sentences.append(self._sentence_for(fact, unit, verb=_placement_verb(text)))
 
         def _has_measured_offset(fact: PlacementFact) -> bool:
             for o in fact.offsets or []:
@@ -463,64 +477,25 @@ class CpuSpatialMind(DrawingMind):
                 f"items {items}; keeping source note wording and relative placement only."
             )
 
-        adhesive = ""
-        if ADHESIVE.search(text):
-            adhesive = "Use proper adhesive (glue)."
-        elaborated = " ".join(s for s in sentences if s)
-        if adhesive and adhesive.lower() not in elaborated.lower():
-            elaborated = f"{elaborated} {adhesive}".strip()
-        if unit and "size" not in elaborated.lower() and "dimension" not in elaborated.lower():
-            elaborated = (
-                f"{elaborated} (All sizes are in {unit}.)"
-            ).strip()
+        host = _infer_host_item_no(note, graph, ordered)
+        if host is not None:
+            note["hostItemNo"] = host
 
-        # Attach original note for traceability
-        if text and text.upper() not in elaborated.upper():
+        elaborated = compose_placement_elaboration(
+            text,
+            [f.to_dict() for f in facts],
+            host_item_no=host,
+            unit=unit,
+            view_used=str(note.get("viewUsed") or ""),
+            view_refs=list(note.get("viewRefs") or []),
+        )
+        # Attach original note for traceability when composition adds grounding
+        if elaborated and text and text.upper() not in elaborated.upper():
             elaborated = f"{elaborated} (From drawing: {text})"
+        if not elaborated:
+            return "", facts, warns
 
         return elaborated, facts, warns
-
-    def _sentence_for(self, fact: PlacementFact, unit: str, verb: str = "Stick") -> str:
-        it = fact.item_no
-        face = _surface_phrase(fact.surface or "")
-        action = (verb or "Stick").capitalize()
-        rel_words = {
-            "below": "below",
-            "above": "above",
-            "left_of": "to the left of",
-            "right_of": "to the right of",
-        }
-        # Relative to another item?
-        rel = next((o for o in fact.offsets if o.get("from") == "item"), None)
-        if rel:
-            prev = rel.get("relativeToItem")
-            val = rel.get("value")
-            relation = rel_words.get(rel.get("relation") or "below", "below")
-            head = f"{action} Item {it}"
-            if face:
-                head = f"{head} {face}"
-            if val is not None:
-                return f"{head}, {val:g} {unit} {relation} Item {prev}."
-            return f"{head}, {relation} Item {prev}."
-        top = next((o for o in fact.offsets if o.get("from") == "top"), None)
-        left = next((o for o in fact.offsets if o.get("from") == "left"), None)
-        right = next((o for o in fact.offsets if o.get("from") == "right"), None)
-        bottom = next((o for o in fact.offsets if o.get("from") == "bottom"), None)
-        head = f"{action} Item {it}"
-        if face:
-            head = f"{head} {face}"
-        bits = []
-        if top:
-            bits.append(f"keep {top['value']:g} {unit} gap from the top edge")
-        if bottom:
-            bits.append(f"keep {bottom['value']:g} {unit} gap from the bottom edge")
-        if left:
-            bits.append(f"keep {left['value']:g} {unit} gap from the left edge")
-        if right:
-            bits.append(f"keep {right['value']:g} {unit} gap from the right edge")
-        if bits:
-            return f"{head}, " + ", ".join(bits) + "."
-        return f"{head}."
 
     def _link_pcb_pl_wl(
         self,
@@ -602,26 +577,3 @@ class CpuSpatialMind(DrawingMind):
         return links
 
 
-def _placement_verb(text: str) -> str:
-    m = PLACEMENT_VERB.search(text or "")
-    if not m:
-        return "Stick"
-    raw = m.group(1).upper()
-    mapping = {
-        "STICK": "Stick",
-        "PASTE": "Paste",
-        "GLUE": "Glue",
-        "BOND": "Bond",
-        "ADHERE": "Adhere",
-        "APPLY": "Apply",
-        "MOUNT": "Mount",
-        "PLACE": "Place",
-        "FIT": "Fit",
-        "INSTALL": "Install",
-        "ASSEMBLE": "Assemble",
-        "FIX": "Fix",
-        "ENGAGE": "Engage",
-        "MATE": "Mate",
-        "TIGHTEN": "Tighten",
-    }
-    return mapping.get(raw, raw.title())

@@ -15,7 +15,6 @@ def sbu_dict(d: RcSbu) -> dict:
         "name": d.name,
         "plantId": (d.plant_id or "").strip(),
         "isActive": bool(d.is_active),
-        "sortOrder": d.sort_order,
         "label": d.name,
         "value": d.name,
     }
@@ -36,7 +35,14 @@ def list_sbus(*, active_only: bool = False) -> list[dict]:
         if active_only and not d.is_active:
             continue
         out.append(d)
-    out.sort(key=lambda d: (d.sort_order, d.name))
+    # Plant IDs first (ascending); blank / missing plant_id last, then name
+    out.sort(
+        key=lambda d: (
+            not bool((d.plant_id or "").strip()),
+            (d.plant_id or "").strip(),
+            d.name or "",
+        )
+    )
     return [sbu_dict(d) for d in out]
 
 
@@ -72,12 +78,13 @@ def upsert_sbu(body: dict, sbu_id: int | None = None) -> dict:
     d.code = code
     d.name = name
     d.plant_id = plant
-    if "sortOrder" in body or "sort_order" in body:
-        d.sort_order = int(body.get("sortOrder") or body.get("sort_order") or 0)
     if "isActive" in body:
         d.is_active = bool(body["isActive"])
     else:
         d.is_active = True
+    from app.route_card.departments import ensure_default_departments
+
+    ensure_default_departments(d)
     commit()
     return sbu_dict(d)
 

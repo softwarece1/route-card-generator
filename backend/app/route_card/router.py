@@ -13,6 +13,7 @@ from app.auth import (
     require_admin,
     require_sbu_head_or_admin,
     require_template_manager,
+    require_user_manager,
 )
 from app.route_card import op_templates, service
 from app.route_card.analyze_jobs import (
@@ -303,17 +304,17 @@ def admin_users(_admin: dict = Depends(require_admin)):
 
 
 @router.get("/sbu/users")
-def dept_users(current_user: dict = Depends(require_sbu_head_or_admin)):
-    """Users in caller's department (admin sees all) with extraction counts."""
+def dept_users(current_user: dict = Depends(require_user_manager)):
+    """Users in caller's scope (admin sees all) with extraction counts."""
     return service.list_dept_users(current_user)
 
 
 @router.post("/users")
 def create_user(
     body: ManagedUserCreate,
-    current_user: dict = Depends(require_sbu_head_or_admin),
+    current_user: dict = Depends(require_user_manager),
 ):
-    """Admin creates sbu_head/engineer; sbu_head creates engineers in own dept."""
+    """Admin/sbu_head/dept_head create users in their scope."""
     return service.create_managed_user(current_user, body.model_dump())
 
 
@@ -321,9 +322,9 @@ def create_user(
 def update_user(
     user_id: int,
     body: ManagedUserUpdate,
-    current_user: dict = Depends(require_sbu_head_or_admin),
+    current_user: dict = Depends(require_user_manager),
 ):
-    """Update empId / name / dept / role (role+dept changes are admin-only)."""
+    """Update empId / name / department / role within actor scope."""
     return service.update_managed_user(
         current_user, user_id, body.model_dump(exclude_unset=True)
     )
@@ -333,9 +334,9 @@ def update_user(
 def reset_user_password(
     user_id: int,
     body: ManagedUserResetPassword,
-    current_user: dict = Depends(require_sbu_head_or_admin),
+    current_user: dict = Depends(require_user_manager),
 ):
-    """Admin or sbu_head resets password (sbu_head: engineers in own dept only)."""
+    """Admin / sbu_head / dept_head resets password in their scope."""
     return service.reset_managed_user_password(current_user, user_id, body.password)
 
 
@@ -1016,6 +1017,76 @@ def list_sbu_heads(
         if (sbu or "").strip() != own:
             raise HTTPException(403, "Can only list heads in your SBU")
     return {"items": sbu_mod.sbu_heads_for_sbu(sbu)}
+
+
+@router.get("/departments")
+def list_departments_api(
+    sbuId: int | None = Query(None),
+    sbu: str | None = Query(None),
+    active_only: bool = Query(True),
+    current_user: dict = Depends(require_sbu_head_or_admin),
+):
+    from app.route_card import departments as dept_mod
+
+    return {
+        "items": dept_mod.list_departments(
+            sbu_id=sbuId,
+            sbu_name=sbu,
+            active_only=active_only,
+            actor=current_user,
+        )
+    }
+
+
+@router.post("/departments")
+async def create_department(
+    request: Request,
+    current_user: dict = Depends(require_sbu_head_or_admin),
+):
+    from app.route_card import departments as dept_mod
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return dept_mod.upsert_department(current_user, body or {})
+
+
+@router.put("/departments/{dept_id}")
+async def update_department(
+    dept_id: int,
+    request: Request,
+    current_user: dict = Depends(require_sbu_head_or_admin),
+):
+    from app.route_card import departments as dept_mod
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return dept_mod.upsert_department(current_user, body or {}, dept_id=dept_id)
+
+
+@router.delete("/departments/{dept_id}")
+def soft_delete_department_api(
+    dept_id: int,
+    current_user: dict = Depends(require_sbu_head_or_admin),
+):
+    """Soft-delete (is_active=false)."""
+    from app.route_card import departments as dept_mod
+
+    return dept_mod.soft_delete_department(current_user, dept_id)
+
+
+@router.get("/dept-heads")
+def list_dept_heads(
+    departmentId: int = Query(...),
+    current_user: dict = Depends(require_sbu_head_or_admin),
+):
+    """Reporting-officer dropdown: active dept_heads in a department."""
+    from app.route_card import departments as dept_mod
+
+    return {"items": dept_mod.dept_heads_for_department(departmentId)}
 
 
 @router.get("/plant-sbu")

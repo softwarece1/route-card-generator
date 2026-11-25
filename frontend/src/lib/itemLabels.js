@@ -1,4 +1,4 @@
-/** Annotate "Item 50" / "ITEM NO. 50" mentions with parts-list name + part number (display only). */
+/** Annotate "Item 50" / "ITEM NO. 50" mentions with the parts-list name only (display only). */
 
 import { normalizeInstructionCase } from "@/lib/instructionCase";
 
@@ -39,11 +39,10 @@ export function resolveItemLabel(itemLookup, itemNo) {
   const hit = lookupPlItem(itemLookup, itemNo);
   const name = normalizeInstructionCase(String(hit.description || hit.designation || "").trim());
   const partNo = String(hit.partNumber || hit.part_number || "").trim();
-  const bits = [name, partNo].filter(Boolean);
   return {
     name,
     partNo,
-    label: bits.join(", "),
+    label: name,
   };
 }
 
@@ -91,7 +90,7 @@ export function collectMentionedItemNos(text) {
 }
 
 /**
- * Replace item mentions in instruction text with "Item N (name, partNo)" when PL has a match.
+ * Replace item mentions in instruction text with "Item N (name)" when PL has a match.
  * Display-only — normalizes OCR caps first, then appends PL identity for every number in a list.
  * @param {string} text
  * @param {Record<string, object>} itemLookup
@@ -128,7 +127,7 @@ export function annotateItemMentions(text, itemLookup = {}) {
 }
 
 /**
- * Format chip / leftover item line: "#50 Name · Part" or "#50" when unknown.
+ * Format chip / leftover item line: "#50 ×qty (Name) · partNo" or "#50" when unknown.
  */
 export function formatItemChip(item, itemLookup = {}) {
   const no = item?.itemNo;
@@ -143,14 +142,19 @@ export function formatItemChip(item, itemLookup = {}) {
   };
   const hit = lookupPlItem(itemLookup, no);
   const name = normalizeInstructionCase(
-    String(fromItem.description || fromItem.designation || hit.description || hit.designation || "").trim()
+    String(
+      fromItem.description || fromItem.designation || hit.description || hit.designation || "",
+    ).trim(),
   );
-  const partNo = String(fromItem.partNumber || hit.partNumber || hit.part_number || "").trim();
-  const bits = [name, partNo].filter(Boolean);
+  const partNo = String(
+    fromItem.partNumber || hit.partNumber || hit.part_number || "",
+  ).trim();
   const qty =
     item.qty != null && item.qty !== ""
       ? ` ×${item.qty}`
       : "";
-  if (bits.length) return `#${displayNo}${qty} (${bits.join(", ")})`;
+  if (name && partNo) return `#${displayNo}${qty} (${name}) · ${partNo}`;
+  if (name) return `#${displayNo}${qty} (${name})`;
+  if (partNo) return `#${displayNo}${qty} · ${partNo}`;
   return `#${displayNo}${qty}`;
 }

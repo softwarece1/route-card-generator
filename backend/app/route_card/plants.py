@@ -40,7 +40,6 @@ def _plant_dict_from_sbus(plant_code: str, sbus: list[RcSbu]) -> dict:
         "name": names[0] if names else plant_code,
         "description": "",
         "isActive": True,
-        "sortOrder": min((s.sort_order for s in sbus), default=0),
         "workCenterSyncedAt": synced.isoformat() + "Z" if synced else None,
         "sbuNames": names,
         "sbuName": names[0] if names else "",
@@ -65,7 +64,7 @@ def _plant_id_for_sbu(sbu: str) -> str:
 def list_plant_codes_from_sbus(active_only: bool = True) -> list[dict]:
     """Distinct plant codes from SBU rows (for WC page dropdowns)."""
     by_plant = _sbu_rows_by_plant()
-    codes = sorted(by_plant.keys(), key=lambda c: (by_plant[c][0].sort_order, c))
+    codes = sorted(by_plant.keys(), key=lambda c: c)
     return [_plant_dict_from_sbus(c, by_plant[c]) for c in codes]
 
 
@@ -129,3 +128,39 @@ def get_work_center_synced_at(plant_code: str):
         if ts and (latest is None or ts > latest):
             latest = ts
     return latest
+
+
+def _sbu_for_plant(plant_code: str) -> RcSbu | None:
+    """Primary active SBU for a plant code (lowest sort_order, then code)."""
+    code = (plant_code or "").strip()
+    if not code:
+        return None
+    # Avoid `.strip()` inside Pony queries (not SQL-translatable on Optional).
+    rows = [
+        s
+        for s in select(s for s in RcSbu if s.is_active and s.plant_id == code)[:]
+    ]
+    if not rows:
+        rows = [
+            s
+            for s in select(s for s in RcSbu if s.is_active)[:]
+            if (s.plant_id or "").strip() == code
+        ]
+    rows.sort(key=lambda s: (int(s.sort_order or 0), (s.code or "").lower()))
+    return rows[0] if rows else None
+
+
+@db_session
+def sbu_name_for_plant(plant_code: str) -> str:
+    sbu = _sbu_for_plant(plant_code)
+    if not sbu:
+        return ""
+    return (sbu.name or sbu.code or "").strip()
+
+
+@db_session
+def sbu_code_for_plant(plant_code: str) -> str:
+    sbu = _sbu_for_plant(plant_code)
+    if not sbu:
+        return ""
+    return (sbu.code or "").strip()

@@ -58,11 +58,14 @@ def _user_from_cookie(websocket: WebSocket) -> dict | None:
 @router.websocket("/api/v1/ws/notifications")
 async def notifications_ws(websocket: WebSocket):
     user = _user_from_cookie(websocket)
-    if not user or not user.get("id"):
+    # Reject unauthenticated upgrades cleanly. Closing *before* accept() makes
+    # Vite's ws proxy log noisy ``read ECONNRESET`` on every reconnect.
+    if user is None:
+        await websocket.accept()
         await websocket.close(code=1008)
         return
 
-    uid = int(user["id"])
+    uid = int(user.get("id") or 0)
     await hub.connect(uid, websocket)
     try:
         snap = list_notifications(user, unread_only=False, limit=50)

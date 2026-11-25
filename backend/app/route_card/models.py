@@ -11,9 +11,9 @@ class RcUser(db.Entity):
     id = PrimaryKey(int, auto=True)
     emp_id = Required(str, unique=True)
     name = Required(str)
-    sbu = Optional(str, default="")  # matches RcSbu.name
+    sbu = Optional(str, default="")  # matches RcSbu.name (kept in sync from department)
     password_hash = Required(str)
-    role = Required(str, default="engineer")  # admin | sbu_head | engineer | ied
+    role = Required(str, default="engineer")  # admin | sbu_head | dept_head | engineer
     is_active = Required(bool, default=True)
     must_change_password = Required(bool, default=False)
     created_at = Required(datetime, default=datetime.utcnow)
@@ -23,9 +23,10 @@ class RcUser(db.Entity):
     approval_decided_at = Optional(datetime)
     approval_decided_by = Optional("RcUser", reverse="signup_approvals_decided")
     signup_approvals_decided = Set("RcUser", reverse="approval_decided_by")
-    # Engineer → sbu_head (same SBU). Null for admin / sbu_head / ied.
+    # engineer → dept_head (same dept); dept_head → sbu_head (same SBU). Null for admin/sbu_head.
     reports_to = Optional("RcUser", reverse="direct_reports")
     direct_reports = Set("RcUser", reverse="reports_to")
+    department = Optional("RcDepartment", reverse="users", column="department_id")
     sessions = Set("RcSession")
     drawings = Set("RcDrawing")
     operation_templates = Set("RcOperationTemplate")
@@ -76,7 +77,7 @@ class RcSbu(db.Entity):
 
 
 class RcDepartment(db.Entity):
-    """Department under an SBU (stub — data/UI in a later plan)."""
+    """Department under an SBU (e.g. PMG, IED). Soft-delete via is_active."""
 
     _table_ = ("route_card", "departments")
 
@@ -87,6 +88,7 @@ class RcDepartment(db.Entity):
     is_active = Required(bool, default=True)
     sort_order = Required(int, default=0)
     created_at = Required(datetime, default=datetime.utcnow)
+    users = Set("RcUser")
 
     composite_key(sbu, code)
 
@@ -97,6 +99,9 @@ class RcSession(db.Entity):
     id = PrimaryKey(int, auto=True)
     user = Optional(RcUser)
     status = Required(str, default="open")
+    # Plant / SBU scope for WC linking + Share-to-IED (admin picks plant at analyze)
+    plant = Optional(str, default="")
+    sbu = Optional(str, default="")
     created_at = Required(datetime, default=datetime.utcnow)
     updated_at = Required(datetime, default=datetime.utcnow)
     documents = Set("RcDocument")

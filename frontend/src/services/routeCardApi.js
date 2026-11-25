@@ -621,14 +621,57 @@ export async function updateSbu(id, body) {
   }
 }
 
-export async function fetchDeptHeads(sbu) {
+export async function fetchSbuHeads(sbu) {
   const { data } = await http.get(`${BASE}/sbu-heads`, {
     params: { sbu },
   });
   return data?.items || [];
 }
 
-export const fetchSbuHeads = fetchDeptHeads;
+/** @deprecated use fetchSbuHeads — kept for older call sites */
+export const fetchDeptHeads = fetchSbuHeads;
+
+export async function fetchDepartments({ sbuId, sbu, activeOnly = true } = {}) {
+  const params = { active_only: activeOnly };
+  if (sbuId != null && sbuId !== "") params.sbuId = sbuId;
+  if (sbu) params.sbu = sbu;
+  const { data } = await http.get(`${BASE}/departments`, { params });
+  return data?.items || [];
+}
+
+export async function createDepartment(body) {
+  try {
+    const { data } = await http.post(`${BASE}/departments`, body);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, "Could not create department"));
+  }
+}
+
+export async function updateDepartment(id, body) {
+  try {
+    const { data } = await http.put(`${BASE}/departments/${id}`, body);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, "Could not update department"));
+  }
+}
+
+export async function softDeleteDepartment(id) {
+  try {
+    const { data } = await http.delete(`${BASE}/departments/${id}`);
+    return data;
+  } catch (error) {
+    throw new Error(asError(error, "Could not deactivate department"));
+  }
+}
+
+export async function fetchDeptHeadsForDepartment(departmentId) {
+  const { data } = await http.get(`${BASE}/dept-heads`, {
+    params: { departmentId },
+  });
+  return data?.items || [];
+}
 
 export async function fetchPlantSbuMapping(plantCode) {
   try {

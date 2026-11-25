@@ -8,12 +8,15 @@ import "./instruction-click-edit.scss";
 /**
  * Single surface: annotated preview by default; click to edit raw instruction text.
  * Item names/part numbers are display-only and never written into `value`.
- * Gated view-ref (i) buttons open drawing snapshots when crops are available.
- * Found reference sheets (PS200, …) become links when `foundByCode` is provided.
+ *
+ * Editing uses a local draft so sanitize/normalize do not rewrite the controlled
+ * value on every keystroke (that was jumping the caret and eating spaces).
+ * Enter saves when `onSave` is provided; Shift+Enter inserts a newline.
  */
 export default function InstructionClickEdit({
   value = "",
   onChange,
+  onSave,
   itemLookup = {},
   viewCrops = [],
   onOpenViewCrop,
@@ -25,29 +28,49 @@ export default function InstructionClickEdit({
   resetKey = null,
 }) {
   const [editing, setEditing] = useState(!String(value || "").trim());
+  const [draft, setDraft] = useState(() => String(value || ""));
   const wrapRef = useRef(null);
+  const enteredEditRef = useRef(false);
 
-  useEffect(() => {
-    setEditing(!String(value || "").trim());
-  }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps -- reopen resets mode
-
-  const normalized = normalizeInstructionCase(sanitizeOperatorInstruction(value) || value);
-  const annotated = annotateItemMentions(normalized, itemLookup);
-  const empty = !String(normalized || "").trim();
-  const showAnnotPreview = Boolean(annotated && annotated !== normalized);
-  const previewNodes = renderInstructionWithViewInfo(normalized, {
+  const displayNormalized = normalizeInstructionCase(
+    sanitizeOperatorInstruction(value) || value,
+  );
+  const empty = !String(displayNormalized || "").trim();
+  const previewSource = editing ? draft : displayNormalized;
+  const previewForAnnot = normalizeInstructionCase(
+    sanitizeOperatorInstruction(previewSource) || previewSource,
+  );
+  const previewNodes = renderInstructionWithViewInfo(previewForAnnot, {
     itemLookup,
     viewCrops,
     onOpenViewCrop,
     foundByCode,
     onOpenRefDoc,
   });
+  const showLiveAnnot =
+    editing &&
+    (Boolean(annotateItemMentions(previewForAnnot, itemLookup)) ||
+      (viewCrops || []).length > 0 ||
+      (foundByCode && Object.keys(foundByCode).length > 0));
+
+  useEffect(() => {
+    const next = String(value || "");
+    const cleaned = normalizeInstructionCase(sanitizeOperatorInstruction(next) || next);
+    setDraft(cleaned || next);
+    setEditing(!cleaned.trim());
+    enteredEditRef.current = false;
+  }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps -- reopen resets mode
 
   useEffect(() => {
     if (!editing || disabled) return;
-    // Persist readable casing into parent state when entering edit mode.
-    if (normalized !== String(value || "") && onChange) {
-      onChange({ target: { value: normalized }, value: normalized });
+    if (enteredEditRef.current) return;
+    enteredEditRef.current = true;
+    const cleaned = normalizeInstructionCase(
+      sanitizeOperatorInstruction(String(value || "")) || String(value || ""),
+    );
+    if (cleaned !== String(value || "") && onChange) {
+      onChange({ target: { value: cleaned }, value: cleaned });
+      setDraft(cleaned);
     }
     const el = wrapRef.current?.querySelector?.("textarea");
     if (!el) return;
@@ -61,26 +84,46 @@ export default function InstructionClickEdit({
       }
     }, 0);
     return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when entering edit
-  }, [editing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only once when entering edit
+  }, [editing, disabled]);
+
+  const commitDraft = (raw) => {
+    const next = String(raw ?? "");
+    setDraft(next);
+    onChange?.({ target: { value: next }, value: next });
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey && typeof onSave === "function") {
+      e.preventDefault();
+      e.stopPropagation();
+      onSave();
+      return;
+    }
+    if (e.key === "Enter" && e.shiftKey) {
+      // Allow default newline; stop Dialog from treating Enter as Accept
+      e.stopPropagation();
+    }
+  };
 
   if (editing && !disabled) {
     return (
       <div ref={wrapRef} className="instr-click-edit">
         <SafeInputTextarea
           profile="multiline"
-          value={normalized}
-          onChange={(e) => {
-            onChange?.(e);
-          }}
+          value={draft}
+          onChange={(e) => commitDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
           rows={rows}
           className="w-full oarc-instr-dialog__textarea instr-click-edit__textarea"
           autoResize
           placeholder={placeholder}
         />
-        {showAnnotPreview ||
-        (viewCrops || []).length > 0 ||
-        (foundByCode && Object.keys(foundByCode).length > 0) ? (
+        <p className="instr-click-edit__keys-hint">
+          Shift+Enter for a new line
+          {typeof onSave === "function" ? " · Enter to save" : ""}
+        </p>
+        {showLiveAnnot ? (
           <div className="instr-click-edit__live-annot" aria-live="polite">
             <span className="instr-click-edit__live-annot-label">Preview</span>
             <p className="instr-click-edit__live-annot-text">{previewNodes}</p>
@@ -102,6 +145,12 @@ export default function InstructionClickEdit({
         onClick={(e) => {
           if (disabled) return;
           if (e.target?.closest?.(".instr-view-info-btn, .rca-refdoc-link")) return;
+          enteredEditRef.current = false;
+          setDraft(
+            normalizeInstructionCase(
+              sanitizeOperatorInstruction(String(value || "")) || String(value || ""),
+            ),
+          );
           setEditing(true);
         }}
         onKeyDown={(e) => {
@@ -109,6 +158,12 @@ export default function InstructionClickEdit({
           if (e.target?.closest?.(".instr-view-info-btn, .rca-refdoc-link")) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
+            enteredEditRef.current = false;
+            setDraft(
+              normalizeInstructionCase(
+                sanitizeOperatorInstruction(String(value || "")) || String(value || ""),
+              ),
+            );
             setEditing(true);
           }
         }}

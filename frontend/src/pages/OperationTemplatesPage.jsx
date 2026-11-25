@@ -55,7 +55,7 @@ export default function OperationTemplatesPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
   const isSbuHead = user?.role === "sbu_head";
-  const isIed = user?.role === "ied";
+  const isIed = Boolean(user?.isIedDept) || user?.role === "ied";
   const canManage = isAdmin || isSbuHead || isIed;
   const isEngineer = !canManage;
 

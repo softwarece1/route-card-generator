@@ -212,7 +212,7 @@ def logout(request: Request, response: Response):
 @db_session
 def list_sbus():
     rows = select(d for d in RcSbu if d.is_active).order_by(
-        RcSbu.sort_order, RcSbu.name
+        RcSbu.plant_id, RcSbu.name
     )[:]
     return [
         {

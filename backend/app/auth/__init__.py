@@ -10,6 +10,7 @@ from app.auth.deps import (
     require_admin,
     require_sbu_head_or_admin,
     require_template_manager,
+    require_user_manager,
     user_public,
 )
 from app.auth.routes import (
@@ -43,6 +44,7 @@ __all__ = [
     "get_current_user",
     "require_admin",
     "require_sbu_head_or_admin",
+    "require_user_manager",
     "require_template_manager",
     "create_access_token",
     "decode_token",

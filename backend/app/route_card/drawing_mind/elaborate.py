@@ -177,3 +177,230 @@ def needs_stage_b_vision(text: str) -> bool:
             re.I,
         )
     )
+
+
+def placement_verb(text: str) -> str:
+    """Operator verb from a drawing note (Stick / Place / …)."""
+    m = PLACEMENT_VERB.search(text or "")
+    if not m:
+        return "Stick"
+    raw = m.group(1).upper()
+    mapping = {
+        "STICK": "Stick",
+        "PASTE": "Paste",
+        "GLUE": "Glue",
+        "BOND": "Bond",
+        "ADHERE": "Adhere",
+        "APPLY": "Apply",
+        "MOUNT": "Mount",
+        "PLACE": "Place",
+        "FIT": "Fit",
+        "INSTALL": "Install",
+        "ASSEMBLE": "Assemble",
+        "FIX": "Fix",
+        "ENGAGE": "Engage",
+        "MATE": "Mate",
+        "TIGHTEN": "Tighten",
+    }
+    return mapping.get(raw, raw.title())
+
+
+# Named port faces (DC OUT…) may print at moderate confidence; bare-ish FRONT/REAR
+# face labels need a stronger hit so we do not invent a side from a view title.
+_SURFACE_CONF_PORT = 0.55
+_SURFACE_CONF_FRONT_REAR = 0.75
+_FRONT_REAR_FACE = re.compile(r"\b(FRONT|REAR)\b", re.I)
+_FIGURE_FALLBACK = "as indicated in the figure"
+
+
+def surface_confidence_threshold(surface: str) -> float:
+    """Minimum placement confidence required before naming this face in ops."""
+    if _FRONT_REAR_FACE.search(surface or ""):
+        return _SURFACE_CONF_FRONT_REAR
+    return _SURFACE_CONF_PORT
+
+
+def _surface_side_phrase(
+    surface: str,
+    *,
+    confidence: float | None = None,
+) -> str:
+    """Operator face phrase only for strong labels at high enough confidence.
+
+    Bare FRONT / REAR / view titles never print. FRONT FACE / REAR FACE need
+    higher confidence than named ports (DC OUT, AC IN, …).
+    """
+    from app.route_card.drawing_mind.spatial import is_strong_mounting_surface
+
+    surf = re.sub(r"\s+", " ", (surface or "").strip())
+    if not surf or not is_strong_mounting_surface(surf):
+        return ""
+    conf = 1.0 if confidence is None else float(confidence)
+    if conf < surface_confidence_threshold(surf):
+        return ""
+    if re.search(r"\b(SIDE|FACE|SURFACE|PANEL)\b", surf, re.I):
+        return f"on the {surf}"
+    return f"on the {surf} side"
+
+
+def _figure_ref_phrase(view_used: str = "", view_refs: list[Any] | None = None) -> str:
+    """Fallback location when no high-confidence face label is available."""
+    label = re.sub(r"\s+", " ", (view_used or "").strip())
+    if not label and view_refs:
+        for ref in view_refs:
+            if isinstance(ref, dict):
+                label = str(
+                    ref.get("label")
+                    or ref.get("figure")
+                    or ref.get("view")
+                    or ref.get("name")
+                    or ""
+                ).strip()
+            else:
+                label = str(ref or "").strip()
+            if label:
+                break
+    if label:
+        # Avoid "figure FIGURE A" duplication
+        if re.search(r"\b(figure|fig\.?|view|detail)\b", label, re.I):
+            return f"as indicated in the {label}"
+        return f"as indicated in the figure ({label})"
+    return _FIGURE_FALLBACK
+
+
+def _placement_dict(p: Any) -> dict[str, Any] | None:
+    if isinstance(p, dict):
+        return p
+    if hasattr(p, "to_dict"):
+        try:
+            d = p.to_dict()
+            return d if isinstance(d, dict) else None
+        except Exception:
+            return None
+    return None
+
+
+def _sentence_for_placement(
+    placement: dict[str, Any],
+    *,
+    verb: str = "Stick",
+    unit: str = "mm",
+    host_item_no: int | None = None,
+    view_used: str = "",
+    view_refs: list[Any] | None = None,
+) -> str:
+    """One operator line from a grounded placement fact (no invented sizes)."""
+    try:
+        it = int(placement.get("itemNo") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if it <= 0:
+        return ""
+    action = (verb or "Stick").capitalize()
+    try:
+        conf = float(placement.get("confidence")) if placement.get("confidence") is not None else None
+    except (TypeError, ValueError):
+        conf = None
+    face = _surface_side_phrase(str(placement.get("surface") or ""), confidence=conf)
+    figure = "" if face else _figure_ref_phrase(view_used, view_refs)
+    offsets = [o for o in (placement.get("offsets") or []) if isinstance(o, dict)]
+    host_bit = f", on item {host_item_no}" if host_item_no else ""
+    rel_words = {
+        "below": "below",
+        "above": "above",
+        "left_of": "to the left of",
+        "right_of": "to the right of",
+    }
+
+    def _head() -> str:
+        h = f"{action} Item {it}"
+        if face:
+            return f"{h} {face}"
+        if figure:
+            return f"{h} {figure}"
+        return h
+
+    rel = next((o for o in offsets if o.get("from") == "item"), None)
+    if rel:
+        prev = rel.get("relativeToItem")
+        val = rel.get("value")
+        relation = rel_words.get(str(rel.get("relation") or "below").lower(), "below")
+        head = _head()
+        align = ""
+        if rel.get("alignedLeft") or any(o.get("from") == "left" for o in offsets):
+            align = ", left-aligned"
+        if val is not None:
+            body = f"{val:g} {unit} {relation} Item {prev}{align}"
+        else:
+            body = f"{relation} Item {prev}{align}"
+        return f"{head}, {body}{host_bit}."
+    top = next((o for o in offsets if o.get("from") == "top"), None)
+    left = next((o for o in offsets if o.get("from") == "left"), None)
+    right = next((o for o in offsets if o.get("from") == "right"), None)
+    bottom = next((o for o in offsets if o.get("from") == "bottom"), None)
+    head = _head()
+    bits: list[str] = []
+    if top and top.get("value") is not None:
+        bits.append(f"keep {top['value']:g} {unit} gap from the top edge")
+    if bottom and bottom.get("value") is not None:
+        bits.append(f"keep {bottom['value']:g} {unit} gap from the bottom edge")
+    if left and left.get("value") is not None:
+        bits.append(f"keep {left['value']:g} {unit} gap from the left edge")
+    if right and right.get("value") is not None:
+        bits.append(f"keep {right['value']:g} {unit} gap from the right edge")
+    if bits:
+        return f"{head}, " + ", ".join(bits) + f"{host_bit}."
+    if face or figure:
+        return f"{head}{host_bit}."
+    return f"{head} {_FIGURE_FALLBACK}{host_bit}."
+
+
+def compose_placement_elaboration(
+    raw_note: str,
+    placements: list[Any] | None,
+    *,
+    host_item_no: int | None = None,
+    unit: str = "mm",
+    view_used: str = "",
+    view_refs: list[Any] | None = None,
+) -> str:
+    """Club note verb + measured placements (+ optional host body) into operator text."""
+    rows: list[dict[str, Any]] = []
+    for p in placements or []:
+        d = _placement_dict(p)
+        if d:
+            rows.append(d)
+    if not rows:
+        return ""
+    verb = placement_verb(raw_note)
+    try:
+        host = int(host_item_no) if host_item_no is not None else None
+    except (TypeError, ValueError):
+        host = None
+    if host is not None and host <= 0:
+        host = None
+    unit = unit or "mm"
+    refs = list(view_refs or [])
+    sentences = [
+        _sentence_for_placement(
+            p,
+            verb=verb,
+            unit=unit,
+            host_item_no=host,
+            view_used=view_used,
+            view_refs=refs,
+        )
+        for p in rows
+    ]
+    sentences = [s for s in sentences if s]
+    if not sentences:
+        return ""
+    parts = list(sentences)
+    if re.search(r"adhesive|glue|stick|paste|bond", raw_note or "", re.I):
+        adhesive = "Use proper adhesive (glue)."
+        if adhesive.lower() not in " ".join(parts).lower():
+            parts.append(adhesive)
+    text = " ".join(parts).strip()
+    if unit and "size" not in text.lower() and "dimension" not in text.lower():
+        text = f"{text} (All sizes are in {unit}.)"
+    return text.strip()

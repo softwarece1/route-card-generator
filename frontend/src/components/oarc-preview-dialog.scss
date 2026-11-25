@@ -502,6 +502,10 @@
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--pmf-text-faint);
+
+  & + .oarc-instr-dialog__chips + & {
+    margin-top: 0.45rem;
+  }
 }
 
 .oarc-instr-dialog__chips {

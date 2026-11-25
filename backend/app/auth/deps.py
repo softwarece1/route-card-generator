@@ -18,19 +18,28 @@ security = HTTPBearer(auto_error=False)
 
 
 def user_public(user: RcUser) -> dict:
+    from app.route_card.departments import is_ied_department
     from app.route_card.plants import plant_id_for_dept
 
-    dept = user.sbu or ""
+    sbu_name = user.sbu or ""
+    dept_ent = getattr(user, "department", None)
+    dept_code = (dept_ent.code if dept_ent else "") or ""
+    dept_name = (dept_ent.name if dept_ent else "") or ""
     return {
         "id": user.id,
         "empId": user.emp_id,
         "username": user.emp_id,
         "name": user.name,
         "display_name": user.name,
-        "sbu": dept,
-        "plantId": plant_id_for_dept(dept),
+        "sbu": sbu_name,
+        "plantId": plant_id_for_dept(sbu_name),
         "role": user.role,
         "mustChangePassword": bool(getattr(user, "must_change_password", False)),
+        "departmentId": dept_ent.id if dept_ent else None,
+        "departmentCode": dept_code,
+        "departmentName": dept_name,
+        "isIedDept": is_ied_department(dept_ent)
+        or (user.role or "").strip().lower() == "ied",
     }
 
 
@@ -53,6 +62,10 @@ def get_current_user(
             "plantId": "",
             "role": "admin",
             "mustChangePassword": False,
+            "departmentId": None,
+            "departmentCode": "",
+            "departmentName": "",
+            "isIedDept": False,
         }
 
     token = request.cookies.get(access_cookie_name())
@@ -114,10 +127,21 @@ def require_sbu_head_or_admin(current_user: dict = Depends(get_current_user)) ->
     return current_user
 
 
-def require_template_manager(current_user: dict = Depends(get_current_user)) -> dict:
-    """Admin, dept head, or IED may manage operation templates (IED: own dept)."""
-    if current_user.get("role") not in {"admin", "sbu_head", "ied"}:
+def require_user_manager(current_user: dict = Depends(get_current_user)) -> dict:
+    """Admin, sbu_head, or dept_head may manage users in their scope."""
+    if current_user.get("role") not in {"admin", "sbu_head", "dept_head"}:
         raise HTTPException(
-            status_code=403, detail="Department head, IED, or admin access required"
+            status_code=403, detail="Department head, SBU head, or admin access required"
         )
     return current_user
+
+
+def require_template_manager(current_user: dict = Depends(get_current_user)) -> dict:
+    """Admin, sbu_head, dept_head, or IED-dept users may manage operation templates."""
+    role = current_user.get("role")
+    if role in {"admin", "sbu_head", "dept_head"} or current_user.get("isIedDept"):
+        return current_user
+    raise HTTPException(
+        status_code=403,
+        detail="Department head, IED department, or admin access required",
+    )

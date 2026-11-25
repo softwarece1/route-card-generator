@@ -358,7 +358,7 @@ def catalog_for_dropdowns(
     else:
         items = list_work_centers(
             user,
-            sbu=d or None,
+            dept=d or None,
             include_shared=True,
             active_only=True,
             include_machines=False,
@@ -1384,49 +1384,145 @@ def _stable_emp_id(label: str, used: set[str]) -> str:
     raise RuntimeError("exhausted empId space")
 
 
+# Demo org seed — only these SBUs (lean transactional cleanup set).
+DEMO_ORG_SBU_CODES = ("MR", "MS", "ADSN", "NS1", "NS2")
+DEMO_ORG_DEPT_CODES = ("PMG", "IED")
+
+
 @db_session
 def seed_sbu_head_and_ied_users() -> dict:
-    """Idempotent demo users: dept-head-{slug} + IED-{slug} per active department.
+    """Idempotent demo org for DEMO_ORG_SBU_CODES.
 
-    empIds are random-looking stable 6-digit numbers (edit later in Users UI).
-    Password: Admin@<empId> (e.g. Admin@482917).
-    Also migrates IED / sbu_head accounts still on the legacy shared password.
+    Per SBU: one sbu_head; per PMG/IED dept: one dept_head + one engineer.
+    Wiring: engineer → dept_head; dept_head → sbu_head.
+    Password: Admin@<empId>. Also migrates legacy shared-password accounts.
     """
-    from app.route_card.models import RcSbu, RcUser
+    from app.route_card.departments import ensure_default_departments
+    from app.route_card.models import RcDepartment, RcSbu, RcUser
     from app.security import hash_password, verify_password
 
     used = {u.emp_id for u in select(u for u in RcUser)[:]}
     created = 0
     skipped = 0
+    linked = 0
     reset = 0
+    keep = {c.upper() for c in DEMO_ORG_SBU_CODES}
 
-    for dept in select(d for d in RcSbu if d.is_active).order_by(
-        RcSbu.sort_order
-    )[:]:
-        slug = _dept_name_slug(dept.code)
-        specs = [
-            (f"dept-head-{slug}", "sbu_head"),
-            (f"IED-{slug}", "ied"),
-        ]
-        for name, role in specs:
-            existing = select(u for u in RcUser if u.name == name)[:1]
-            if existing:
-                skipped += 1
-                continue
-            emp_id = _stable_emp_id(f"{role}:{dept.code}", used)
+    def _ensure_user(
+        *,
+        name: str,
+        role: str,
+        sbu: RcSbu,
+        department: RcDepartment | None,
+        reports_to: RcUser | None,
+        match_existing: RcUser | None,
+    ) -> RcUser:
+        nonlocal created, skipped, linked
+        u = match_existing
+        if u is None:
+            found = select(x for x in RcUser if x.name == name)[:1]
+            u = found[0] if found else None
+        if u is not None:
+            skipped += 1
+        else:
+            emp_id = _stable_emp_id(f"{role}:{sbu.code}:{name}", used)
             used.add(emp_id)
-            RcUser(emp_id=emp_id,
+            u = RcUser(
+                emp_id=emp_id,
                 name=name,
-                sbu=dept.name,
+                sbu=sbu.name,
                 password_hash=hash_password(seed_password_for_emp(emp_id)),
                 role=role,
                 is_active=True,
                 must_change_password=False,
+                department=department,
+                reports_to=reports_to,
+                approval_status="approved",
             )
             created += 1
+            return u
+        # Refresh org fields on existing seed users
+        if (u.sbu or "").strip() != (sbu.name or "").strip():
+            u.sbu = sbu.name
+        if department is not None and u.department != department:
+            u.department = department
+        elif department is None and role == "sbu_head" and u.department is not None:
+            u.department = None
+        if u.role != role and role in ("sbu_head", "dept_head", "engineer"):
+            # Do not demote admin
+            if (u.role or "").strip().lower() != "admin":
+                u.role = role
+        if reports_to is not None and u.reports_to != reports_to:
+            u.reports_to = reports_to
+            linked += 1
+        elif reports_to is None and role == "sbu_head" and u.reports_to is not None:
+            u.reports_to = None
+        return u
 
-    # Migrate any IED / sbu_head still on the old shared default
-    for u in select(u for u in RcUser if u.role in ("ied", "sbu_head") and u.is_active)[:]:
+    for sbu in select(d for d in RcSbu if d.is_active and d.code.upper() in keep).order_by(
+        RcSbu.sort_order, RcSbu.code
+    )[:]:
+        ensure_default_departments(sbu)
+        slug = _dept_name_slug(sbu.code)
+
+        existing_head = select(
+            u
+            for u in RcUser
+            if u.role == "sbu_head"
+            and u.is_active
+            and (u.sbu == sbu.name or u.sbu == sbu.code)
+        ).order_by(RcUser.id)[:1]
+        sbu_head = _ensure_user(
+            name=f"sbu-head-{slug}",
+            role="sbu_head",
+            sbu=sbu,
+            department=None,
+            reports_to=None,
+            match_existing=existing_head[0] if existing_head else None,
+        )
+
+        for dept_code in DEMO_ORG_DEPT_CODES:
+            depts = select(
+                d for d in RcDepartment if d.sbu == sbu and d.code == dept_code and d.is_active
+            )[:1]
+            if not depts:
+                continue
+            dept = depts[0]
+            dslug = dept_code.lower()
+
+            existing_dh = select(
+                u
+                for u in RcUser
+                if u.role == "dept_head" and u.is_active and u.department == dept
+            ).order_by(RcUser.id)[:1]
+            dept_head = _ensure_user(
+                name=f"{dslug}-head-{slug}",
+                role="dept_head",
+                sbu=sbu,
+                department=dept,
+                reports_to=sbu_head,
+                match_existing=existing_dh[0] if existing_dh else None,
+            )
+
+            existing_eng = select(
+                u
+                for u in RcUser
+                if u.role == "engineer" and u.is_active and u.department == dept
+            ).order_by(RcUser.id)[:1]
+            _ensure_user(
+                name=f"eng-{dslug}-{slug}",
+                role="engineer",
+                sbu=sbu,
+                department=dept,
+                reports_to=dept_head,
+                match_existing=existing_eng[0] if existing_eng else None,
+            )
+
+    for u in select(
+        u
+        for u in RcUser
+        if u.role in ("ied", "sbu_head", "dept_head", "engineer") and u.is_active
+    )[:]:
         if not u.password_hash:
             continue
         if not verify_password(LEGACY_SEED_PASSWORD, u.password_hash):
@@ -1438,7 +1534,12 @@ def seed_sbu_head_and_ied_users() -> dict:
         reset += 1
 
     commit()
-    return {"created": created, "skipped": skipped, "reset": reset}
+    return {
+        "created": created,
+        "skipped": skipped,
+        "linked": linked,
+        "reset": reset,
+    }
 
 
 @db_session

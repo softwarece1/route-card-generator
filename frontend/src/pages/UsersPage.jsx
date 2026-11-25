@@ -21,6 +21,8 @@ import {
   approveSignup,
   createManagedUser,
   fetchAdminUsers,
+  fetchDepartments,
+  fetchDeptHeadsForDepartment,
   fetchSbuHeads,
   fetchDeptUsers,
   fetchSignupApprovals,
@@ -35,11 +37,17 @@ const ROLE_FILTER_ALL = [
   { label: "All roles", value: "" },
   { label: "Admin", value: "admin" },
   { label: "SBU head", value: "sbu_head" },
-  { label: "IED", value: "ied" },
+  { label: "Dept head", value: "dept_head" },
   { label: "Engineer", value: "engineer" },
 ];
 
 const ROLE_FILTER_SBU_HEAD = [
+  { label: "All roles", value: "" },
+  { label: "Dept head", value: "dept_head" },
+  { label: "Engineer", value: "engineer" },
+];
+
+const ROLE_FILTER_DEPT_HEAD = [
   { label: "All roles", value: "" },
   { label: "Engineer", value: "engineer" },
 ];
@@ -149,23 +157,29 @@ function isValidEmployeeId(value) {
 
 const ROLE_OPTIONS_ADMIN = [
   { label: "Engineer", value: "engineer" },
+  { label: "Dept head", value: "dept_head" },
   { label: "SBU head", value: "sbu_head" },
-  { label: "IED", value: "ied" },
 ];
 
-const ROLE_OPTIONS_SBU_HEAD = [{ label: "Engineer", value: "engineer" }];
+const ROLE_OPTIONS_SBU_HEAD = [
+  { label: "Engineer", value: "engineer" },
+  { label: "Dept head", value: "dept_head" },
+];
+
+const ROLE_OPTIONS_DEPT_HEAD = [{ label: "Engineer", value: "engineer" }];
 
 function roleTone(role) {
   if (role === "admin") return "danger";
   if (role === "sbu_head") return "info";
-  if (role === "ied") return "success";
+  if (role === "dept_head") return "warn";
   return "neutral";
 }
 
 function roleLabel(role) {
   if (role === "admin") return "Admin";
   if (role === "sbu_head") return "SBU head";
-  if (role === "ied") return "IED";
+  if (role === "dept_head") return "Dept head";
+  if (role === "ied") return "IED (legacy)";
   return "Engineer";
 }
 
@@ -173,6 +187,7 @@ const emptyCreate = () => ({
   empId: "",
   name: "",
   sbu: "",
+  departmentId: null,
   role: "engineer",
   reportsToId: null,
   password: "",
@@ -183,6 +198,7 @@ const emptyEdit = () => ({
   empId: "",
   name: "",
   sbu: "",
+  departmentId: null,
   role: "engineer",
   reportsToId: null,
 });
@@ -191,6 +207,8 @@ export default function UsersPage() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
   const isSbuHead = user?.role === "sbu_head";
+  const isDeptHead = user?.role === "dept_head";
+  const canManageUsers = isAdmin || isSbuHead || isDeptHead;
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") === "pending" ? "pending" : "users";
 
@@ -223,6 +241,7 @@ export default function UsersPage() {
   const [createShowPwd, setCreateShowPwd] = useState(false);
   const [dialogError, setDialogError] = useState("");
   const [headOptions, setHeadOptions] = useState([]);
+  const [deptOptions, setDeptOptions] = useState([]);
 
   const [decideOpen, setDecideOpen] = useState(false);
   const [decideMode, setDecideMode] = useState("approve");
@@ -258,11 +277,11 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin || isSbuHead) {
+    if (canManageUsers) {
       load();
-      loadPending();
+      if (isAdmin || isSbuHead) loadPending();
     }
-  }, [isAdmin, isSbuHead, load, loadPending]);
+  }, [canManageUsers, isAdmin, isSbuHead, load, loadPending]);
 
   useEffect(() => {
     if (searchParams.get("tab") === "pending") {
@@ -309,7 +328,11 @@ export default function UsersPage() {
     [sbuOptions]
   );
 
-  const roleFilterOptions = isAdmin ? ROLE_FILTER_ALL : ROLE_FILTER_SBU_HEAD;
+  const roleFilterOptions = isAdmin
+    ? ROLE_FILTER_ALL
+    : isSbuHead
+      ? ROLE_FILTER_SBU_HEAD
+      : ROLE_FILTER_DEPT_HEAD;
 
   const filteredUsers = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
@@ -331,24 +354,70 @@ export default function UsersPage() {
   const canManageRow = (row) => {
     if (!row || row.role === "admin") return false;
     if (isAdmin) return true;
-    if (isSbuHead) return row.role === "engineer";
+    if (isSbuHead) return row.role === "engineer" || row.role === "dept_head";
+    if (isDeptHead) return row.role === "engineer" && row.reportsToId === user?.id;
     return false;
   };
 
-  const loadHeads = useCallback(async (sbuName) => {
+  const loadDepts = useCallback(async (sbuName) => {
     const d = (sbuName || "").trim();
     if (!d) {
-      setHeadOptions([]);
+      setDeptOptions([]);
       return;
     }
     try {
-      const items = await fetchSbuHeads(d);
-      setHeadOptions(
-        (items || []).map((h) => ({
-          label: h.label || `${h.name} (${h.empId})`,
-          value: h.id,
-        })),
+      const items = await fetchDepartments({ sbu: d, activeOnly: true });
+      setDeptOptions(
+        (items || []).map((x) => ({
+          label: `${x.name} (${x.code})`,
+          value: x.id,
+        }))
       );
+    } catch {
+      setDeptOptions([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isSbuHead || isDeptHead) {
+      const sbu = user?.sbu || "";
+      if (sbu) loadDepts(sbu);
+    }
+  }, [isSbuHead, isDeptHead, user?.sbu, loadDepts]);
+
+  const loadHeads = useCallback(async ({ sbuName, departmentId, role }) => {
+    const wantRole = (role || "engineer").trim();
+    try {
+      if (wantRole === "dept_head") {
+        const d = (sbuName || "").trim();
+        if (!d) {
+          setHeadOptions([]);
+          return;
+        }
+        const items = await fetchSbuHeads(d);
+        setHeadOptions(
+          (items || []).map((h) => ({
+            label: h.label || `${h.name} (${h.empId})`,
+            value: h.id,
+          }))
+        );
+        return;
+      }
+      if (wantRole === "engineer") {
+        if (!departmentId) {
+          setHeadOptions([]);
+          return;
+        }
+        const items = await fetchDeptHeadsForDepartment(departmentId);
+        setHeadOptions(
+          (items || []).map((h) => ({
+            label: h.label || `${h.name} (${h.empId})`,
+            value: h.id,
+          }))
+        );
+        return;
+      }
+      setHeadOptions([]);
     } catch {
       setHeadOptions([]);
     }
@@ -356,17 +425,22 @@ export default function UsersPage() {
 
   const openCreate = () => {
     const sbuVal = isAdmin ? "" : user?.sbu || "";
+    const deptId = isDeptHead ? user?.departmentId || null : null;
     setCreateForm({
       ...emptyCreate(),
       sbu: sbuVal,
+      departmentId: deptId,
       role: "engineer",
-      reportsToId: isSbuHead ? user?.id || null : null,
+      reportsToId: isDeptHead ? user?.id || null : null,
     });
     setCreateShowPwd(false);
     setDialogError("");
     setCreateOpen(true);
-    if (sbuVal) loadHeads(sbuVal);
-    else setHeadOptions([]);
+    if (sbuVal) loadDepts(sbuVal);
+    else setDeptOptions([]);
+    if (deptId || (sbuVal && false)) {
+      loadHeads({ sbuName: sbuVal, departmentId: deptId, role: "engineer" });
+    } else setHeadOptions([]);
   };
 
   const closeResetDialog = () => {
@@ -381,18 +455,25 @@ export default function UsersPage() {
   };
 
   const openEdit = (row) => {
+    const role = row.role === "admin" ? "engineer" : row.role;
     setEditTarget(row);
     setEditForm({
       empId: row.empId || "",
       name: row.name || "",
       sbu: row.sbu || "",
-      role: row.role === "admin" ? "engineer" : row.role,
+      departmentId: row.departmentId || null,
+      role,
       reportsToId: row.reportsToId || null,
     });
     setDialogError("");
     setEditOpen(true);
-    if (row.sbu) loadHeads(row.sbu);
-    else setHeadOptions([]);
+    if (row.sbu) loadDepts(row.sbu);
+    else setDeptOptions([]);
+    loadHeads({
+      sbuName: row.sbu,
+      departmentId: row.departmentId,
+      role,
+    });
   };
 
   const openReset = (row) => {
@@ -425,13 +506,25 @@ export default function UsersPage() {
       setDialogError("Passwords do not match");
       return;
     }
-    if (isAdmin && !createForm.sbu) {
+    if ((isAdmin || isSbuHead) && !createForm.sbu && isAdmin) {
       setDialogError("Select an SBU");
       return;
     }
-    const role = isAdmin ? createForm.role : "engineer";
-    if (role === "engineer" && !createForm.reportsToId) {
-      setDialogError("Select a reporting officer (SBU head)");
+    const role = isAdmin
+      ? createForm.role
+      : isSbuHead
+        ? createForm.role
+        : "engineer";
+    if (role !== "sbu_head" && !createForm.departmentId) {
+      setDialogError("Select a department");
+      return;
+    }
+    if ((role === "engineer" || role === "dept_head") && !createForm.reportsToId) {
+      setDialogError(
+        role === "engineer"
+          ? "Select a reporting officer (department head)"
+          : "Select a reporting officer (SBU head)"
+      );
       return;
     }
     setSaving(true);
@@ -442,9 +535,13 @@ export default function UsersPage() {
         empId,
         name,
         sbu: isAdmin ? createForm.sbu : undefined,
+        departmentId: role === "sbu_head" ? undefined : createForm.departmentId,
         role,
         password: createForm.password,
-        reportsToId: role === "engineer" ? createForm.reportsToId : undefined,
+        reportsToId:
+          role === "engineer" || role === "dept_head"
+            ? createForm.reportsToId
+            : undefined,
       });
       setCreateOpen(false);
       toast.success(`User ${empId} created`);
@@ -472,9 +569,13 @@ export default function UsersPage() {
       setDialogError("Select an SBU");
       return;
     }
-    const role = isAdmin ? editForm.role : editTarget.role;
-    if (role === "engineer" && !editForm.reportsToId) {
-      setDialogError("Select a reporting officer (SBU head)");
+    const role = isAdmin || isSbuHead ? editForm.role : editTarget.role;
+    if (role !== "sbu_head" && !editForm.departmentId) {
+      setDialogError("Select a department");
+      return;
+    }
+    if ((role === "engineer" || role === "dept_head") && !editForm.reportsToId) {
+      setDialogError("Select a reporting officer");
       return;
     }
     setSaving(true);
@@ -485,8 +586,13 @@ export default function UsersPage() {
       if (isAdmin) {
         payload.sbu = editForm.sbu;
         payload.role = editForm.role;
+        payload.departmentId =
+          editForm.role === "sbu_head" ? null : editForm.departmentId;
+      } else if (isSbuHead) {
+        payload.role = editForm.role;
+        payload.departmentId = editForm.departmentId;
       }
-      if (role === "engineer") {
+      if (role === "engineer" || role === "dept_head") {
         payload.reportsToId = editForm.reportsToId;
       }
       const updated = await updateManagedUser(editTarget.id, payload);
@@ -499,6 +605,9 @@ export default function UsersPage() {
                 name: updated.name,
                 sbu: updated.sbu,
                 role: updated.role,
+                departmentId: updated.departmentId,
+                departmentName: updated.departmentName,
+                departmentCode: updated.departmentCode,
                 reportsToId: updated.reportsToId,
                 reportsToName: updated.reportsToName,
                 reportsToEmpId: updated.reportsToEmpId,
@@ -553,15 +662,18 @@ export default function UsersPage() {
 
   const pageDescription = useMemo(() => {
     if (isAdmin) {
-      return "Add SBU heads, engineers, or IED users; approve engineer signups; reset passwords.";
+      return "Add SBU heads, dept heads, and engineers; assign departments; approve signups.";
     }
     if (isSbuHead) {
       return sbuScope
-        ? `Manage reports in ${sbuScope} and approve pending engineer signups.`
-        : "Manage your engineers and approve pending signups.";
+        ? `Manage dept heads and engineers in ${sbuScope}; approve pending signups.`
+        : "Manage dept heads and engineers; approve pending signups.";
+    }
+    if (isDeptHead) {
+      return "Manage engineers who report to you.";
     }
     return "";
-  }, [isAdmin, isSbuHead, sbuScope]);
+  }, [isAdmin, isSbuHead, isDeptHead, sbuScope]);
 
   const openDecide = (row, mode) => {
     setDecideTarget(row);
@@ -598,7 +710,7 @@ export default function UsersPage() {
     }
   };
 
-  if (!isAdmin && !isSbuHead) {
+  if (!canManageUsers) {
     return <Navigate to="/generator" replace />;
   }
 
@@ -709,7 +821,7 @@ export default function UsersPage() {
           loading={loading}
           dataKey="id"
           paginator
-          rows={12}
+          rows={10}
           emptyMessage={
             search.trim() || filterSbu || filterRole
               ? "No users match your search / filters."
@@ -722,6 +834,11 @@ export default function UsersPage() {
             ...(isAdmin
               ? [{ field: "sbu", header: "SBU", sortable: true, style: { width: "9rem" } }]
               : []),
+            {
+              header: "Department",
+              style: { width: "8rem" },
+              body: (row) => row.departmentName || row.departmentCode || "—",
+            },
             {
               header: "Role",
               style: { width: "8rem" },
@@ -814,7 +931,7 @@ export default function UsersPage() {
             loading={pendingLoading}
             dataKey="id"
             paginator
-            rows={12}
+            rows={10}
             emptyMessage="No pending engineer signups."
             columns={[
               { type: "index", header: "#", style: { width: "3.25rem" } },
@@ -992,9 +1109,11 @@ export default function UsersPage() {
                     setCreateForm((f) => ({
                       ...f,
                       sbu: next,
+                      departmentId: null,
                       reportsToId: null,
                     }));
-                    loadHeads(next);
+                    loadDepts(next);
+                    setHeadOptions([]);
                   }}
                   placeholder="Select SBU"
                   disabled={saving || sbuOptions.length === 0}
@@ -1007,26 +1126,69 @@ export default function UsersPage() {
                 <SafeInputText profile="text" value={user?.sbu || sbuScope || ""} disabled />
               </label>
             )}
+            {createForm.role !== "sbu_head" ? (
+              <label>
+                Department
+                <Dropdown
+                  value={createForm.departmentId}
+                  options={deptOptions}
+                  onChange={(e) => {
+                    const deptId = e.value || null;
+                    setCreateForm((f) => ({
+                      ...f,
+                      departmentId: deptId,
+                      reportsToId:
+                        f.role === "engineer" && isDeptHead ? user?.id || null : null,
+                    }));
+                    loadHeads({
+                      sbuName: createForm.sbu || user?.sbu,
+                      departmentId: deptId,
+                      role: createForm.role,
+                    });
+                  }}
+                  placeholder={
+                    deptOptions.length ? "Select department" : "No departments in this SBU"
+                  }
+                  disabled={saving || isDeptHead || deptOptions.length === 0}
+                  className="w-full"
+                />
+              </label>
+            ) : null}
             <label>
               Role
               <Dropdown
                 value={createForm.role}
-                options={isAdmin ? ROLE_OPTIONS_ADMIN : ROLE_OPTIONS_SBU_HEAD}
-                onChange={(e) =>
+                options={
+                  isAdmin
+                    ? ROLE_OPTIONS_ADMIN
+                    : isSbuHead
+                      ? ROLE_OPTIONS_SBU_HEAD
+                      : ROLE_OPTIONS_DEPT_HEAD
+                }
+                onChange={(e) => {
+                  const nextRole = e.value;
                   setCreateForm((f) => ({
                     ...f,
-                    role: e.value,
+                    role: nextRole,
+                    departmentId: nextRole === "sbu_head" ? null : f.departmentId,
                     reportsToId:
-                      e.value === "engineer"
-                        ? f.reportsToId || (isSbuHead ? user?.id : null)
-                        : null,
-                  }))
-                }
-                disabled={saving}
+                      nextRole === "engineer" && isDeptHead
+                        ? user?.id || null
+                        : nextRole === "dept_head" && isSbuHead
+                          ? user?.id || null
+                          : null,
+                  }));
+                  loadHeads({
+                    sbuName: createForm.sbu || user?.sbu,
+                    departmentId: createForm.departmentId,
+                    role: nextRole,
+                  });
+                }}
+                disabled={saving || isDeptHead}
                 className="w-full"
               />
             </label>
-            {createForm.role === "engineer" ? (
+            {createForm.role === "engineer" || createForm.role === "dept_head" ? (
               <label>
                 Reporting officer
                 <Dropdown
@@ -1036,7 +1198,13 @@ export default function UsersPage() {
                     setCreateForm((f) => ({ ...f, reportsToId: e.value || null }))
                   }
                   placeholder={
-                    headOptions.length ? "Select SBU head" : "No SBU heads in this SBU"
+                    createForm.role === "engineer"
+                      ? headOptions.length
+                        ? "Select department head"
+                        : "No department heads in this department"
+                      : headOptions.length
+                        ? "Select SBU head"
+                        : "No SBU heads in this SBU"
                   }
                   disabled={saving || headOptions.length === 0}
                   className="w-full"
@@ -1160,8 +1328,14 @@ export default function UsersPage() {
                   options={sbuOptions}
                   onChange={(e) => {
                     const next = e.value || "";
-                    setEditForm((f) => ({ ...f, sbu: next, reportsToId: null }));
-                    loadHeads(next);
+                    setEditForm((f) => ({
+                      ...f,
+                      sbu: next,
+                      departmentId: null,
+                      reportsToId: null,
+                    }));
+                    loadDepts(next);
+                    setHeadOptions([]);
                   }}
                   placeholder="Select SBU"
                   disabled={saving || sbuOptions.length === 0}
@@ -1171,19 +1345,53 @@ export default function UsersPage() {
                 <SafeInputText profile="text" value={editForm.sbu || user?.sbu || sbuScope || ""} disabled />
               )}
             </label>
-            <label>
-              Role
-              {isAdmin ? (
+            {editForm.role !== "sbu_head" ? (
+              <label>
+                Department
                 <Dropdown
-                  value={editForm.role}
-                  options={ROLE_OPTIONS_ADMIN}
-                  onChange={(e) =>
+                  value={editForm.departmentId}
+                  options={deptOptions}
+                  onChange={(e) => {
+                    const deptId = e.value || null;
                     setEditForm((f) => ({
                       ...f,
-                      role: e.value,
-                      reportsToId: e.value === "engineer" ? f.reportsToId : null,
-                    }))
+                      departmentId: deptId,
+                      reportsToId: null,
+                    }));
+                    loadHeads({
+                      sbuName: editForm.sbu || user?.sbu,
+                      departmentId: deptId,
+                      role: editForm.role,
+                    });
+                  }}
+                  placeholder={
+                    deptOptions.length ? "Select department" : "No departments in this SBU"
                   }
+                  disabled={saving || isDeptHead || deptOptions.length === 0}
+                  className="w-full"
+                />
+              </label>
+            ) : null}
+            <label>
+              Role
+              {isAdmin || isSbuHead ? (
+                <Dropdown
+                  value={editForm.role}
+                  options={isAdmin ? ROLE_OPTIONS_ADMIN : ROLE_OPTIONS_SBU_HEAD}
+                  onChange={(e) => {
+                    const nextRole = e.value;
+                    setEditForm((f) => ({
+                      ...f,
+                      role: nextRole,
+                      departmentId: nextRole === "sbu_head" ? null : f.departmentId,
+                      reportsToId: null,
+                    }));
+                    loadHeads({
+                      sbuName: editForm.sbu || user?.sbu,
+                      departmentId: editForm.departmentId,
+                      role: nextRole,
+                    });
+                  }}
                   disabled={saving}
                   className="w-full"
                 />
@@ -1191,7 +1399,7 @@ export default function UsersPage() {
                 <SafeInputText profile="text" value={roleLabel(editForm.role)} disabled />
               )}
             </label>
-            {editForm.role === "engineer" ? (
+            {editForm.role === "engineer" || editForm.role === "dept_head" ? (
               <label>
                 Reporting officer
                 <Dropdown
@@ -1201,7 +1409,13 @@ export default function UsersPage() {
                     setEditForm((f) => ({ ...f, reportsToId: e.value || null }))
                   }
                   placeholder={
-                    headOptions.length ? "Select SBU head" : "No SBU heads in this SBU"
+                    editForm.role === "engineer"
+                      ? headOptions.length
+                        ? "Select department head"
+                        : "No department heads in this department"
+                      : headOptions.length
+                        ? "Select SBU head"
+                        : "No SBU heads in this SBU"
                   }
                   disabled={saving || headOptions.length === 0}
                   className="w-full"
