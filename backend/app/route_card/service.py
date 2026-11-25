@@ -682,6 +682,24 @@ def _assert_session_access(session: RcSession, user: dict | None, *, write: bool
     raise HTTPException(403, "Not allowed to access this session")
 
 
+def _assert_drawing_access(drawing: RcDrawing, user: dict | None, *, write: bool = False) -> None:
+    """Owner, admin, or the same session rules as route-card sessions."""
+    if _is_admin(user):
+        return
+    if drawing.session:
+        _assert_session_access(drawing.session, user, write=write)
+        return
+    uid = (user or {}).get("id")
+    owner = drawing.user
+    if owner and uid and owner.id == int(uid):
+        return
+    emp = ((user or {}).get("empId") or (user or {}).get("username") or "").strip().lower()
+    uploaded = (drawing.uploaded_by or "").strip().lower()
+    if emp and uploaded and emp == uploaded:
+        return
+    raise HTTPException(403, "Not allowed to access this drawing")
+
+
 def _assert_can_share_ied(card: RcRouteCard, user: dict | None) -> None:
     if not user:
         raise HTTPException(401, "Not authenticated")
@@ -1102,7 +1120,14 @@ def persist_route(drawing: RcDrawing, generated: dict, existing: RcRouteCard | N
 
 
 @db_session
-def create_drawing(data: bytes, filename: str, ext: str, uploaded_by: str | None) -> dict:
+def create_drawing(
+    data: bytes,
+    filename: str,
+    ext: str,
+    uploaded_by: str | None,
+    user: dict | None = None,
+) -> dict:
+    owner = _resolve_user(user)
     drawing = RcDrawing(
         filename=filename,
         file_type=file_type_from_name(filename),
@@ -1113,6 +1138,7 @@ def create_drawing(data: bytes, filename: str, ext: str, uploaded_by: str | None
         status="uploaded",
         drawing_type="unknown",
         uploaded_by=uploaded_by or "",
+        user=owner,
     )
     commit()
     path, backend = _store(drawing.id, filename, data, drawing.content_type or "application/octet-stream")
@@ -1124,13 +1150,14 @@ def create_drawing(data: bytes, filename: str, ext: str, uploaded_by: str | None
 
 
 @db_session
-def analyze_drawing(drawing_id: int) -> dict:
+def analyze_drawing(drawing_id: int, user: dict | None = None) -> dict:
     from app.route_card.drawing_mind import get_drawing_mind
     from app.route_card.pdf_ingest import extract_spatial_pages
 
     drawing = RcDrawing.get(id=drawing_id)
     if not drawing:
         raise HTTPException(404, "Drawing not found")
+    _assert_drawing_access(drawing, user, write=True)
     drawing.status = "analyzing"
     drawing.updated_at = datetime.utcnow()
     commit()
@@ -1195,20 +1222,22 @@ def analyze_drawing(drawing_id: int) -> dict:
 
 
 @db_session
-def get_drawing_payload(drawing_id: int) -> dict:
+def get_drawing_payload(drawing_id: int, user: dict | None = None) -> dict:
     drawing = RcDrawing.get(id=drawing_id)
     if not drawing:
         raise HTTPException(404, "Drawing not found")
+    _assert_drawing_access(drawing, user, write=False)
     extraction = drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
     route = drawing.route_cards.select().order_by(desc(RcRouteCard.created_at)).first()
     return build_payload(drawing, extraction, route)
 
 
 @db_session
-def regenerate_route(drawing_id: int) -> dict:
+def regenerate_route(drawing_id: int, user: dict | None = None) -> dict:
     drawing = RcDrawing.get(id=drawing_id)
     if not drawing:
         raise HTTPException(404, "Drawing not found")
+    _assert_drawing_access(drawing, user, write=True)
     extraction = drawing.extractions.select().order_by(desc(RcExtraction.created_at)).first()
     if not extraction:
         raise HTTPException(400, "Analyze the drawing before generating a route card")
@@ -1691,8 +1720,7 @@ def drawing_view_crop(
     drawing = RcDrawing.get(id=drawing_id)
     if not drawing:
         raise HTTPException(404, "Drawing not found")
-    if drawing.session:
-        _assert_session_access(drawing.session, user, write=False)
+    _assert_drawing_access(drawing, user, write=False)
     data = load_bytes(drawing)
     ext = Path(drawing.filename or "").suffix.lower()
     kind_n = (kind or "table").strip().lower()
@@ -1735,10 +1763,11 @@ def drawing_table_crop(
 
 
 @db_session
-def drawing_file_meta(drawing_id: int) -> tuple[bytes, str, str]:
+def drawing_file_meta(drawing_id: int, user: dict | None = None) -> tuple[bytes, str, str]:
     drawing = RcDrawing.get(id=drawing_id)
     if not drawing:
         raise HTTPException(404, "Drawing not found")
+    _assert_drawing_access(drawing, user, write=False)
     data = load_bytes(drawing)
     return data, drawing.filename, drawing.content_type or "application/octet-stream"
 
@@ -1771,7 +1800,6 @@ def _doc_dict(doc: RcDocument) -> dict:
         "drawingId": drawing_id,
         "uploadedBy": uploaded_by,
         "createdAt": doc.created_at.isoformat() if doc.created_at else None,
-        "objectPath": doc.object_path,
         "contentType": doc.content_type,
     }
 
@@ -3148,7 +3176,6 @@ def _session_summary(session: RcSession) -> dict:
                 "sizeLabel": format_bytes(d.size_bytes),
                 "status": d.status,
                 "storageBackend": d.storage_backend,
-                "objectPath": d.object_path,
                 "contentType": d.content_type,
                 "createdAt": d.created_at.isoformat() if d.created_at else None,
                 "uploadedBy": uploaded_by or None,

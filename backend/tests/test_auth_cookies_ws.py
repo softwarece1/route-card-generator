@@ -95,7 +95,7 @@ def test_login_sets_httpOnly_cookie_and_me_via_cookie():
         cipher = encrypt_creds({"empId": emp_id, "password": password})
         resp = client.post("/api/v1/auth/login", json={"cipher": cipher})
         assert resp.status_code == 200, resp.text
-        assert "access_token" in resp.json()
+        assert "access_token" not in resp.json()
         assert client.cookies.get("rc_access") or any(
             "rc_access" in (c or "") for c in resp.headers.get_list("set-cookie")
         )

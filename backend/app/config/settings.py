@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 10
     # Common password list path (bundled file)
     COMMON_PASSWORDS_PATH: str = "backend/data/common_passwords.txt"
+    # First-boot admin password. Used only when the users table is empty.
+    # Leave empty to skip seeding. Must satisfy the password policy.
+    ADMIN_INITIAL_PASSWORD: str = ""
 
     # CORS allowed origins (frontend Vite dev server or production URL)
     CORS_ORIGINS: list[str] = [
@@ -175,17 +178,9 @@ def cors_allow_origins() -> list[str]:
     return origins
 
 
-# Loopback + any IPv4/IPv6 literal host (optional :port). Server IP access often uses
-# addresses outside RFC1918 (e.g. http://172.195.126.179:5174).
-_IP_ORIGIN_RE = (
-    r"^https?://("
-    r"localhost|"
-    r"127\.0\.0\.1|"
-    r"\[::1\]|"
-    r"(?:\d{1,3}\.){3}\d{1,3}|"
-    r"\[[0-9a-fA-F:]+\]"
-    r")(?::\d+)?$"
-)
+# Loopback UI hosts on any port. A server IP is allowed only when it matches
+# the request Host (see origin_is_allowed), not every address on the network.
+_LOOPBACK_ORIGIN_RE = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$"
 
 
 def cors_allow_private_network() -> bool:
@@ -193,25 +188,44 @@ def cors_allow_private_network() -> bool:
 
 
 def cors_origin_regex() -> str | None:
-    """Starlette CORSMiddleware allow_origin_regex for IP / loopback UI hosts."""
-    if not cors_allow_private_network():
-        return None
-    return _IP_ORIGIN_RE
+    """Starlette CORSMiddleware allow_origin_regex for loopback UI hosts."""
+    return _LOOPBACK_ORIGIN_RE
 
 
-def origin_is_allowed(origin: str | None) -> bool:
-    """True when Origin/Referer is allowlisted or an IP/loopback UI host."""
+def _hostname(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    if "://" in raw:
+        from urllib.parse import urlparse
+
+        return (urlparse(raw).hostname or "").lower()
+    if raw.startswith("["):
+        end = raw.find("]")
+        return raw[1:end].lower() if end > 1 else ""
+    return raw.split(":")[0]
+
+
+def origin_is_allowed(origin: str | None, request_host: str | None = None) -> bool:
+    """True for an allow-listed origin, loopback, or the same host as this request.
+
+    ``request_host`` is the Host header (port ignored). Without it, a bare IP
+    origin is rejected so a page on another machine cannot pass the check.
+    """
     o = (origin or "").strip().rstrip("/")
     if not o:
         return False
     allow = {a.rstrip("/") for a in cors_allow_origins()}
     if o in allow:
         return True
-    if not cors_allow_private_network():
-        return False
     import re
 
-    return bool(re.match(_IP_ORIGIN_RE, o, flags=re.I))
+    if re.match(_LOOPBACK_ORIGIN_RE, o, flags=re.I):
+        return True
+    if not request_host or not cors_allow_private_network():
+        return False
+    origin_host = _hostname(o)
+    return bool(origin_host) and origin_host == _hostname(request_host)
 
 
 def captcha_required() -> bool:

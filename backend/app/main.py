@@ -17,15 +17,18 @@ from app.database.connection import connect_to_db
 from app.error_log import ensure_log_dir
 from app.realtime import ws_router
 from app.route_card.router import router as route_card_router
+from app.security_startup import assert_runtime_secrets, flag_known_admin_password, is_prod
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    assert_runtime_secrets()
     try:
         ensure_log_dir()
     except Exception:
         pass
     connect_to_db()
+    flag_known_admin_password()
     try:
         from app.route_card.job_queue import start_queue_worker
 
@@ -41,18 +44,23 @@ async def lifespan(_app: FastAPI):
         pass
 
 
+_prod = is_prod()
 app = FastAPI(
     title="Route Card Generator",
     description="Standalone Route Card Generator (offline PDF ingest: PyMuPDF + pdfplumber + optional Tesseract OCR).",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url=None if _prod else "/docs",
+    redoc_url=None if _prod else "/redoc",
+    openapi_url=None if _prod else "/openapi.json",
 )
 
 from app.middleware import IdleSessionMiddleware, SecurityHeadersMiddleware
 from app.middleware.rate_limit import limiter, SlowAPIMiddleware
+from app.middleware.same_host_cors import SameHostCorsMiddleware
 
 # CORS — credentials required for httpOnly access cookie.
-# Explicit localhost origins + regex for private LAN IPs (server IP access).
+# Allow-list + loopback regex. SameHostCorsMiddleware reflects the server's own IP.
 _cors_kwargs = dict(
     allow_origins=cors_allow_origins(),
     allow_credentials=True,
@@ -64,6 +72,7 @@ _cors_re = cors_origin_regex()
 if _cors_re:
     _cors_kwargs["allow_origin_regex"] = _cors_re
 app.add_middleware(CORSMiddleware, **_cors_kwargs)
+app.add_middleware(SameHostCorsMiddleware)
 
 app.add_middleware(CookieCsrfMiddleware)
 app.add_middleware(IdleSessionMiddleware)
@@ -144,12 +153,7 @@ app.include_router(route_card_router, dependencies=_protect)
 
 @app.get("/health")
 def health():
-    try:
-        from app.route_card import admin_ops
-
-        return admin_ops.health_extended()
-    except Exception:
-        return {"status": "ok", "auth_enabled": settings.AUTH_ENABLED}
+    return {"status": "ok"}
 
 
 def _resolve_frontend_dist() -> Path | None:
@@ -186,7 +190,15 @@ if _frontend_dist is not None:
             "health",
         }:
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-        candidate = _frontend_dist / full_path
+        root = _frontend_dist.resolve()
+        candidate = (root / full_path).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
         if candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(_frontend_dist / "index.html")
+        index = root / "index.html"
+        if not index.is_file():
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return FileResponse(index)

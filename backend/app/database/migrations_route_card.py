@@ -1273,20 +1273,30 @@ def run_migrations():
             "dropped plants; stubbed departments; seeded BEL sbus"
         )
 
-        # Seed default admin if no users exist
+        # Seed admin only when an initial password is provided. Never embed one.
         cursor.execute("SELECT COUNT(*) FROM route_card.users;")
         count = cursor.fetchone()[0]
         if count == 0:
+            from app.password_policy import validate_password_complexity
             from app.security import hash_password
 
-            cursor.execute(
-                """
-                INSERT INTO route_card.users (emp_id, name, sbu, password_hash, role, is_active)
-                VALUES (%s, %s, %s, %s, %s, TRUE);
-                """,
-                ("admin", "Administrator", "Software", hash_password("admin123"), "admin"),
-            )
-            print("seeded default admin user (empId=admin / admin123)")
+            initial = (getattr(settings, "ADMIN_INITIAL_PASSWORD", "") or "").strip()
+            if not initial:
+                print(
+                    "no users yet; set ADMIN_INITIAL_PASSWORD to create the admin account"
+                )
+            else:
+                validate_password_complexity(initial)
+                cursor.execute(
+                    """
+                    INSERT INTO route_card.users (
+                        emp_id, name, sbu, password_hash, role, is_active, must_change_password
+                    )
+                    VALUES (%s, %s, %s, %s, %s, TRUE, TRUE);
+                    """,
+                    ("admin", "Administrator", "Software", hash_password(initial), "admin"),
+                )
+                print("seeded admin user (empId=admin); password change required at first login")
 
         # --- Departments live under SBU; users.department_id; retire ied role ---
         cursor.execute(

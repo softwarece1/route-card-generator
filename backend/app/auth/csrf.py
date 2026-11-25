@@ -58,7 +58,7 @@ class CookieCsrfMiddleware(BaseHTTPMiddleware):
         if origin is None:
             return await call_next(request)
 
-        if origin_is_allowed(origin):
+        if origin_is_allowed(origin, request.headers.get("host")):
             return await call_next(request)
 
         return JSONResponse(

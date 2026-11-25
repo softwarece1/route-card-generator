@@ -51,7 +51,6 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: str
     token_type: str = "bearer"
     user: dict
     replacedSession: bool = False
@@ -209,8 +208,9 @@ def logout(request: Request, response: Response):
 
 
 @router.get("/sbus")
+@limiter.limit("30/min")
 @db_session
-def list_sbus():
+def list_sbus(request: Request):
     rows = select(d for d in RcSbu if d.is_active).order_by(
         RcSbu.plant_id, RcSbu.name
     )[:]
@@ -228,8 +228,9 @@ def list_sbus():
 
 
 @router.get("/emp-status/{emp_id}")
+@limiter.limit("30/min")
 @db_session
-def emp_status(emp_id: str):
+def emp_status(emp_id: str, request: Request):
     normalized = _normalize_emp_id(emp_id)
     if not normalized:
         return {
@@ -330,10 +331,10 @@ def get_captcha(request: Request):
             "captchaId": challenge_id,
             "imageData": f"data:image/png;base64,{b64_img}",
         }
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate CAPTCHA: {exc}",
+            detail="Failed to generate CAPTCHA",
         )
 
 
@@ -358,7 +359,6 @@ def login(request: Request, response: Response, body: LoginRequest = Body(...)):
             request=request,
         )
         return {
-            "access_token": token,
             "token_type": "bearer",
             "user": user_public(user),
             "replacedSession": True,
@@ -419,7 +419,6 @@ def login(request: Request, response: Response, body: LoginRequest = Body(...)):
         request=request,
     )
     return {
-        "access_token": token,
         "token_type": "bearer",
         "user": user_public(user),
         "replacedSession": replaced,
@@ -446,7 +445,6 @@ def login_takeover(request: Request, response: Response, body: SessionTakeoverRe
         request=request,
     )
     return {
-        "access_token": token,
         "token_type": "bearer",
         "user": user_public(user),
         "replacedSession": True,

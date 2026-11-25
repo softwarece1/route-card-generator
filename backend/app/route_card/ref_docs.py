@@ -269,6 +269,11 @@ def upload_document_bytes(
     doc_code = parse_upload_filename(folder.code, name)
     if not data:
         raise HTTPException(400, "Empty file")
+    from app.config.settings import settings
+
+    max_mb = int(getattr(settings, "MAX_UPLOAD_SIZE_MB", 10) or 10)
+    if len(data) > max_mb * 1024 * 1024:
+        raise HTTPException(400, f"File exceeds maximum allowed size ({max_mb} MB)")
     if not data.startswith(b"%PDF"):
         raise HTTPException(400, "File does not look like a PDF")
     ctype = content_type or "application/pdf"

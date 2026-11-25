@@ -63,7 +63,7 @@ def generate_captcha() -> Tuple[str, bytes]:
     img.save(buf, format="PNG")
     png_bytes = buf.getvalue()
     # Store hashed answer with attempt counter
-    _captcha_cache[challenge_id] = {"hash": _hash_answer(code), "code": code, "attempts": 0, "created": datetime.utcnow()}
+    _captcha_cache[challenge_id] = {"hash": _hash_answer(code), "attempts": 0, "created": datetime.utcnow()}
     return challenge_id, png_bytes
 
 def verify_captcha(challenge_id: str, answer: str) -> bool:

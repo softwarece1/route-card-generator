@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, HTTPException
 
+from app.download_names import content_disposition
 from .schemas import OarcToSapRequest
 from .sap_mapper import build_sap_payload
 from app.auth import (
@@ -88,11 +89,11 @@ def download_session_document(
     data, filename, content_type = service.session_document_file(
         session_id, role.lower(), current_user, document_id=documentId
     )
-    inline = "inline" if filename.lower().endswith(".pdf") else "attachment"
+    inline = filename.lower().endswith(".pdf")
     return StreamingResponse(
         BytesIO(data),
         media_type=content_type,
-        headers={"Content-Disposition": f'{inline}; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename, inline=inline)},
     )
 
 
@@ -425,11 +426,11 @@ def admin_upload_session(session_id: int, _admin: dict = Depends(require_admin))
 @router.get("/admin/documents/{document_id}/file")
 def admin_document_download(document_id: int, _admin: dict = Depends(require_admin)):
     data, filename, content_type = service.admin_document_file(document_id, _admin)
-    inline = "inline" if filename.lower().endswith((".pdf", ".tif", ".tiff")) else "attachment"
+    inline = filename.lower().endswith((".pdf", ".tif", ".tiff"))
     return StreamingResponse(
         BytesIO(data),
         media_type=content_type,
-        headers={"Content-Disposition": f'{inline}; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename, inline=inline)},
     )
 
 
@@ -459,28 +460,32 @@ async def upload_drawing(
 ):
     data, filename, ext = await service.read_upload(file, role="drawing")
     return service.create_drawing(
-        data, filename, ext, uploaded_by=current_user.get("empId") or current_user.get("username")
+        data,
+        filename,
+        ext,
+        uploaded_by=current_user.get("empId") or current_user.get("username"),
+        user=current_user,
     )
 
 
 @router.post("/drawings/{drawing_id}/analyze")
 def analyze_drawing(drawing_id: int, current_user: dict = Depends(get_current_user)):
-    return service.analyze_drawing(drawing_id)
+    return service.analyze_drawing(drawing_id, current_user)
 
 
 @router.get("/drawings/{drawing_id}")
 def get_drawing(drawing_id: int, current_user: dict = Depends(get_current_user)):
-    return service.get_drawing_payload(drawing_id)
+    return service.get_drawing_payload(drawing_id, current_user)
 
 
 @router.get("/drawings/{drawing_id}/file")
 def download_drawing_file(drawing_id: int, current_user: dict = Depends(get_current_user)):
-    data, filename, content_type = service.drawing_file_meta(drawing_id)
-    inline = "inline" if filename.lower().endswith(".pdf") else "attachment"
+    data, filename, content_type = service.drawing_file_meta(drawing_id, current_user)
+    inline = filename.lower().endswith(".pdf")
     return StreamingResponse(
         BytesIO(data),
         media_type=content_type,
-        headers={"Content-Disposition": f'{inline}; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename, inline=inline)},
     )
 
 
@@ -526,7 +531,7 @@ def drawing_table_crop(
 
 @router.post("/drawings/{drawing_id}/route-card")
 def generate_route_card(drawing_id: int, current_user: dict = Depends(get_current_user)):
-    return service.regenerate_route(drawing_id)
+    return service.regenerate_route(drawing_id, current_user)
 
 
 @router.put("/route-cards/{route_id}")
@@ -1187,7 +1192,7 @@ def admin_backup(_admin: dict = Depends(require_admin)):
 
 
 @router.get("/system/health")
-def system_health(current_user: dict = Depends(get_current_user)):
+def system_health(_admin: dict = Depends(require_admin)):
     from app.route_card import admin_ops
 
     return admin_ops.health_extended()
@@ -1296,11 +1301,10 @@ def ref_docs_document_file(
     current_user: dict = Depends(get_current_user),
 ):
     data, filename, content_type = ref_docs.get_document_file(document_id, version=version)
-    safe = filename.replace('"', "")
     return StreamingResponse(
         BytesIO(data),
         media_type=content_type or "application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{safe}"'},
+        headers={"Content-Disposition": content_disposition(filename, inline=True)},
     )
 
 

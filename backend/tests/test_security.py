@@ -13,10 +13,23 @@ import asyncio
 
 client = TestClient(app)
 
+
+def _cookie_token(resp) -> str:
+    from app.auth.cookies import access_cookie_name
+
+    name = access_cookie_name()
+    for header in resp.headers.get_list("set-cookie"):
+        part = header.split(";", 1)[0]
+        key, _, val = part.partition("=")
+        if key.strip() == name and val.strip():
+            return val.strip()
+    raise AssertionError(f"missing {name} cookie")
+
 def test_security_headers_present():
     """Verify essential VAPT security headers are returned on all responses."""
     response = client.get("/health")
     assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
     assert response.headers.get("X-Content-Type-Options") == "nosniff"
     assert response.headers.get("X-Frame-Options") == "DENY"
     assert response.headers.get("Referrer-Policy") == "no-referrer"
@@ -254,7 +267,10 @@ def test_login_captcha_scenarios():
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
     from app.auth_crypto import _private_key
-    from app.captcha import _captcha_cache
+    import app.captcha as captcha_mod
+
+    orig_random_code = captcha_mod._random_code
+    captcha_mod._random_code = lambda length=6: "AB12CD"
     from app.database.connection import connect_to_db
 
     connect_to_db()
@@ -309,7 +325,7 @@ def test_login_captcha_scenarios():
     # 4. Submit login with valid CAPTCHA and incorrect credentials -> rejected (401 Invalid empId or password)
     r3 = client.get("/api/v1/auth/captcha")
     c3 = r3.json()
-    valid_code3 = _captcha_cache[c3["captchaId"]]["code"]
+    valid_code3 = "AB12CD"
 
     cipher_wrong_pass = encrypt_creds({"empId": "admin", "password": "WrongPassword!@#123"})
     resp = client.post(
@@ -364,7 +380,7 @@ def test_login_captcha_scenarios():
 
     r4 = client.get("/api/v1/auth/captcha")
     c4 = r4.json()
-    valid_code4 = _captcha_cache[c4["captchaId"]]["code"]
+    valid_code4 = "AB12CD"
 
     cipher_valid = encrypt_creds({"empId": "999999", "password": "TestSecurePass2026!#"})
     resp = client.post(
@@ -377,13 +393,14 @@ def test_login_captcha_scenarios():
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert "access_token" in body
+    assert "access_token" not in body
     assert body["user"]["empId"] == "999999"
+    old_token = _cookie_token(resp)
 
     # 7. Second login without takeover → 409 concurrent session + resumeToken
     r5 = client.get("/api/v1/auth/captcha")
     c5 = r5.json()
-    valid_code5 = _captcha_cache[c5["captchaId"]]["code"]
+    valid_code5 = "AB12CD"
     resp = client.post(
         "/api/v1/auth/login",
         json={
@@ -398,14 +415,14 @@ def test_login_captcha_scenarios():
     assert detail.get("resumeToken")
 
     # 8. Takeover ends prior session and issues a new token
-    old_token = body["access_token"]
     resp = client.post(
         "/api/v1/auth/login/takeover",
         json={"resumeToken": detail["resumeToken"]},
     )
     assert resp.status_code == 200
+    assert "access_token" not in resp.json()
     assert resp.json()["replacedSession"] is True
-    new_token = resp.json()["access_token"]
+    new_token = _cookie_token(resp)
     assert new_token != old_token
 
     me_old = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old_token}"})
@@ -415,4 +432,5 @@ def test_login_captcha_scenarios():
     _pending_session_takeovers.clear()
     settings.APP_ENV = prev_env
     settings.CAPTCHA_ENABLED = prev_flag
+    captcha_mod._random_code = orig_random_code
 

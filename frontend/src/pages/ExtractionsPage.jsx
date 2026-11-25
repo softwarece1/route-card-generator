@@ -983,7 +983,7 @@ export default function ExtractionsPage() {
                       {d.filename} <small>({d.sizeLabel})</small>
                       <br />
                       <small className="text-color-secondary">
-                        {d.storageBackend?.startsWith("minio") ? "MinIO" : "Local"} · {d.objectPath}
+                        {d.storageBackend?.startsWith("minio") ? "MinIO" : "Local"}
                       </small>
                     </span>
                     <Button
