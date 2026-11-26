@@ -159,12 +159,6 @@ export default function WorkCentersPage() {
     }
   }, [selectedPlantCode, loadWorkCentres]);
 
-  // Plant/SBU mapping comes from SAP Zppfm001 (intranet only). Do not auto-fetch
-  // on plant select — that fails outside the plant network. Sync fills this table.
-  useEffect(() => {
-    setPlantSbu({ items: [], loading: false, error: "" });
-  }, [selectedPlantCode]);
-
   const filteredSbus = useMemo(() => {
     let rows = sbus;
     if (!isAdmin && isSbuHead) {

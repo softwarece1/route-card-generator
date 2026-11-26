@@ -379,10 +379,13 @@ function DrawingPreview({ url, fileType }) {
 }
 
 /**
- * Slot-level format warnings derived from the persisted session documents.
- * Single source of truth so upload, remove and reopen-from-session agree on
- * whether Generate OARC is blocked (each doc carries its stored `warnings`).
+ * Non-blocking slot notes derived from persisted session documents.
+ * Hard BEL-format rejections return HTTP 422 on upload (and set `slotErrors`);
+ * benign parser notes (e.g. SAP .xls TSV exports) are filtered so valid files
+ * don't look flagged when reopened from recents.
  */
+const BENIGN_PARSER_NOTE_RE = /was plain text\/tsv/i;
+
 function slotWarningsFromDocuments(documents = []) {
   const out = {};
   for (const role of ["drawing", "partslist", "wirelist"]) {
@@ -391,7 +394,7 @@ function slotWarningsFromDocuments(documents = []) {
         (documents || [])
           .filter((d) => d.role === role)
           .flatMap((d) => d.warnings || [])
-          .filter(Boolean),
+          .filter((w) => w && !BENIGN_PARSER_NOTE_RE.test(String(w))),
       ),
     ];
     out[role] = msgs.length ? msgs.join(" ") : null;
@@ -612,8 +615,8 @@ export default function RouteCardGenerationAlt() {
   }, [analyzing, sessionId]);
 
   const hasGa = Boolean(docs.drawing || (docs.drawings && docs.drawings.length));
-  // GA / PL format warnings block Generate OARC (server also re-validates on analyze with HTTP 422).
-  const hasFormatBlockers = Boolean(slotWarnings.drawing || slotWarnings.partslist);
+  // Hard BEL-format failures raise HTTP 422 on upload (`slotErrors`); `slotWarnings` are non-blocking.
+  const hasFormatBlockers = Boolean(slotErrors.drawing || slotErrors.partslist);
   const canAnalyze = Boolean(
     hasGa && docs.partslist && drawingId && !analyzing && !uploadingRole && !hasFormatBlockers,
   );
@@ -705,34 +708,26 @@ export default function RouteCardGenerationAlt() {
   useEffect(() => {
     let cancelled = false;
     const user = getUser();
-    const role = user?.role || "";
+    const role = (user?.role || "").toLowerCase();
+    const isAdmin = role === "admin";
     const ownSbu = String(user?.sbu || "").trim();
     const selectedSbu = (sessionSbu || "").trim();
-    // Prefer session/selected SBU; fall back to the signed-in user's SBU.
-    const sbu = selectedSbu || (role !== "admin" ? ownSbu : "") || undefined;
-    const plant =
-      (role === "admin" && (adminPlant || "").trim()) ||
-      (sessionPlant || "").trim() ||
-      undefined;
+    // Non-admin: own SBU only. Admin: session SBU/plant (or chosen adminPlant), never all WCs.
+    const sbu = isAdmin ? selectedSbu || undefined : ownSbu || undefined;
+    const plant = isAdmin
+      ? (sessionPlant || "").trim() || (adminPlant || "").trim() || undefined
+      : undefined;
 
     (async () => {
-      const [m, primary] = await Promise.all([
+      const [m, wc] = await Promise.all([
         fetchMachinesQuietly(),
-        fetchWorkCenterCatalog(sbu || undefined, {
-          plant: plant || undefined,
-        }),
+        sbu || plant
+          ? fetchWorkCenterCatalog(sbu, { plant })
+          : Promise.resolve([]),
       ]);
-      let wc = primary || [];
-      // Cross-SBU catalog may 403 for non-admins — retry with own SBU.
-      if (!wc.length && ownSbu && sbu && sbu !== ownSbu && role !== "admin") {
-        wc = (await fetchWorkCenterCatalog(ownSbu, {})) || [];
-      }
       if (!cancelled) {
         setMachines(m || []);
-        setWcCatalog(wc);
-        // #region agent log
-        fetch('http://127.0.0.1:7704/ingest/7b59aee3-84a4-4118-9921-7054afe0d8a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31b2d3'},body:JSON.stringify({sessionId:'31b2d3',runId:'run1',hypothesisId:'H2',location:'RouteCardGenerationAlt.jsx:loadCatalog',message:'Loaded wcCatalog',data:{wcLen:wc.length,sbu:sbu||null,plant:plant||null,role:role||null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
+        setWcCatalog(wc || []);
       }
     })();
     return () => {
@@ -3038,9 +3033,6 @@ export default function RouteCardGenerationAlt() {
                           ? {
                               selection: selectedRouteOps,
                               onSelectionChange: (e) => {
-                                // #region agent log
-                                fetch('http://127.0.0.1:7704/ingest/7b59aee3-84a4-4118-9921-7054afe0d8a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31b2d3'},body:JSON.stringify({sessionId:'31b2d3',runId:'post-fix',hypothesisId:'H1',location:'RouteCardGenerationAlt.jsx:DataTable:onSelectionChange',message:'DataTable selection event',data:{eventType:e.originalEvent?.type||null,targetTag:e.originalEvent?.target?.tagName||null,targetClass:String(e.originalEvent?.target?.className||''),selectionType:e.type||null,ignored:e.type==='row',prevCount:selectedRouteOps.length,nextCount:(e.value||[]).length},timestamp:Date.now()})}).catch(()=>{});
-                                // #endregion
                                 if (e.type === "row") return;
                                 setSelectedRouteOps(e.value || []);
                               },
@@ -3179,10 +3171,7 @@ export default function RouteCardGenerationAlt() {
                               : wcDropdownOptions;
                             return (
                               <div
-                                onMouseDown={(e) => {
-                                  e.stopPropagation();
-                                  window.__wcClickTs = performance.now();
-                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onMouseUp={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                               >
@@ -3199,13 +3188,11 @@ export default function RouteCardGenerationAlt() {
                                   placeholder="Select work centre"
                                   filter={options.length > 8}
                                   filterPlaceholder="Search…"
+                                  virtualScrollerOptions={
+                                    options.length > 40 ? { itemSize: 30 } : undefined
+                                  }
                                   showClear
                                   disabled={!canStructureOps}
-                                  onShow={() => {
-                                    // #region agent log
-                                    fetch('http://127.0.0.1:7704/ingest/7b59aee3-84a4-4118-9921-7054afe0d8a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31b2d3'},body:JSON.stringify({sessionId:'31b2d3',runId:'post-fix',hypothesisId:'H2',location:'RouteCardGenerationAlt.jsx:Dropdown:onShow',message:'Dropdown panel shown',data:{sinceMouseDownMs:window.__wcClickTs?Math.round(performance.now()-window.__wcClickTs):null,optionsLen:options.length},timestamp:Date.now()})}).catch(()=>{});
-                                    // #endregion
-                                  }}
                                   onChange={(e) => {
                                     const id =
                                       e.value != null && e.value !== "" && Number(e.value) > 0

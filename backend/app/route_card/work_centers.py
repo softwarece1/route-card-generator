@@ -315,7 +315,17 @@ def list_work_centers(
     if want_dept and not want_plant:
         want_plant = _plant_for_dept_name(want_dept)
 
-    rows = select(w for w in RcWorkCenter)[:]
+    if want_plant:
+        if active_only:
+            rows = select(
+                w for w in RcWorkCenter if w.is_active and w.plant == want_plant
+            )[:]
+        else:
+            rows = select(w for w in RcWorkCenter if w.plant == want_plant)[:]
+    elif active_only:
+        rows = select(w for w in RcWorkCenter if w.is_active)[:]
+    else:
+        rows = select(w for w in RcWorkCenter)[:]
     out: list[RcWorkCenter] = []
     for w in rows:
         if active_only and not w.is_active:
@@ -344,9 +354,13 @@ def list_work_centers(
 def catalog_for_dropdowns(
     user: dict, dept: str | None = None, plant: str | None = None
 ) -> dict:
-    """Slim catalog for route editor / templates — plant-scoped for the SBU."""
-    d = (dept or _dept(user) or "").strip()
-    want_plant = (plant or "").strip() or (_plant_for_dept_name(d) if d else "")
+    """Slim catalog for route editor / templates — scoped to own or selected SBU/plant."""
+    role = ((user or {}).get("role") or "").strip().lower()
+    d = (dept or "").strip() if role == "admin" else (_dept(user) or "").strip()
+    want_plant = (
+        ((plant or "").strip() if role == "admin" else "")
+        or (_plant_for_dept_name(d) if d else "")
+    )
     if want_plant:
         items = list_work_centers(
             user,
@@ -355,14 +369,17 @@ def catalog_for_dropdowns(
             active_only=True,
             include_machines=False,
         )
-    else:
+    elif d:
         items = list_work_centers(
             user,
-            dept=d or None,
+            dept=d,
             include_shared=True,
             active_only=True,
             include_machines=False,
         )
+    else:
+        # Admin with no SBU/plant selected: never dump all work centres.
+        items = []
     return {"items": items, "sbu": d, "plant": want_plant}
 
 

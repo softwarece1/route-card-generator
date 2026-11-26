@@ -114,10 +114,12 @@ export default function OarcPreviewDialog({
 
   useEffect(() => {
     if (!visible) return;
-    fetchWorkCenterCatalog()
+    const sbu = String(payload?.sbu || "").trim() || undefined;
+    const plant = String(payload?.plant || "").trim() || undefined;
+    fetchWorkCenterCatalog(sbu, { plant })
       .then((rows) => setWcCatalog(rows || []))
       .catch(() => setWcCatalog([]));
-  }, [visible]);
+  }, [visible, payload?.sbu, payload?.plant]);
 
   const wcOptions = useMemo(
     () =>
@@ -1370,7 +1372,7 @@ export default function OarcPreviewDialog({
         <p className="oarc-instr-dialog__hint">
           Operator instructions (printed on OARC).
           {canStructureOps
-            ? " Click the text to edit. Shift+Enter for a new line, Enter to save. Item names appear in preview only."
+            ? " Click the text to edit. Item names appear in preview only."
             : " Read-only for IED — only setup and per-piece time can be changed."}
         </p>
         <InstructionClickEdit
