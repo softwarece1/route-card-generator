@@ -495,8 +495,11 @@ def download_drawing_file(drawing_id: int, current_user: dict = Depends(get_curr
 @router.get("/drawings/{drawing_id}/view-crop")
 def drawing_view_crop(
     drawing_id: int,
-    kind: str = Query("table", description="table | figure | detail | named"),
-    id: str = Query(..., description="Ref id, e.g. 1, A, or INTERCONNECTION TABLE"),
+    kind: str = Query(
+        "table",
+        description="table | figure | detail | named | isometric (ISOMETRIC VIEW caption; id optional)",
+    ),
+    id: str = Query("", description="Ref id, e.g. 1, A, or INTERCONNECTION TABLE (not used for isometric)"),
     page: int | None = Query(None, description="1-based PDF page / sheet"),
     vlm: bool = Query(
         True,

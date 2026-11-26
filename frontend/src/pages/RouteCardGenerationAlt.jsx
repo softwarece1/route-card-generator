@@ -81,6 +81,7 @@ import { normalizeInstructionCase, sanitizeOperatorInstruction } from "@/lib/ins
 import {
   collectViewCropHints,
   resolveDrawingIdForViewHint,
+  shouldShowIsometricCrop,
 } from "@/lib/tableViewHints";
 import InstructionClickEdit from "@/components/InstructionClickEdit";
 import "@/pages/reference-sheets.scss";
@@ -377,6 +378,27 @@ function DrawingPreview({ url, fileType }) {
   );
 }
 
+/**
+ * Slot-level format warnings derived from the persisted session documents.
+ * Single source of truth so upload, remove and reopen-from-session agree on
+ * whether Generate OARC is blocked (each doc carries its stored `warnings`).
+ */
+function slotWarningsFromDocuments(documents = []) {
+  const out = {};
+  for (const role of ["drawing", "partslist", "wirelist"]) {
+    const msgs = [
+      ...new Set(
+        (documents || [])
+          .filter((d) => d.role === role)
+          .flatMap((d) => d.warnings || [])
+          .filter(Boolean),
+      ),
+    ];
+    out[role] = msgs.length ? msgs.join(" ") : null;
+  }
+  return out;
+}
+
 function SectionHead({ title, badge, actionLabel, onAction, primaryAction }) {
   return (
     <div className="rca-section-head">
@@ -424,10 +446,6 @@ export default function RouteCardGenerationAlt() {
     if (glowTimers.current[role]) {
       clearTimeout(glowTimers.current[role]);
     }
-  };
-
-  const setSlotWarning = (role, message) => {
-    setSlotWarnings((prev) => ({ ...prev, [role]: message || null }));
   };
 
   const clearSlotWarning = (role) => {
@@ -480,6 +498,8 @@ export default function RouteCardGenerationAlt() {
     viewRefs: [],
   });
   const [tableCrops, setTableCrops] = useState([]); // available crops for open instruction
+  // drawingId -> isometric crop (or null when GA has no usable ISOMETRIC VIEW caption)
+  const isoCropCacheRef = useRef(new Map());
   const [tableCropsLoading, setTableCropsLoading] = useState(false);
   const [tableCropView, setTableCropView] = useState(null); // { label, src, filename, page }
   const [viewPopoverCrop, setViewPopoverCrop] = useState(null);
@@ -592,7 +612,7 @@ export default function RouteCardGenerationAlt() {
   }, [analyzing, sessionId]);
 
   const hasGa = Boolean(docs.drawing || (docs.drawings && docs.drawings.length));
-  // GA / PL format pre-check failures block Generate; WL warning is informational only.
+  // GA / PL format warnings block Generate OARC (server also re-validates on analyze with HTTP 422).
   const hasFormatBlockers = Boolean(slotWarnings.drawing || slotWarnings.partslist);
   const canAnalyze = Boolean(
     hasGa && docs.partslist && drawingId && !analyzing && !uploadingRole && !hasFormatBlockers,
@@ -710,6 +730,9 @@ export default function RouteCardGenerationAlt() {
       if (!cancelled) {
         setMachines(m || []);
         setWcCatalog(wc);
+        // #region agent log
+        fetch('http://127.0.0.1:7704/ingest/7b59aee3-84a4-4118-9921-7054afe0d8a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31b2d3'},body:JSON.stringify({sessionId:'31b2d3',runId:'run1',hypothesisId:'H2',location:'RouteCardGenerationAlt.jsx:loadCatalog',message:'Loaded wcCatalog',data:{wcLen:wc.length,sbu:sbu||null,plant:plant||null,role:role||null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
       }
     })();
     return () => {
@@ -746,36 +769,44 @@ export default function RouteCardGenerationAlt() {
     [adminPlant, ensurePlantsLoaded],
   );
 
+  const wcIndex = useMemo(() => {
+    const byId = new Map();
+    const byKey = new Map();
+    for (const w of wcCatalog || []) {
+      const id = Number(w.id);
+      byId.set(id, w);
+      for (const raw of [w.code, w.name, w.sapCode]) {
+        const k = String(raw || "").trim().toLowerCase();
+        if (k && !byKey.has(k)) byKey.set(k, id);
+      }
+    }
+    return { byId, byKey };
+  }, [wcCatalog]);
+
   const wcDropdownOptions = useMemo(
     () =>
       (wcCatalog || []).map((w) => ({
-        label: w.code && w.name && w.code !== w.name ? `${w.code} · ${w.name}` : w.code || w.name,
+        label: w.code || w.name,
         value: Number(w.id),
         raw: w,
       })),
     [wcCatalog]
   );
 
-  /** Resolve dropdown value by id, else match free-text WC code/name from catalog. */
+  /** O(1) lookup by id, else match free-text WC code/name from catalog. */
   const resolveWcDropdownValue = useCallback(
     (row) => {
       if (row?.workCentreId != null && row.workCentreId !== "") {
         const id = Number(row.workCentreId);
-        if ((wcCatalog || []).some((w) => Number(w.id) === id)) return id;
+        if (wcIndex.byId.has(id)) return id;
       }
       const key = String(row?.workCentre || row?.workCentreName || "")
         .trim()
         .toLowerCase();
       if (!key) return null;
-      const match = (wcCatalog || []).find((w) => {
-        const code = String(w.code || "").trim().toLowerCase();
-        const name = String(w.name || "").trim().toLowerCase();
-        const sap = String(w.sapCode || "").trim().toLowerCase();
-        return key === code || key === name || (sap && key === sap);
-      });
-      return match ? Number(match.id) : null;
+      return wcIndex.byKey.has(key) ? wcIndex.byKey.get(key) : null;
     },
-    [wcCatalog]
+    [wcIndex]
   );
 
   const plItemLookup = useMemo(() => {
@@ -1039,6 +1070,7 @@ export default function RouteCardGenerationAlt() {
           }
         : null,
     });
+    setSlotWarnings(slotWarningsFromDocuments(documents));
     if (drawingIds?.length) setDrawingId(drawingIds[drawingIds.length - 1]);
   };
 
@@ -1098,17 +1130,7 @@ export default function RouteCardGenerationAlt() {
       setRouteOps([]);
       setRouteCardId(null);
       if (!quiet) toast.success(`${slotTitle} uploaded.`);
-      const uploadWarns = [
-        ...new Set(
-          [...(meta.warnings || []), ...(meta.document?.warnings || [])].filter(Boolean),
-        ),
-      ];
-      // Persist under the slot (do not toast) so the user can still see format issues.
-      if (uploadWarns.length) {
-        setSlotWarning(role, uploadWarns.join(" "));
-      } else {
-        clearSlotWarning(role);
-      }
+      // Slot warnings are derived from meta.documents in syncDocsFromSession (same source as reopen).
       return { status: "ok", drawingId: meta.drawingId || null, fileType };
     } catch (error) {
       const detail = error?.response?.data?.detail;
@@ -1490,7 +1512,7 @@ export default function RouteCardGenerationAlt() {
   }, [docs.drawings, docs.drawing, analysisPayload, drawingId]);
 
   const loadTableCropsForInstruction = useCallback(
-    async (draft, viewRefs = []) => {
+    async (draft, viewRefs = [], opName = "") => {
       // Only this op's text + op.viewRefs — never session-wide mindInfo.viewRefs
       // (that listed every FIGURE/TABLE/DETAIL from the whole GA on every OP).
       const hints = collectViewCropHints(draft, viewRefs || []);
@@ -1510,6 +1532,45 @@ export default function RouteCardGenerationAlt() {
           ];
           let found = null;
           for (const did of tryIds) {
+            // ISOMETRIC VIEW: OCR caption only (no VLM per op), cached per drawing
+            if (hint.kind === "isometric") {
+              const cacheKey = Number(did);
+              if (isoCropCacheRef.current.has(cacheKey)) {
+                const cached = isoCropCacheRef.current.get(cacheKey);
+                if (cached) {
+                  if (shouldShowIsometricCrop(draft, cached.calloutItems, opName)) {
+                    found = { ...cached, refId: hint.refId };
+                  }
+                  break;
+                }
+                continue;
+              }
+              try {
+                const isoCrop = await fetchDrawingViewCrop(did, {
+                  kind: "isometric",
+                  vlm: false,
+                });
+                const entry =
+                  isoCrop?.available && isoCrop.imageBase64
+                    ? {
+                        ...isoCrop,
+                        kind: "isometric",
+                        label: isoCrop.label || "ISOMETRIC VIEW",
+                        src: `data:${isoCrop.mime || "image/jpeg"};base64,${isoCrop.imageBase64}`,
+                      }
+                    : null;
+                isoCropCacheRef.current.set(cacheKey, entry);
+                if (entry) {
+                  if (shouldShowIsometricCrop(draft, entry.calloutItems, opName)) {
+                    found = { ...entry, refId: hint.refId };
+                  }
+                  break;
+                }
+              } catch {
+                /* transient error — do not cache, may succeed on next op */
+              }
+              continue;
+            }
             try {
               let crop = await fetchDrawingViewCrop(did, {
                 kind: hint.kind,
@@ -1567,7 +1628,7 @@ export default function RouteCardGenerationAlt() {
       itemsUsed: op.itemsUsed || [],
       viewRefs,
     });
-    loadTableCropsForInstruction(draft, viewRefs);
+    loadTableCropsForInstruction(draft, viewRefs, op.operation || "");
   };
 
   const saveSuggestedInstruction = async () => {
@@ -2976,7 +3037,13 @@ export default function RouteCardGenerationAlt() {
                         {...(canStructureOps
                           ? {
                               selection: selectedRouteOps,
-                              onSelectionChange: (e) => setSelectedRouteOps(e.value || []),
+                              onSelectionChange: (e) => {
+                                // #region agent log
+                                fetch('http://127.0.0.1:7704/ingest/7b59aee3-84a4-4118-9921-7054afe0d8a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31b2d3'},body:JSON.stringify({sessionId:'31b2d3',runId:'post-fix',hypothesisId:'H1',location:'RouteCardGenerationAlt.jsx:DataTable:onSelectionChange',message:'DataTable selection event',data:{eventType:e.originalEvent?.type||null,targetTag:e.originalEvent?.target?.tagName||null,targetClass:String(e.originalEvent?.target?.className||''),selectionType:e.type||null,ignored:e.type==='row',prevCount:selectedRouteOps.length,nextCount:(e.value||[]).length},timestamp:Date.now()})}).catch(()=>{});
+                                // #endregion
+                                if (e.type === "row") return;
+                                setSelectedRouteOps(e.value || []);
+                              },
                               selectionMode: "checkbox",
                             }
                           : {})}
@@ -3057,17 +3124,14 @@ export default function RouteCardGenerationAlt() {
                             const orphanLabel = String(
                               row.workCentre || row.workCentreName || ""
                             ).trim();
-                            const options =
+                            const orphanOption =
                               selectedId != null || !orphanLabel
-                                ? wcDropdownOptions
-                                : [
-                                    {
-                                      label: `${orphanLabel} (not in SBU catalog)`,
-                                      value: -1,
-                                      raw: null,
-                                    },
-                                    ...wcDropdownOptions,
-                                  ];
+                                ? null
+                                : {
+                                    label: `${orphanLabel} (not in SBU catalog)`,
+                                    value: -1,
+                                    raw: null,
+                                  };
                             const value =
                               selectedId != null
                                 ? selectedId
@@ -3110,39 +3174,54 @@ export default function RouteCardGenerationAlt() {
                                 />
                               );
                             }
+                            const options = orphanOption
+                              ? [orphanOption, ...wcDropdownOptions]
+                              : wcDropdownOptions;
                             return (
-                              <Dropdown
-                                value={value}
-                                options={options}
-                                optionLabel="label"
-                                optionValue="value"
-                                className="w-full rca-edit-dropdown"
-                                panelClassName="rca-edit-dropdown-panel"
-                                appendTo={
-                                  typeof document !== "undefined" ? document.body : null
-                                }
-                                placeholder="Select work centre"
-                                filter={options.length > 8}
-                                filterPlaceholder="Search…"
-                                showClear
-                                disabled={!canStructureOps}
-                                onChange={(e) => {
-                                  const id =
-                                    e.value != null && e.value !== "" && Number(e.value) > 0
-                                      ? Number(e.value)
-                                      : null;
-                                  const wc = (wcCatalog || []).find(
-                                    (w) => Number(w.id) === id
-                                  );
-                                  updateRouteOp(row.id, {
-                                    workCentreId: id,
-                                    workCentre: wc ? wc.code || wc.name : "",
-                                    workCentreName: wc?.name || "",
-                                    type: wc?.name || wc?.code || row.type || "",
-                                    linkStatus: "manual_override",
-                                  });
+                              <div
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  window.__wcClickTs = performance.now();
                                 }}
-                              />
+                                onMouseUp={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Dropdown
+                                  value={value}
+                                  options={options}
+                                  optionLabel="label"
+                                  optionValue="value"
+                                  className="w-full rca-edit-dropdown"
+                                  panelClassName="rca-edit-dropdown-panel"
+                                  appendTo={
+                                    typeof document !== "undefined" ? document.body : null
+                                  }
+                                  placeholder="Select work centre"
+                                  filter={options.length > 8}
+                                  filterPlaceholder="Search…"
+                                  showClear
+                                  disabled={!canStructureOps}
+                                  onShow={() => {
+                                    // #region agent log
+                                    fetch('http://127.0.0.1:7704/ingest/7b59aee3-84a4-4118-9921-7054afe0d8a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31b2d3'},body:JSON.stringify({sessionId:'31b2d3',runId:'post-fix',hypothesisId:'H2',location:'RouteCardGenerationAlt.jsx:Dropdown:onShow',message:'Dropdown panel shown',data:{sinceMouseDownMs:window.__wcClickTs?Math.round(performance.now()-window.__wcClickTs):null,optionsLen:options.length},timestamp:Date.now()})}).catch(()=>{});
+                                    // #endregion
+                                  }}
+                                  onChange={(e) => {
+                                    const id =
+                                      e.value != null && e.value !== "" && Number(e.value) > 0
+                                        ? Number(e.value)
+                                        : null;
+                                    const wc = id != null ? wcIndex.byId.get(id) : null;
+                                    updateRouteOp(row.id, {
+                                      workCentreId: id,
+                                      workCentre: wc ? wc.code || wc.name : "",
+                                      workCentreName: wc?.name || "",
+                                      type: wc?.name || wc?.code || row.type || "",
+                                      linkStatus: "manual_override",
+                                    });
+                                  }}
+                                />
+                              </div>
                             );
                           }}
                         />
@@ -3814,9 +3893,42 @@ export default function RouteCardGenerationAlt() {
           </div>
         }
       >
-        <p className="oarc-instr-dialog__hint">
-          Operator instructions. Click the text to edit. Item names appear in preview only.
-        </p>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.5rem",
+            marginBottom: "0.35rem",
+          }}
+        >
+          <p className="oarc-instr-dialog__hint" style={{ margin: 0 }}>
+            Operator instructions. Click the text to edit. Item names appear in preview only.
+          </p>
+          {tableCrops
+            .filter((c) => c.kind === "isometric")
+            .map((crop) => (
+              <Button
+                key={`iso-${crop.page || 0}-${crop.drawingId || 0}`}
+                type="button"
+                size="small"
+                rounded
+                text
+                icon="pi pi-info-circle"
+                aria-label={crop.label || "ISOMETRIC VIEW"}
+                title={`View ${crop.label || "ISOMETRIC VIEW"}`}
+                onClick={() =>
+                  setTableCropView({
+                    label: crop.label,
+                    src: crop.src,
+                    filename: crop.filename,
+                    page: crop.page,
+                    confidence: crop.confidence,
+                  })
+                }
+              />
+            ))}
+        </div>
         <InstructionClickEdit
           value={instrDialog.draft}
           onChange={(e) => setInstrDialog((s) => ({ ...s, draft: e.target.value }))}

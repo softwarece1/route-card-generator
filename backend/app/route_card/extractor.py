@@ -54,7 +54,16 @@ THRU_HOLE = re.compile(
 )
 ECO_ROW = re.compile(
     r"(?:REFER\s+|REF\.?\s+)?(?:ECR|ECO|CN\.?\s*NO\.?)\s*"
-    r"(\d{2})\s+(\d{5,8})\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})",
+    r"(\d{2})\s+(\d{5,8})\s+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
+    re.I,
+)
+# BEL title-block revision table row: "03  5933012  21.09.2026  REFER ECR"
+REV_TABLE_ECO_ROW = re.compile(
+    r"(?:^|\n)\s*(\d{2})\s+(\d{5,8})\s+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})(?:\s+([^\n]{0,40}))?",
+    re.I,
+)
+REV_TABLE_ORIG_ROW = re.compile(
+    r"(?:^|\n)\s*(\d{2})\s*[-–—]?\s+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+ORIG(?:INAL)?\b",
     re.I,
 )
 # NOTE / NOTES / ASSEMBLY INSTRUCTIONS / CTQ POINTS / INSTRUCTIONS (+ same-line indexed variants).
@@ -71,6 +80,8 @@ NOTE_LABEL = (
     rf"ASSY\.?\s*NOTES?(?:{_NOTE_SAME_LINE_IDX})?|"
     rf"CRITICAL\s+TO\s+QUALITY\s+POINTS?(?:{_NOTE_SAME_LINE_IDX})?|"
     rf"CTQ\s+POINTS?(?:{_NOTE_SAME_LINE_IDX})?|"
+    rf"QUALITY\s+(?:POINTS?|CHECKS?|REQUIREMENTS?|INSPECTION)(?:{_NOTE_SAME_LINE_IDX})?|"
+    rf"INSPECTION\s+(?:POINTS?|CHECKS?|REQUIREMENTS?)(?:{_NOTE_SAME_LINE_IDX})?|"
     rf"INSTRUCTIONS?(?:{_NOTE_SAME_LINE_IDX})?|"
     rf"NOTES?(?:{_NOTE_SAME_LINE_IDX})?|"
     rf"REMARKS?(?:{_NOTE_SAME_LINE_IDX})?"
@@ -96,9 +107,14 @@ TITLE_BLOCK_CUT = re.compile(
     r"DRAWING\s+UPDATED|NEXT\s+ASSY|SHEET\s*No\.?)",
     re.I,
 )
+# Standalone step number on its own line: "1.", "2)", "(3)"
+LEADING_STEP_ONLY = re.compile(
+    r"^(?:STEP\s*)?(?:\(([1-9]|1[0-9]|2[0-5])\)|([1-9]|1[0-9]|2[0-5])[.,)\-:])$",
+    re.I,
+)
 # 1. / 1) / (1) / 1, / Step 1:
 LEADING_STEP = re.compile(
-    r"^(?:STEP\s*)?(?:\(([1-9]|1[0-9]|2[0-5])\)|([1-9]|1[0-9]|2[0-5])[.,)\-:])(?:\s+|$)(.+)$",
+    r"^(?:STEP\s*)?(?:\(([1-9]|1[0-9]|2[0-5])\)|([1-9]|1[0-9]|2[0-5])[.,)\-:])(?:\s*|$)(.+)$",
     re.I,
 )
 # OCR often drops the digit: ". DRILL 3mm HOLES..."
@@ -139,15 +155,23 @@ TITLE_LABEL = re.compile(
     re.I,
 )
 VERSION_LABEL = re.compile(
-    r"\b(?:VER(?:SION)?|ISSUE|REV(?:ISION)?)\b[^\n]{0,12}?(\d{2})\b",
+    r"\b(?:VER(?:SION)?|ISSUE|REV(?:ISION)?)\.?(?:[ \t]*[:.]?[ \t]*|[ \t]*\n[ \t]*)(\d{2})\b",
+    re.I,
+)
+NO_OF_SHEETS_RE = re.compile(
+    r"\bNO\.?\s*OF\s*SH(?:EETS?)?\.?(?:[ \t]*[:.]?[ \t]*|[ \t]*\n[ \t]*)0*(\d{1,2})\b",
     re.I,
 )
 ORIGINAL_DATE = re.compile(
-    r"\bORIG(?:INAL)?\b\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})",
+    r"\bORIG(?:INAL)?\b\s+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
     re.I,
 )
 DIMENSIONS_MM = re.compile(
     r"(?:ALL\s+DIMENSIONS\s+ARE\s+IN\s+MM|DIMS?\s+IN\s+MM|DIMENSIONS?\s*:\s*MM)\b",
+    re.I,
+)
+DIMENSIONS_MM_FULL = re.compile(
+    r"ALL\s+DIMENSIONS\s+ARE\s+IN\s+MM(?:\s+UNLESS\s+OTHERWISE\s+SPECIFIED)?",
     re.I,
 )
 
@@ -1046,7 +1070,9 @@ def _normalize_note_label(raw: str) -> str:
 
 
 _CTQ_HEADER_RE = re.compile(
-    r"CTQ\s+POINTS?|CRITICAL\s+TO\s+QUALITY\s+POINTS?",
+    r"CTQ(?:\s+POINTS?)?|CRITICAL\s+TO\s+QUALITY(?:\s+POINTS?)?|"
+    r"QUALITY\s+(?:POINTS?|CHECKS?|REQUIREMENTS?|INSPECTION)|"
+    r"INSPECTION\s+(?:POINTS?|CHECKS?|REQUIREMENTS?)",
     re.I,
 )
 
@@ -1103,8 +1129,15 @@ def _parse_notes_block(block: str, sheet: int) -> list[dict]:
             break
         if NOTE_HEADER_ONLY.match(line):
             continue
-        # Strip accidental leading "l;" from bad NOTE Il splits
-        line = re.sub(r"^[Il1|;:\s]+(?=[A-Z])", "", line).strip()
+        # Check standalone step number on its own line ("1.", "2)", "(3)") before stripping anything
+        only_num = LEADING_STEP_ONLY.match(line)
+        if only_num:
+            flush()
+            step_no = int(only_num.group(1) or only_num.group(2))
+            current = {"stepNo": step_no, "text": ""}
+            continue
+        # Strip accidental leading "l;" from bad NOTE Il splits (do NOT strip digit "1")
+        line = re.sub(r"^[Il|;:\s]+(?=[A-Z])", "", line).strip()
         lead = LEADING_STEP.match(line)
         dot = LEADING_DOT_STEP.match(line) if not lead else None
         trail = TRAILING_STEP.match(line) if not lead and not dot else None
@@ -1112,9 +1145,7 @@ def _parse_notes_block(block: str, sheet: int) -> list[dict]:
         if lead:
             flush()
             step_no = int(lead.group(1) or lead.group(2))
-            current = {"stepNo": step_no, "text": lead.group(3)}
-            if len((current["text"] or "").strip()) < 4:
-                current = None
+            current = {"stepNo": step_no, "text": lead.group(3).strip()}
             continue
         if dot:
             flush()
@@ -1126,18 +1157,25 @@ def _parse_notes_block(block: str, sheet: int) -> list[dict]:
             prefix = trail.group(1)
             glued_item = bool(re.search(r"(?:ITEMS?|ITMS?)\s*(?:NO\.?)?\s*$", prefix, re.I))
             if not glued_item and 1 <= step_n <= 25 and len(prefix) > 12:
-                flush()
-                current = {"stepNo": step_n, "text": prefix}
+                # "Point 1 text 2." -> prefix belongs to current step, "2." starts NEXT step
+                if current:
+                    current["text"] = (current["text"] + " " + prefix).strip()
+                    flush()
+                else:
+                    auto_n = max(auto_n, len(steps)) + 1
+                    current = {"stepNo": auto_n, "text": prefix}
+                    flush()
+                current = {"stepNo": step_n, "text": ""}
                 continue
         if dec and current:
             # 4.1 / 5.2 sub-notes belong to the parent numbered note
-            current["text"] += " " + line
+            current["text"] = (current["text"] + " " + line).strip()
             continue
         if SUBSTEP.match(line) and current:
-            current["text"] += " " + line
+            current["text"] = (current["text"] + " " + line).strip()
             continue
         if current:
-            current["text"] += " " + line
+            current["text"] = (current["text"] + " " + line).strip()
         elif re.search(r"[A-Z]{4,}", line) and not TITLE_STOP.match(line):
             auto_n = max(auto_n, len(steps)) + 1
             current = {"stepNo": auto_n, "text": line}
@@ -1164,13 +1202,16 @@ def _unglue_step_numbers(block: str) -> str:
         before = block[max(0, start - 20) : start].upper()
         if re.search(
             r"(?:NO\.?\s*|ITEMS?\s*|ITMS?\s*|SHEET\s*|FIGURE\s*|FIG\.?\s*|"
-            r"TABLE?\s*|TABEL\s*|DETAIL\s*|REV\.?\s*|VER\.?\s*|ISSUE\s*)$",
+            r"TABLE?\s*|TABEL\s*|DETAIL\s*|REV\.?\s*|VER\.?\s*|ISSUE\s*|"
+            r"NOTE\s*|PS\s*|MM\s*|\d\.\s*)$",
             before,
         ):
             return match.group(0)
         return f"\n{match.group(1)}. "
 
-    return re.sub(r"(?<!\d)(\d{1,2})\.\s+(?=[A-Z])", _split_numbered, block)
+    # Split inline "2. Text", "2) Text", and "2.Text" (uppercase start)
+    block = re.sub(r"(?<![\d.])(\d{1,2})[.)]\s*(?=[A-Z])", _split_numbered, block)
+    return block
 
 
 def extract_notes(pages: list[str]) -> list[dict]:
@@ -1296,6 +1337,17 @@ def extract_revisions(text: str) -> list[dict]:
     rows = []
     for ver, eco, date in ECO_ROW.findall(text):
         rows.append({"version": ver, "ecoNo": eco, "relDate": date, "change": "REFER ECR"})
+    for m in REV_TABLE_ECO_ROW.finditer(text):
+        ver, eco, date = m.group(1), m.group(2), m.group(3)
+        tail = _norm_spaces(m.group(4) or "")
+        change = "REFER ECR"
+        if re.search(r"ORIG(?:INAL)?", tail, re.I):
+            change = "ORIGINAL"
+        elif re.search(r"REFER\s+ECR|ECO|ECR", tail, re.I):
+            change = "REFER ECR"
+        rows.append({"version": ver, "ecoNo": eco, "relDate": date, "change": change})
+    for m in REV_TABLE_ORIG_ROW.finditer(text):
+        rows.append({"version": m.group(1), "ecoNo": "", "relDate": m.group(2), "change": "ORIGINAL"})
     orig = ORIGINAL_DATE.search(text)
     if orig:
         rows.insert(0, {"version": "00", "ecoNo": "", "relDate": orig.group(1), "change": "ORIGINAL"})
@@ -1306,6 +1358,7 @@ def extract_revisions(text: str) -> list[dict]:
         if key not in seen:
             seen.add(key)
             out.append(r)
+    out.sort(key=lambda r: (int(r["version"]) if str(r.get("version") or "").isdigit() else -1, r.get("relDate") or ""))
     return out
 
 
@@ -1360,6 +1413,8 @@ def extract_title_block(text: str, filename: str, page_count: int) -> dict:
         tot = next((g[i] for i in (1, 3, 5) if g[i]), None)
         if cur and tot:
             sheets = f"{page_count} of {tot}"
+    elif nos := NO_OF_SHEETS_RE.search(text):
+        sheets = f"{page_count} of {nos.group(1)}"
     size = ""
     for s in ("A0", "A1", "A2", "A3", "A4"):
         if re.search(rf"\b{s}\b", text):
@@ -1371,12 +1426,18 @@ def extract_title_block(text: str, filename: str, page_count: int) -> dict:
     elif m := re.search(r"\b(\d+\s*:\s*\d+)\b", text):
         scale = re.sub(r"\s+", "", m.group(1))
     version = ""
-    vm = VERSION_LABEL.search(text)
-    if vm:
-        version = vm.group(1)
-    ecos = ECO_ROW.findall(text)
-    if ecos:
-        version = ecos[-1][0]
+    ver_candidates: list[str] = []
+    for vm in VERSION_LABEL.finditer(text):
+        ver_candidates.append(vm.group(1))
+    for r in extract_revisions(text):
+        if r.get("version"):
+            ver_candidates.append(str(r["version"]))
+    if ver_candidates:
+        # Pick the highest numeric version (e.g. "03" over "00")
+        version = max(
+            ver_candidates,
+            key=lambda v: int(v) if str(v).isdigit() else -1,
+        )
 
     part_name = ""
     if m := re.search(r"\b([A-Z]{3,}\s*\(MFR\))", text):
@@ -1432,6 +1493,10 @@ def extract_title_block(text: str, filename: str, page_count: int) -> dict:
         overall = _norm_spaces(m.group(1))
     elif m := re.search(r"\b(\d+(?:\.\d+)?\s*[xX×]\s*\d+(?:\.\d+)?(?:\s*[xX×]\s*\d+(?:\.\d+)?)?\s*mm)\b", text, re.I):
         overall = _norm_spaces(m.group(1))
+    elif m := DIMENSIONS_MM_FULL.search(text):
+        overall = re.sub(r"\s+", " ", m.group(0)).strip().capitalize()
+    elif DIMENSIONS_MM.search(text):
+        overall = "All dimensions are in mm"
 
     return {
         "drawingNumber": drawing_no,

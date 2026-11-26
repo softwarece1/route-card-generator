@@ -293,9 +293,17 @@
   font-size: 0.925rem;
   font-weight: 600;
   box-shadow: none;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
 
   &:enabled:hover {
     background: var(--pmf-accent-strong);
+  }
+
+  &:enabled:focus,
+  &:enabled:focus-visible {
+    background: var(--pmf-accent-strong);
+    box-shadow: 0 0 0 3px var(--rc-auth-focus);
+    outline: none;
   }
 
   &:enabled:active {

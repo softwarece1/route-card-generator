@@ -26,6 +26,56 @@ const DETAIL_PLAIN = /\bDETAIL\s*(?:NO\.?\s*)?([0-9]{1,2}|[A-Z])\b/gi;
 const NAMED_BLOCK =
   /\b((?:INTERCONNECTION|INTERCONNECT(?:ION)?)\s+(?:TABLE|LIST(?:ING)?|DETAILS?)|TOOLING\s+MATRIX)\b/gi;
 
+/** Caption printed under the isometric view on GA sheets. */
+export const ISO_CAPTION = "ISOMETRIC VIEW";
+/** Op text that may need the isometric reference (filtered further by calloutItems). */
+const ISO_CUE_RE = /\bITEMS?\s*(?:NO\.?|NOS\.?|#)?\s*\d|\bAS\s+SHOWN\b|\bISOMETRIC\b/i;
+
+const ISO_EXPLICIT_RE = /\bISOMETRIC\b/i;
+const ISO_AS_SHOWN_RE = /\bAS\s+SHOWN\b/i;
+const ISO_NON_VISUAL_OP_RE =
+  /\b(kit|kitting|pack|packing|dispatch|store|stores|issue|incoming|final\s+inspection|qa|qc|test|testing|continuity|hi-?pot|burn-?in)\b/i;
+const ITEM_MENTION_GROUP_RE =
+  /\bITEMS?\s*(?:NO\.?|NOS\.?|#)?\s*(\d{1,2}(?:\s*(?:,|&|\/|\band\b)\s*\d{1,2})*)/gi;
+
+/** Extract item numbers explicitly referenced in an operation instruction (from notes). */
+export function extractReferencedItemNumbers(text) {
+  const out = new Set();
+  const raw = String(text || "");
+  ITEM_MENTION_GROUP_RE.lastIndex = 0;
+  let m;
+  while ((m = ITEM_MENTION_GROUP_RE.exec(raw))) {
+    const nums = m[1].match(/\d{1,2}/g) || [];
+    for (const n of nums) {
+      const val = Number(n);
+      if (val > 0 && val < 100) out.add(val);
+    }
+  }
+  return out;
+}
+
+/**
+ * Decide whether the GA ISOMETRIC VIEW crop is actually relevant for this operation.
+ * - Explicit "ISOMETRIC" mention -> always show.
+ * - Kitting / packing / testing / inspection ops -> skip.
+ * - When the crop reports calloutItems (balloon numbers visible in the isometric view),
+ *   show ONLY if the instruction references at least one of those items.
+ * - When calloutItems is empty (e.g. non-text balloons), require "AS SHOWN".
+ */
+export function shouldShowIsometricCrop(text, calloutItems = [], opName = "") {
+  const raw = String(text || "");
+  if (ISO_EXPLICIT_RE.test(raw)) return true;
+  if (opName && ISO_NON_VISUAL_OP_RE.test(String(opName))) return false;
+  const callouts = Array.isArray(calloutItems)
+    ? calloutItems.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)
+    : [];
+  if (callouts.length > 0) {
+    const mentioned = extractReferencedItemNumbers(raw);
+    return callouts.some((n) => mentioned.has(n));
+  }
+  return ISO_AS_SHOWN_RE.test(raw);
+}
+
 const SHEET_NEAR = /sheet\s*(?:no\.?\s*)?([0-9]{1,2})\b/i;
 const FILE_NEAR = /file\s+['"]([^'"]+)['"]/i;
 
@@ -53,15 +103,18 @@ export function collectViewCropHints(text, viewRefs = []) {
     if (k === "named") id = namedKey(id);
     else id = id.toUpperCase();
     if (!id) return;
+    if (k === "isometric") id = ISO_CAPTION;
     const key = `${k}:${id}`;
     const label =
       k === "named"
         ? id
-        : k === "figure"
-          ? `FIGURE ${id}`
-          : k === "detail"
-            ? `DETAIL ${id}`
-            : `TABLE ${id}`;
+        : k === "isometric"
+          ? ISO_CAPTION
+          : k === "figure"
+            ? `FIGURE ${id}`
+            : k === "detail"
+              ? `DETAIL ${id}`
+              : `TABLE ${id}`;
     const prev = out.get(key) || {
       kind: k,
       refId: id,
@@ -130,6 +183,9 @@ export function collectViewCropHints(text, viewRefs = []) {
       filename: fileM ? fileM[1] : "",
     });
   }
+
+  // ISOMETRIC VIEW reference: item callouts, "as shown", or explicit isometric wording.
+  if (ISO_CUE_RE.test(raw)) add("isometric", ISO_CAPTION, {});
 
   return [...out.values()];
 }

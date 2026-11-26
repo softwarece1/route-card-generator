@@ -91,6 +91,75 @@ def test_generate_route_ctq_goes_to_inspection_not_ops():
     assert ctq_insp
 
 
+def test_ctq_standalone_numbers_and_trailing_numbers_not_merged():
+    pages = [
+        """
+        CTQ POINTS:
+        1.
+        Verify bonding continuity across chassis.
+        2.
+        Check leak test at 1.5 bar for 5 minutes.
+        3.
+        Ensure no burrs or scratches on mating face.
+        """
+    ]
+    notes = extract_notes(pages)
+    _, ctq = partition_notes_for_route(notes)
+    assert len(ctq) == 3, ctq
+    assert "bonding continuity" in ctq[0]["text"].lower()
+    assert "leak test" not in ctq[0]["text"].lower()
+    assert "leak test" in ctq[1]["text"].lower()
+    assert "burrs" not in ctq[1]["text"].lower()
+    assert "burrs" in ctq[2]["text"].lower()
+
+
+def test_ctq_merged_inline_points_split_into_separate_inspection_rows():
+    from app.route_card.route_generator import ctq_notes_to_inspection
+
+    rows = ctq_notes_to_inspection(
+        [
+            {
+                "stepNo": 1,
+                "text": "1. Verify bonding continuity. 2. Check leak test at 1.5 bar. 3. Inspect label alignment.",
+                "noteKind": "ctq",
+            }
+        ]
+    )
+    assert len(rows) == 3, rows
+    assert "bonding continuity" in rows[0]["dimension"].lower()
+    assert "leak test" in rows[1]["dimension"].lower()
+    assert "label alignment" in rows[2]["dimension"].lower()
+
+
+def test_regular_note_quality_check_appears_in_quality_tab():
+    extraction = {
+        "notes": [
+            {
+                "stepNo": 1,
+                "text": "Mount connector Item 4 on panel.",
+                "items": [4],
+                "noteKind": "note",
+                "noteSection": "NOTES",
+            },
+            {
+                "stepNo": 2,
+                "text": "Check continuity between J1 pin 1 and chassis ground.",
+                "items": [],
+                "noteKind": "note",
+                "noteSection": "NOTES",
+            },
+        ],
+        "bom_items": [{"itemNo": 4, "qty": 1, "description": "CONNECTOR"}],
+        "title_block": {},
+        "torque_specs": [],
+        "dimensions": [],
+        "references": [],
+    }
+    route = generate_route(extraction)
+    dims = [r.get("dimension") or "" for r in route["inspection"]]
+    assert any("continuity" in d.lower() for d in dims), dims
+
+
 if __name__ == "__main__":
     test_extract_notes_tags_ctq_header()
     test_generate_route_ctq_goes_to_inspection_not_ops()

@@ -1684,7 +1684,6 @@ def sync_work_centers_from_sap(
     plant = (plant_code or "").strip()
     if not plant:
         raise HTTPException(400, "Plant code is required")
-    mapping = sap.fetch_plant_sbu_mapping(plant)
     data = sap.fetch_sap_data(plant, "WORKCENTER")
     seen: set[str] = set()
     created_count = 0
@@ -1720,13 +1719,11 @@ def sync_work_centers_from_sap(
 
     return {
         "message": (
-            f"Fetched {mapping['count']} Plant/SBU mapping(s). "
-            f"Synced {created_count + existing_count} work centre(s); {created_count} newly added."
+            f"Synced {created_count + existing_count} work centre(s) for plant {plant}; "
+            f"{created_count} newly added."
         ),
         "status": "S" if not failures else "P",
         "criteria": {"plant_code": plant, "sbu": (dept or "").strip()},
-        "plant_sbu": mapping["items"],
-        "plant_sbu_count": mapping["count"],
         "failed_work_centers": failures,
         "failed_work_centers_count": len(failures),
         "count": len(seen),

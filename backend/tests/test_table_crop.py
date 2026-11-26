@@ -115,3 +115,50 @@ def test_named_interconnection_crop():
     )
     assert out["available"] is True
     assert "INTERCONNECTION" in out["label"]
+
+
+def _pdf_isometric_view(*, with_caption: bool = True) -> bytes:
+    """GA-like page: a boxed isometric view with 'ISOMETRIC VIEW' caption underneath."""
+    doc = fitz.open()
+    page = doc.new_page(width=600, height=800)
+    # Drawn view body (rectangle + balloon-ish marks) ABOVE the caption
+    page.draw_rect(fitz.Rect(90, 300, 300, 480), color=(0, 0, 0), width=1)
+    page.draw_circle((140, 340), 10, color=(0, 0, 0), width=1)
+    page.draw_circle((220, 420), 10, color=(0, 0, 0), width=1)
+    page.insert_text((136, 344), "1", fontsize=9)
+    page.insert_text((216, 424), "2", fontsize=9)
+    if with_caption:
+        page.insert_text((96, 520), "ISOMETRIC VIEW", fontsize=10)
+    page.insert_text((72, 700), "SCALE 1:1", fontsize=10)
+    buf = io.BytesIO()
+    doc.save(buf)
+    doc.close()
+    return buf.getvalue()
+
+
+def test_isometric_view_crop_available_and_clips_above_caption():
+    from app.route_card.drawing_mind.table_crop import render_view_crop
+
+    data = _pdf_isometric_view()
+    out = render_view_crop(data, kind="isometric", ref_id="", page_no=1, allow_vlm=False)
+    assert out["available"] is True, out
+    assert out["kind"] == "isometric"
+    assert out["label"] == "ISOMETRIC VIEW"
+    assert out["page"] == 1
+    assert out["confidence"] >= 0.82
+    assert out["imageBase64"]
+    assert out["calloutItems"] == [1, 2]
+    # Clip must sit ABOVE the caption (caption baseline ~y=520) and include the view box (y~300..480)
+    x0, y0, x1, y1 = out["clip"]
+    assert y1 >= 480
+    assert y0 <= 330
+    assert y1 < 600
+
+
+def test_isometric_view_missing_caption_not_available():
+    from app.route_card.drawing_mind.table_crop import render_view_crop
+
+    data = _pdf_isometric_view(with_caption=False)
+    out = render_view_crop(data, kind="isometric", ref_id="", page_no=1, allow_vlm=False)
+    assert out["available"] is False
+    assert out["label"] == "ISOMETRIC VIEW"

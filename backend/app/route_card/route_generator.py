@@ -41,26 +41,137 @@ def _clean_ctq_dimension(text: str) -> str:
     return t.strip(" :;,-•\u2022\u25CF*")[:240]
 
 
+_CTQ_INLINE_SPLIT_RE = re.compile(
+    r"(?:^|\s+)(?:\(([1-9]|1[0-9]|2[0-5])\)|([1-9]|1[0-9]|2[0-5])[.)])\s+(?=[A-Za-z])"
+)
+_CTQ_ITEM_BEFORE_RE = re.compile(
+    r"(?:NO\.?|ITEMS?|ITMS?|SHEET|FIGURE|FIG\.?|TABLE|DETAIL|REV\.?|VER\.?|PS|NOTE)\s*$",
+    re.I,
+)
+
+
+def _split_numbered_ctq_points(text: str) -> list[str]:
+    """Split a merged CTQ string like '1. Check A. 2. Check B.' into separate points."""
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    cuts: list[tuple[int, int]] = []
+    for m in _CTQ_INLINE_SPLIT_RE.finditer(raw):
+        before = raw[max(0, m.start() - 20) : m.start()]
+        if _CTQ_ITEM_BEFORE_RE.search(before):
+            continue
+        cuts.append((m.start(), m.end()))
+    if len(cuts) <= 1:
+        # Strip a single leading "1. " / "1) " / "(1) " if present
+        cleaned = re.sub(r"^(?:\(\d{1,2}\)|\d{1,2}[.)])\s+", "", raw).strip()
+        return [cleaned] if cleaned else []
+    parts: list[str] = []
+    # Keep any leading text before the first numbered marker if substantial
+    if cuts[0][0] > 6:
+        head = raw[: cuts[0][0]].strip()
+        if head:
+            parts.append(head)
+    for i, (_s, end) in enumerate(cuts):
+        nxt = cuts[i + 1][0] if i + 1 < len(cuts) else len(raw)
+        seg = raw[end:nxt].strip()
+        if seg:
+            parts.append(seg)
+    return parts
+
+
 def ctq_notes_to_inspection(ctq_notes: list, *, start_idx: int = 1) -> list[dict]:
     """Map CTQ POINTS lines to Quality & Inspection characteristics."""
     rows: list[dict] = []
+    seen_norm: set[str] = set()
     idx = start_idx
     for n in ctq_notes or []:
         if not isinstance(n, dict):
             continue
-        text = _clean_ctq_dimension(n.get("text") or "")
-        if len(text) < 6:
+        raw_text = n.get("text") or ""
+        for segment in _split_numbered_ctq_points(raw_text):
+            text = _clean_ctq_dimension(segment)
+            if len(text) < 6:
+                continue
+            key = re.sub(r"\W+", "", text.lower())
+            if not key or key in seen_norm:
+                continue
+            seen_norm.add(key)
+            rows.append(
+                {
+                    "id": f"ic-ctq-{idx}",
+                    "dimension": text,
+                    "nominal": "—",
+                    "tolerance": "—",
+                    "method": "Visual / as specified",
+                    "frequency": "100%",
+                    "criticality": "Critical",
+                    "source": "ctq",
+                }
+            )
+            idx += 1
+    return rows
+
+
+_QUALITY_CHECK_RE = re.compile(
+    r"\b(?:CHECK|VERIFY|INSPECT|INSPECTION|ENSURE|CONFIRM|TEST|TESTING|"
+    r"CONTINUITY|INSULATION|HI-?POT|LEAK\s+TEST|PRESSURE\s+TEST|"
+    r"VISUAL\s+(?:CHECK|INSPECTION)|WARPAGE|FLATNESS|BURR(?:S)?|"
+    r"RESISTANCE|DIELECTRIC|ACCEPTANCE\s+TEST|QUALITY\s+CHECK|"
+    r"NO\s+(?:SHORT|GAP|DAMAGE|CRACK|SCRATCH|BURR|DEFECT)|"
+    r"FREE\s+FROM|MUST\s+BE\s+(?:CHECKED|VERIFIED|INSPECTED|TESTED))\b",
+    re.I,
+)
+
+
+def _quality_method_for(text: str) -> str:
+    t = text.upper()
+    if any(k in t for k in ("CONTINUITY", "RESISTANCE", "INSULATION", "HI-POT", "HIPOT", "DIELECTRIC")):
+        return "Electrical test / multimeter"
+    if any(k in t for k in ("LEAK", "PRESSURE", "VACUUM")):
+        return "Leak / pressure test"
+    if any(k in t for k in ("TORQUE",)):
+        return "Calibrated torque wrench"
+    if any(k in t for k in ("WEIGHT", "MASS")):
+        return "Calibrated weighing scale"
+    if any(k in t for k in ("DIMENSION", "GAP", "CLEARANCE", "FLATNESS", "WARPAGE", "MM", "TOLERANCE")):
+        return "Vernier / gauge / visual"
+    return "Visual / as specified"
+
+
+def _quality_checks_from_notes(notes: list, *, existing_keys: set[str], start_idx: int) -> list[dict]:
+    """Pull quality/inspection/test requirements mentioned in regular GA notes into Quality & Inspection."""
+    rows: list[dict] = []
+    idx = start_idx
+    for n in notes or []:
+        if not isinstance(n, dict) or is_ctq_note(n):
             continue
+        raw = str(n.get("text") or "").strip()
+        if not raw or not _QUALITY_CHECK_RE.search(raw):
+            continue
+        text = _clean_ctq_dimension(raw)
+        if len(text) < 8:
+            continue
+        key = re.sub(r"\W+", "", text.lower())
+        if not key or key in existing_keys:
+            continue
+        existing_keys.add(key)
+        is_crit = bool(
+            re.search(
+                r"\b(CONTINUITY|INSULATION|HI-?POT|LEAK|PRESSURE|DIELECTRIC|SAFETY|CRITICAL|NO\s+SHORT)\b",
+                text,
+                re.I,
+            )
+        )
         rows.append(
             {
-                "id": f"ic-ctq-{idx}",
+                "id": f"ic-qa-{idx}",
                 "dimension": text,
                 "nominal": "—",
                 "tolerance": "—",
-                "method": "Visual / as specified",
+                "method": _quality_method_for(text),
                 "frequency": "100%",
-                "criticality": "Critical",
-                "source": "ctq",
+                "criticality": "Critical" if is_crit else "Important",
+                "source": "note-quality",
             }
         )
         idx += 1
@@ -501,6 +612,21 @@ def _route_payload(
         _, inferred_ctq = partition_notes_for_route(extraction.get("notes") or [])
         ctq_rows = ctq_notes_to_inspection(inferred_ctq, start_idx=idx)
     for row in ctq_rows:
+        inspection.append(row)
+        idx += 1
+
+    # Also pull quality/inspection/test checks mentioned in regular GA notes into Quality & Inspection
+    existing_keys = {
+        re.sub(r"\W+", "", str(r.get("dimension") or "").lower())
+        for r in inspection
+        if r.get("dimension")
+    }
+    qa_rows = _quality_checks_from_notes(
+        notes,
+        existing_keys=existing_keys,
+        start_idx=idx,
+    )
+    for row in qa_rows:
         inspection.append(row)
         idx += 1
 

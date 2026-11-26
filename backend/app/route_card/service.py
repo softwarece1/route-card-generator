@@ -74,6 +74,7 @@ from app.route_card.partslist_parser import (
     rebuild_bom_from_pl,
 )
 from app.route_card.route_generator import generate_route
+from app.route_card.upload_format_validator import validate_upload
 from app.route_card.wirelist_parser import parse_wirelist_bytes, wirelist_to_route_additions
 from app.services.minio_service import MinioService
 
@@ -409,89 +410,32 @@ def _try_unlink_local(object_path: str | None, storage_backend: str | None) -> N
         pass
 
 
-def _sniff_upload_warnings(role: str, data: bytes, filename: str, ext: str) -> list[str]:
-    """Soft checks — upload still succeeds; UI shows warnings."""
-    role = (role or "").lower().strip()
-    name = (filename or "").lower()
-    warnings: list[str] = []
+def _validate_upload_format(role: str, data: bytes, filename: str, ext: str) -> list[str]:
+    """Hard BEL-structure gate for GA / PL / WL. Raises 422 and stores nothing on failure.
 
-    if role == "drawing":
-        if ext not in {".pdf", ".tif", ".tiff"}:
-            warnings.append(
-                f"Unexpected drawing type {ext}. Expected PDF or TIFF engineering drawing."
-            )
-            return warnings
-        if ext == ".pdf":
-            text = ""
-            try:
-                from app.route_card.pdf_ingest import ingest_pdf
+    Returns non-blocking warnings to save on the document.
+    """
+    result = validate_upload(role, data, filename, ext)
+    if not result.ok:
+        raise HTTPException(422, "; ".join(result.reasons) or "Upload is not in the expected BEL format.")
+    return result.warnings
 
-                text = (ingest_pdf(data, want_tables=False).text or "")[:8000]
-            except Exception:
-                text = ""
-            # Also scan line-reversed text — OCR often flips 180°-rotated sheets
-            rev = "\n".join("".join(reversed(line)) for line in (text or "").splitlines())
-            blob = f"{text}\n{rev}"
-            cues = re.search(
-                r"\b(NOTE|NOTES|GA\b|ASSEMBLY|DRAWING|ITEM\s*\d|AS\s+SHOWN|"
-                r"REVISION|SCALE|SHEET|GENERAL\s+ASSEMBLY|TITLE\s*BLOCK|"
-                r"BILL\s+OF\s+MATERIAL|MATERIAL|DETAIL|FIGURE|FIG\.?)\b",
-                blob,
-                re.I,
-            )
-            # Underscore/hyphen filenames: night_vision_GA.pdf, foo_dwg.pdf
-            name_cue = re.search(
-                r"(?:^|[^a-z0-9])(ga|drawing|dwg|assy|assembly)(?:[^a-z0-9]|$)",
-                name,
-                re.I,
-            )
-            if not cues and not name_cue:
-                warnings.append(
-                    "This file may not be a GA / engineering drawing "
-                    "(few drawing cues found). Confirm you uploaded the correct sheet."
-                )
-        return warnings
 
-    if role == "partslist":
-        try:
-            from app.route_card.partslist_parser import parse_partslist_bytes
-
-            parsed = parse_partslist_bytes(data, filename)
-            items = parsed.get("items") or []
-            if not items:
-                warnings.append(
-                    "Parts List uploaded, but no item rows were detected. "
-                    "Check that the file is a PL (PDF/Excel) in the expected layout."
-                )
-            elif not re.search(r"\b(pl|parts?\s*list|bom)\b", name, re.I) and len(items) < 2:
-                warnings.append(
-                    "Parts List looks sparse — verify this is the correct Parts List file."
-                )
-        except Exception:
-            warnings.append(
-                "Parts List could not be pre-checked. Analyze may still fail if the format is wrong."
-            )
-        return warnings
-
-    if role == "wirelist":
-        try:
-            from app.route_card.wirelist_parser import parse_wirelist_bytes
-
-            parsed = parse_wirelist_bytes(data, filename)
-            wires = parsed.get("wires") or parsed.get("materials") or []
-            count = parsed.get("wireCount") or len(wires)
-            if not count:
-                warnings.append(
-                    "Wire List uploaded, but no wire/material rows were detected. "
-                    "Check that the file is a WL (PDF/Excel) in the expected layout."
-                )
-        except Exception:
-            warnings.append(
-                "Wire List could not be pre-checked. Analyze may still fail if the format is wrong."
-            )
-        return warnings
-
-    return warnings
+def _validate_session_documents_format(session: RcSession) -> None:
+    """Re-validate all stored session documents before analysis (guards legacy/reopened sessions)."""
+    errors: list[str] = []
+    for doc in sorted(session.documents, key=lambda d: (d.role, d.id)):
+        role = (doc.role or "").lower().strip()
+        if role not in ROLE_ALLOWED:
+            continue
+        data = load_path_bytes(doc.object_path, doc.storage_backend)
+        ext = Path(doc.filename or "").suffix.lower()
+        result = validate_upload(role, data, doc.filename or "", ext)
+        if not result.ok:
+            reason = "; ".join(result.reasons) or "not in the expected BEL format"
+            errors.append(f"{doc.filename or role}: {reason}")
+    if errors:
+        raise HTTPException(422, " | ".join(errors))
 
 
 def _resolve_user(user: dict | None) -> RcUser | None:
@@ -1729,6 +1673,8 @@ def drawing_view_crop(
         "figure": f"FIGURE {rid.upper() or '?'}",
         "detail": f"DETAIL {rid.upper() or '?'}",
         "named": (rid or "NAMED BLOCK").upper(),
+        "isometric": "ISOMETRIC VIEW",
+        "item_view": f"VIEW (ITEMS {ref_id})".strip(),
         "table": f"TABLE {rid.upper() or '?'}",
     }.get(kind_n, f"TABLE {rid.upper() or '?'}")
     if ext != ".pdf":
@@ -1885,6 +1831,9 @@ def upload_session_document(
     if not session:
         raise HTTPException(404, "Session not found")
     _assert_session_access(session, user, write=True)
+    # Hard gate before any write: a rejected file must not replace the current PL/WL
+    # or reach storage.
+    sniff_warns = _validate_upload_format(role, data, filename, ext)
     owner = session.user or _resolve_user(user)
     if owner and not session.user:
         session.user = owner
@@ -1915,7 +1864,6 @@ def upload_session_document(
         data,
         CONTENT_TYPES.get(ext, "application/octet-stream"),
     )
-    sniff_warns = _sniff_upload_warnings(role, data, filename, ext)
     doc = RcDocument(
         session=session,
         role=role,
@@ -2130,6 +2078,8 @@ def analyze_session(
     drawings = list(sorted(session.drawings, key=lambda x: x.id))
     if not drawings:
         raise HTTPException(400, "Upload at least one drawing before starting analysis")
+
+    _validate_session_documents_format(session)
 
     check_cancelled(cancel_event)
     set_progress(

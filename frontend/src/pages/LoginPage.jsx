@@ -184,6 +184,7 @@ export default function LoginPage() {
               <SafeInputText
                 id="empId"
                 profile="empId"
+                autoFocus
                 value={empId}
                 onChange={(e) => {
                   setEmpId(e.target.value);
@@ -205,6 +206,7 @@ export default function LoginPage() {
                 </label>
                 <button
                   type="button"
+                  tabIndex={-1}
                   className="rc-login__forgot"
                   onClick={() => setForgotOpen(true)}
                 >
@@ -221,6 +223,7 @@ export default function LoginPage() {
                 placeholder="Enter password"
                 feedback={false}
                 toggleMask
+                pt={{ showIcon: { tabIndex: -1 }, hideIcon: { tabIndex: -1 } }}
                 autoComplete="current-password"
                 disabled={loading}
                 className={passwordInvalid ? "p-invalid w-full" : "w-full"}

@@ -1256,11 +1256,8 @@ def run_migrations():
             """
         )
 
-        cursor.execute(
-            """
-            UPDATE route_card.users SET role = 'sbu_head' WHERE role = 'dept_head';
-            """
-        )
+        # NOTE: Do not rewrite role=dept_head → sbu_head on every migrate.
+        # dept_head is a supported persona (user managers / reporting lines).
 
         # New empty departments stub under SBU
         cursor.execute(
@@ -1310,7 +1307,7 @@ def run_migrations():
             (bel_codes,),
         )
         print(
-            "migrated departments→sbus, dept→sbu columns, dept_head→sbu_head; "
+            "migrated departments→sbus, dept→sbu columns; "
             "dropped plants; stubbed departments; seeded BEL sbus"
         )
 

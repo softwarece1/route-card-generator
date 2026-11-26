@@ -65,7 +65,6 @@ export default function WorkCentersPage() {
 
   const [syncing, setSyncing] = useState(false);
   const [syncBanner, setSyncBanner] = useState(null);
-  const [plantSbu, setPlantSbu] = useState({ items: [], loading: false, error: "" });
   const activePlant = useRef("");
 
   const plantByCode = useMemo(() => {
@@ -173,10 +172,18 @@ export default function WorkCentersPage() {
       rows = rows.filter((s) => s.name === mine || s.code === mine);
     }
     const q = sbuSearch.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((s) => {
-      const blob = `${s.code} ${s.name} ${s.plantId}`.toLowerCase();
-      return blob.includes(q);
+    if (q) {
+      rows = rows.filter((s) => {
+        const blob = `${s.code} ${s.name} ${s.plantId}`.toLowerCase();
+        return blob.includes(q);
+      });
+    }
+    // Show SBUs with a mapped Plant ID first, then alphabetically by name
+    return [...rows].sort((a, b) => {
+      const aHas = (a.plantId || "").trim() ? 0 : 1;
+      const bHas = (b.plantId || "").trim() ? 0 : 1;
+      if (aHas !== bHas) return aHas - bHas;
+      return String(a.name || a.code || "").localeCompare(String(b.name || b.code || ""));
     });
   }, [sbus, sbuSearch, isAdmin, isSbuHead, user?.sbu]);
 
@@ -278,7 +285,6 @@ export default function WorkCentersPage() {
         sbu: selectedSbu?.name || user?.sbu || "",
       });
       if (activePlant.current !== selectedPlantCode) return;
-      setPlantSbu({ items: done?.plant_sbu || [], loading: false, error: "" });
       const created = done?.created_count ?? 0;
       const unique = done?.count ?? 0;
       const failed = done?.failed_work_centers_count ?? 0;
@@ -289,7 +295,7 @@ export default function WorkCentersPage() {
           `Sync completed. ${unique} unique work centre(s); ${created} newly added.`,
       });
       if (failed > 0) toast.error(`Sync finished with ${failed} failed work centre(s)`);
-      else toast.success("Plant/SBU mapping and work centre sync completed");
+      else toast.success("Work centre sync completed");
       await Promise.all([loadSbus(), loadWorkCentres(selectedPlantCode)]);
       // Refresh plant syncedAt from plants list
       const plantRows = await fetchPlants({ activeOnly: true }).catch(() => []);
@@ -452,43 +458,6 @@ export default function WorkCentersPage() {
                     </div>
                     <div className="rc-wc__tabs-tools">{wcToolbar}</div>
                   </div>
-                ) : null}
-                {selectedPlantCode ? (
-                  <>
-                    <div className="rc-wc__tabs-row">
-                      <div className="rc-wc__pane-title">Unique Plant &amp; SBU mapping</div>
-                    </div>
-                    <div className="rc-wc__panel">
-                      {plantSbu.error ? (
-                        <Message severity="error" text={plantSbu.error} className="mb-3 w-full" />
-                      ) : null}
-                      <TableComponent
-                        value={plantSbu.items.map((row) => ({ ...row, id: JSON.stringify(row) }))}
-                        loading={plantSbu.loading}
-                        dataKey="id"
-                        paginator={plantSbu.items.length > 10}
-                        rows={10}
-                        emptyMessage={
-                          plantSbu.error
-                            ? "Plant/SBU mapping could not be loaded."
-                            : "Click Sync from SAP on the plant network (intranet) to load Plant/SBU mapping."
-                        }
-                        columns={[
-                          { field: "Plant ID", header: "Plant ID", sortable: true },
-                          { field: "Plant Name", header: "Plant Name", sortable: true },
-                          {
-                            field: "SBU Co Code (with Location)",
-                            header: "SBU Co Code (with Location)",
-                            sortable: true,
-                          },
-                          { field: "SBU Name", header: "SBU Name", sortable: true },
-                        ]}
-                      />
-                    </div>
-                    <div className="rc-wc__tabs-row">
-                      <div className="rc-wc__pane-title">Work centres</div>
-                    </div>
-                  </>
                 ) : null}
                 <div className="rc-wc__panel">
                   {!selectedPlantCode ? (

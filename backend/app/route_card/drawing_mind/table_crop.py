@@ -61,6 +61,19 @@ _MAX_CLIP_H_FRAC_FIGURE = 0.72
 _MAX_CLIP_W_FRAC = 0.98
 _MIN_CONFIDENCE = 0.82
 
+# ISOMETRIC VIEW — caption sits UNDER the view body on GA sheets, so the crop
+# grows upward from the caption (not downward like TABLE/FIGURE captions).
+_ISO_KIND = "isometric"
+_ITEM_VIEW_KIND = "item_view"
+_ISO_CAPTION = "ISOMETRIC VIEW"
+_ISO_CAPTION_RE = re.compile(r"^\s*ISOMETRIC\s+VIEW\b", re.I)
+_ISO_HALF_W_FRAC = 0.24  # half window width around caption centre (fraction of page width)
+_ISO_MAX_H_FRAC = 0.42  # max height above caption (fraction of page height)
+
+
+def _max_h_frac(kind: str) -> float:
+    return _MAX_CLIP_H_FRAC_FIGURE if kind in {"figure", "named", _ISO_KIND, _ITEM_VIEW_KIND} else _MAX_CLIP_H_FRAC
+
 
 @dataclass
 class TitleHit:
@@ -91,6 +104,12 @@ _NAMED_CAPTIONS: dict[str, re.Pattern[str]] = {
 }
 
 
+def _norm_item_list(rid: str | int) -> str:
+    """Normalize item numbers like '2, 3' or '3 & 2' -> '2,3'."""
+    nums = sorted({int(m) for m in re.findall(r"\b[1-9]\d?\b", str(rid or ""))})
+    return ",".join(str(n) for n in nums)
+
+
 def _norm_kind(kind: str | None) -> str:
     k = str(kind or "table").strip().lower()
     if k in {"fig", "figs", "figures"}:
@@ -101,11 +120,23 @@ def _norm_kind(kind: str | None) -> str:
         return "detail"
     if k in {"named", "name", "block"}:
         return "named"
-    return k if k in _KIND_PATTERNS or k == "named" else "table"
+    if k in {"iso", "isom", "isometric", "isometric_view", "isometric view"}:
+        return _ISO_KIND
+    if k in {"item_view", "item-view", "itemview", "callout", "items"}:
+        return _ITEM_VIEW_KIND
+    return k if k in _KIND_PATTERNS or k in {"named", _ISO_KIND, _ITEM_VIEW_KIND} else "table"
 
 
 def _label_for(kind: str, rid: str) -> str:
     kind = _norm_kind(kind)
+    if kind == _ISO_KIND:
+        return _ISO_CAPTION
+    if kind == _ITEM_VIEW_KIND:
+        items = _norm_item_list(rid)
+        if not items:
+            return "DRAWING VIEW"
+        parts = items.split(",")
+        return f"VIEW (ITEM {parts[0]})" if len(parts) == 1 else f"VIEW (ITEMS {', '.join(parts)})"
     if kind == "named":
         return (_norm_id(rid) or "NAMED BLOCK").replace("_", " ")
     prefix = _KIND_PATTERNS[kind][2]
@@ -125,9 +156,37 @@ def _union(a: tuple[float, float, float, float], b: tuple[float, float, float, f
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
+def _find_isometric_hits(page) -> list[TitleHit]:
+    """Locate 'ISOMETRIC VIEW' caption lines (ignores prose that merely mentions it)."""
+    hits: list[TitleHit] = []
+    try:
+        data = page.get_text("dict") or {}
+    except Exception:
+        return []
+    for block in data.get("blocks") or []:
+        if block.get("type", 0) != 0:
+            continue
+        for line in block.get("lines") or []:
+            spans = line.get("spans") or []
+            if not spans:
+                continue
+            text = "".join(str(s.get("text") or "") for s in spans).strip()
+            if not text or len(text) > 48 or not _ISO_CAPTION_RE.match(text):
+                continue
+            x0 = min(float(s["bbox"][0]) for s in spans)
+            y0 = min(float(s["bbox"][1]) for s in spans)
+            x1 = max(float(s["bbox"][2]) for s in spans)
+            y1 = max(float(s["bbox"][3]) for s in spans)
+            fs = max(float(s.get("size") or 0) for s in spans)
+            hits.append(TitleHit(ref_id=_ISO_CAPTION, bbox=(x0, y0, x1, y1), text=text, font_size=fs))
+    return hits
+
+
 def find_title_hits(page, kind: str, ref_id: str | int) -> list[TitleHit]:
     """Locate caption-like TITLE <id> lines on a PyMuPDF page."""
     kind = _norm_kind(kind)
+    if kind == _ISO_KIND:
+        return _find_isometric_hits(page)
     want = _norm_id(ref_id) if kind != "named" else _named_key(str(ref_id or ""))
     if not want:
         return []
@@ -214,6 +273,81 @@ def _next_heading_y(page, below_y: float, page_h: float) -> float | None:
     return None
 
 
+def _expand_isometric_clip(page, title: TitleHit, *, pad: float = 6.0) -> tuple[float, float, float, float]:
+    """Crop the view body ABOVE its caption (ISOMETRIC VIEW sits under the drawing)."""
+    import fitz
+
+    pr = page.rect
+    x0, y0, x1, y1 = title.bbox
+    cx = (x0 + x1) / 2
+    left = max(pr.x0 + 2, cx - pr.width * _ISO_HALF_W_FRAC)
+    right = min(pr.x1 - 2, cx + pr.width * _ISO_HALF_W_FRAC)
+    bottom = min(pr.y1 - 2, y1 + pad)
+    top = max(pr.y0 + 2, y0 - pr.height * _ISO_MAX_H_FRAC)
+
+    # Stop just below the nearest heading / NOTE band above the caption (same column only)
+    try:
+        data = page.get_text("dict") or {}
+        for block in data.get("blocks") or []:
+            if block.get("type", 0) != 0:
+                continue
+            for line in block.get("lines") or []:
+                spans = line.get("spans") or []
+                if not spans:
+                    continue
+                text = "".join(str(s.get("text") or "") for s in spans).strip()
+                ly1 = max(float(s["bbox"][3]) for s in spans)
+                lx0 = min(float(s["bbox"][0]) for s in spans)
+                lx1 = max(float(s["bbox"][2]) for s in spans)
+                if ly1 >= y0 - 1 or ly1 < top:
+                    continue
+                if lx1 < left or lx0 > right:
+                    continue
+                if _NEXT_BLOCK.match(text) or re.match(r"^\s*NOTES?\b", text, re.I):
+                    top = max(top, ly1 + 2)
+    except Exception:
+        pass
+
+    if right - left < _MIN_CLIP_W:
+        left = max(pr.x0 + 2, cx - _MIN_CLIP_W / 2)
+        right = min(pr.x1 - 2, left + _MIN_CLIP_W)
+    clip = fitz.Rect(left, top, right, max(bottom, top + _MIN_CLIP_H))
+    return (clip.x0, clip.y0, clip.x1, clip.y1)
+
+
+_BALLOON_NUM_RE = re.compile(r"^[1-9]\d?$")
+
+
+def _extract_clip_callout_items(
+    page,
+    clip_t: tuple[float, float, float, float],
+    *,
+    caption_y0: float,
+) -> list[int]:
+    """Return sorted item/balloon numbers (1..99) visible inside an isometric crop."""
+    import fitz
+
+    found: set[int] = set()
+    try:
+        data = page.get_text("dict", clip=fitz.Rect(*clip_t)) or {}
+    except Exception:
+        return []
+    for block in data.get("blocks") or []:
+        if block.get("type", 0) != 0:
+            continue
+        for line in block.get("lines") or []:
+            spans = line.get("spans") or []
+            if not spans:
+                continue
+            ly1 = max(float(s["bbox"][3]) for s in spans)
+            if ly1 >= caption_y0 - 2:
+                continue
+            text = "".join(str(s.get("text") or "") for s in spans).strip()
+            if _BALLOON_NUM_RE.fullmatch(text):
+                found.add(int(text))
+    return sorted(found)
+
+
 def expand_clip(
     page,
     title: TitleHit,
@@ -226,9 +360,9 @@ def expand_clip(
     import fitz
 
     kind = _norm_kind(kind)
-    max_h_frac = (
-        _MAX_CLIP_H_FRAC_FIGURE if kind in {"figure", "named"} else _MAX_CLIP_H_FRAC
-    )
+    if kind == _ISO_KIND:
+        return _expand_isometric_clip(page, title)
+    max_h_frac = _max_h_frac(kind)
     pr = page.rect
     x0, y0, x1, y1 = title.bbox
     # Prefer full content width under the title band
@@ -296,15 +430,16 @@ def _confidence_for(
     page_rect,
 ) -> float:
     kind = _norm_kind(kind)
-    max_h_frac = (
-        _MAX_CLIP_H_FRAC_FIGURE if kind in {"figure", "named"} else _MAX_CLIP_H_FRAC
-    )
+    max_h_frac = _max_h_frac(kind)
     pw = float(page_rect.width or 1)
     ph = float(page_rect.height or 1)
     cw = clip[2] - clip[0]
     ch = clip[3] - clip[1]
     score = 0.55
-    if kind == "named":
+    if kind == _ISO_KIND:
+        if _ISO_CAPTION_RE.match(title.text.strip()):
+            score += 0.25
+    elif kind == "named":
         named_re = _NAMED_CAPTIONS.get(title.ref_id) or _NAMED_CAPTIONS.get(
             _named_key(title.ref_id)
         )
@@ -356,9 +491,7 @@ def _clip_passes_gates(
 ) -> str | None:
     """Return a refusal reason, or None if the clip is acceptable."""
     kind = _norm_kind(kind)
-    max_h_frac = (
-        _MAX_CLIP_H_FRAC_FIGURE if kind in {"figure", "named"} else _MAX_CLIP_H_FRAC
-    )
+    max_h_frac = _max_h_frac(kind)
     cw = clip_t[2] - clip_t[0]
     ch = clip_t[3] - clip_t[1]
     pw = float(page_rect.width or 1)
@@ -495,7 +628,28 @@ def _render_view_crop_vlm(
     try:
         for img in imgs:
             page_idx = int(img.get("page") or 1)
-            prompt = _VLM_LOCATE_PROMPT.format(label=label, page_no=page_idx)
+            if kind == _ITEM_VIEW_KIND:
+                prompt = (
+                    f"You are inspecting page {page_idx} of an engineering GA drawing.\n"
+                    f"Locate the SINGLE orthographic or detail view on this page that shows "
+                    f"the item callout leader/balloon numbers: {want.replace(',', ', ')}.\n"
+                    "Include the entire view, its leader lines, callout numbers, and nearby "
+                    "placement dimensions (e.g. offset distances in mm) in the bounding box.\n"
+                    "Do NOT include the parts list / BOM table, title block, or other unrelated views.\n"
+                    "If no single view clearly shows these callouts, return found=false.\n"
+                    'Reply with ONLY valid JSON: {"found": true/false, "confidence": 0.0-1.0, '
+                    '"bboxNorm": [x0, y0, x1, y1], "labelText": "short view description"}'
+                )
+                sys_prompt = (
+                    "You locate engineering drawing views containing specific item callout numbers. "
+                    "Reply with JSON only — no markdown fences."
+                )
+            else:
+                prompt = _VLM_LOCATE_PROMPT.format(label=label, page_no=page_idx)
+                sys_prompt = (
+                    "You locate drawing captions only when clearly visible. "
+                    "Reply with JSON only — no markdown fences."
+                )
             try:
                 raw = chat_vision(
                     prompt=prompt,
@@ -504,10 +658,7 @@ def _render_view_crop_vlm(
                     base_url=base_url,
                     timeout=timeout,
                     temperature=0.0,
-                    system=(
-                        "You locate drawing captions only when clearly visible. "
-                        "Reply with JSON only — no markdown fences."
-                    ),
+                    system=sys_prompt,
                     image_mime=str(img.get("mime") or "image/jpeg"),
                     max_tokens=max_tokens,
                 )
@@ -707,7 +858,7 @@ def _render_view_crop_ocr(
             }
 
         b64, w, h = _encode_clip_jpeg(page, clip_t, dpi=dpi, jpeg_quality=jpeg_quality)
-        return {
+        res: dict[str, Any] = {
             "available": True,
             "kind": kind,
             "label": label,
@@ -723,6 +874,11 @@ def _render_view_crop_ocr(
             "titleText": title.text,
             "source": "ocr",
         }
+        if kind == _ISO_KIND:
+            res["calloutItems"] = _extract_clip_callout_items(
+                page, clip_t, caption_y0=title.bbox[1]
+            )
+        return res
     finally:
         doc.close()
 
@@ -752,11 +908,18 @@ def render_view_crop(
     label = _label_for(kind, ref_id)
     if not pdf_bytes:
         return {"available": False, "reason": "Empty PDF", "kind": kind, "label": label}
-    want = _named_key(str(ref_id or "")) if kind == "named" else _norm_id(ref_id)
+    if kind == _ISO_KIND:
+        want = _ISO_CAPTION
+    elif kind == _ITEM_VIEW_KIND:
+        want = _norm_item_list(ref_id)
+    elif kind == "named":
+        want = _named_key(str(ref_id or ""))
+    else:
+        want = _norm_id(ref_id)
     if not want:
         return {
             "available": False,
-            "reason": "Reference id required",
+            "reason": "Item numbers required" if kind == _ITEM_VIEW_KIND else "Reference id required",
             "kind": kind,
             "label": label,
         }
@@ -767,6 +930,24 @@ def render_view_crop(
             "kind": kind,
             "label": label,
         }
+
+    if kind == _ITEM_VIEW_KIND:
+        if not allow_vlm:
+            return {
+                "available": False,
+                "reason": "VLM required for item_view crop",
+                "kind": kind,
+                "label": label,
+            }
+        return _render_view_crop_vlm(
+            pdf_bytes,
+            kind=kind,
+            want=want,
+            label=label,
+            page_no=page_no,
+            dpi=dpi,
+            jpeg_quality=jpeg_quality,
+        )
 
     ocr = _render_view_crop_ocr(
         pdf_bytes,
