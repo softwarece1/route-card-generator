@@ -27,6 +27,10 @@ def test_origin_is_allowed_localhost_and_same_host():
     assert origin_is_allowed("http://10.0.0.5", "10.0.0.5:8003")
     assert not origin_is_allowed("http://evil-attacker.com", "172.195.126.179:8008")
     assert not origin_is_allowed("https://example.com")
+    # Vite changeOrigin rewrites Host to loopback; browser Origin stays on the LAN IP.
+    assert origin_is_allowed("http://172.16.60.164:5174", "127.0.0.1:8003")
+    assert origin_is_allowed("http://172.195.126.179:5174", "localhost:8003")
+    assert not origin_is_allowed("http://evil-attacker.com", "127.0.0.1:8003")
 
 
 def test_cors_reflects_same_host_ip_origin():
@@ -56,6 +60,43 @@ def test_csrf_allows_lan_ip_origin_with_cookie():
     assert resp.status_code != 403 or "Origin not allowed" not in str(resp.json())
 
 
+def test_csrf_allows_proxied_lan_origin_with_loopback_host():
+    """Vite proxy with changeOrigin:true sends Host=127.0.0.1 while Origin is the LAN IP."""
+    from app.auth.cookies import access_cookie_name
+
+    name = access_cookie_name()
+    origin = "http://172.16.60.164:5174"
+    resp = client.post(
+        "/api/v1/route-card/signup-approvals/1/approve",
+        headers={"Origin": origin, "Host": "127.0.0.1:8003"},
+        cookies={name: "dummy-token"},
+        json={"remark": ""},
+    )
+    assert resp.status_code != 403 or "Origin not allowed" not in str(resp.json())
+
+
+def test_csrf_allows_x_forwarded_host_lan_origin():
+    from app.auth.cookies import access_cookie_name
+    from app.config.settings import effective_http_host
+
+    assert (
+        effective_http_host("127.0.0.1:8003", "172.16.60.164:5174") == "172.16.60.164:5174"
+    )
+    name = access_cookie_name()
+    origin = "http://172.16.60.164:5174"
+    resp = client.post(
+        "/api/v1/route-card/signup-approvals/1/approve",
+        headers={
+            "Origin": origin,
+            "Host": "127.0.0.1:8003",
+            "X-Forwarded-Host": "172.16.60.164:5174",
+        },
+        cookies={name: "dummy-token"},
+        json={"remark": ""},
+    )
+    assert resp.status_code != 403 or "Origin not allowed" not in str(resp.json())
+
+
 def test_csrf_still_blocks_public_evil_origin():
     from app.auth.cookies import access_cookie_name
 
@@ -79,5 +120,7 @@ if __name__ == "__main__":
     test_origin_is_allowed_localhost_and_same_host()
     test_cors_reflects_same_host_ip_origin()
     test_csrf_allows_lan_ip_origin_with_cookie()
+    test_csrf_allows_proxied_lan_origin_with_loopback_host()
+    test_csrf_allows_x_forwarded_host_lan_origin()
     test_csrf_still_blocks_public_evil_origin()
     print("test_csrf_lan_origins: OK")

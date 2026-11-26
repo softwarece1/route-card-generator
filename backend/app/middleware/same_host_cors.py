@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.config.settings import origin_is_allowed
+from app.config.settings import effective_http_host, origin_is_allowed
 
 
 def _apply(response: Response, origin: str, request: Request) -> None:
@@ -46,7 +46,10 @@ def _same_host_only(origin: str, host: str) -> bool:
 class SameHostCorsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         origin = (request.headers.get("origin") or "").strip().rstrip("/")
-        host = request.headers.get("host") or ""
+        host = effective_http_host(
+            request.headers.get("host"),
+            request.headers.get("x-forwarded-host"),
+        )
         if not origin or not _same_host_only(origin, host):
             return await call_next(request)
         if request.method.upper() == "OPTIONS" and request.headers.get(

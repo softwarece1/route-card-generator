@@ -4,6 +4,95 @@ import psycopg2
 
 from ..config.settings import settings
 
+# Fixed DDL only — no string-interpolated identifiers (Bandit B608).
+_RENAME_DEPT_TO_SBU_SQL = {
+    "users": """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'users'
+              AND column_name = 'dept'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'users'
+              AND column_name = 'sbu'
+          ) THEN
+            ALTER TABLE route_card.users RENAME COLUMN dept TO sbu;
+          END IF;
+        END $$;
+        """,
+    "operation_templates": """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'operation_templates'
+              AND column_name = 'dept'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'operation_templates'
+              AND column_name = 'sbu'
+          ) THEN
+            ALTER TABLE route_card.operation_templates RENAME COLUMN dept TO sbu;
+          END IF;
+        END $$;
+        """,
+    "few_shot_examples": """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'few_shot_examples'
+              AND column_name = 'dept'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'few_shot_examples'
+              AND column_name = 'sbu'
+          ) THEN
+            ALTER TABLE route_card.few_shot_examples RENAME COLUMN dept TO sbu;
+          END IF;
+        END $$;
+        """,
+    "work_centers": """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'work_centers'
+              AND column_name = 'dept'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'work_centers'
+              AND column_name = 'sbu'
+          ) THEN
+            ALTER TABLE route_card.work_centers RENAME COLUMN dept TO sbu;
+          END IF;
+        END $$;
+        """,
+    "machines": """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'machines'
+              AND column_name = 'dept'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'route_card' AND table_name = 'machines'
+              AND column_name = 'sbu'
+          ) THEN
+            ALTER TABLE route_card.machines RENAME COLUMN dept TO sbu;
+          END IF;
+        END $$;
+        """,
+}
+
+
+def _rename_dept_to_sbu_columns(cursor) -> None:
+    for sql in _RENAME_DEPT_TO_SBU_SQL.values():
+        cursor.execute(sql)
+
 
 def run_migrations():
     conn = psycopg2.connect(
@@ -229,31 +318,7 @@ def run_migrations():
         )
 
         # Early dept→sbu column renames so subsequent indexes use the new names
-        for table, old_col, new_col in [
-            ("users", "dept", "sbu"),
-            ("operation_templates", "dept", "sbu"),
-            ("few_shot_examples", "dept", "sbu"),
-            ("work_centers", "dept", "sbu"),
-            ("machines", "dept", "sbu"),
-        ]:
-            cursor.execute(
-                f"""
-                DO $$
-                BEGIN
-                  IF EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'route_card' AND table_name = '{table}'
-                      AND column_name = '{old_col}'
-                  ) AND NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'route_card' AND table_name = '{table}'
-                      AND column_name = '{new_col}'
-                  ) THEN
-                    ALTER TABLE route_card.{table} RENAME COLUMN {old_col} TO {new_col};
-                  END IF;
-                END $$;
-                """
-            )
+        _rename_dept_to_sbu_columns(cursor)
 
         cursor.execute(
             """
@@ -1148,32 +1213,8 @@ def run_migrations():
             """
         )
 
-        # Rename dept → sbu columns on related tables
-        for table, old_col, new_col in [
-            ("users", "dept", "sbu"),
-            ("operation_templates", "dept", "sbu"),
-            ("few_shot_examples", "dept", "sbu"),
-            ("work_centers", "dept", "sbu"),
-            ("machines", "dept", "sbu"),
-        ]:
-            cursor.execute(
-                f"""
-                DO $$
-                BEGIN
-                  IF EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'route_card' AND table_name = '{table}'
-                      AND column_name = '{old_col}'
-                  ) AND NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'route_card' AND table_name = '{table}'
-                      AND column_name = '{new_col}'
-                  ) THEN
-                    ALTER TABLE route_card.{table} RENAME COLUMN {old_col} TO {new_col};
-                  END IF;
-                END $$;
-                """
-            )
+        # Rename dept → sbu columns on related tables (idempotent static DDL)
+        _rename_dept_to_sbu_columns(cursor)
 
         # dept_rules → sbu_rules (+ column dept → sbu)
         cursor.execute(

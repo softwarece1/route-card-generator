@@ -34,7 +34,16 @@ def test_security_headers_present():
     assert response.headers.get("X-Frame-Options") == "DENY"
     assert response.headers.get("Referrer-Policy") == "no-referrer"
     assert "Content-Security-Policy" in response.headers
-    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+    csp = response.headers["Content-Security-Policy"]
+    assert "default-src 'self'" in csp
+    assert "script-src 'self'" in csp
+    assert "unsafe-eval" not in csp
+    assert "base-uri 'self'" in csp
+    assert "object-src 'none'" in csp
+    assert "form-action 'self'" in csp
+    # PrimeReact still needs inline styles; scripts must not.
+    assert "style-src 'self' 'unsafe-inline'" in csp
+    assert "script-src 'self' 'unsafe-inline'" not in csp
 
 
 def test_cors_headers_strict():
@@ -433,4 +442,133 @@ def test_login_captcha_scenarios():
     settings.APP_ENV = prev_env
     settings.CAPTCHA_ENABLED = prev_flag
     captcha_mod._random_code = orig_random_code
+
+
+def test_emp_status_omits_registered_and_works_without_captcha_in_dev():
+    """Emp-status must not expose a registered flag; CAPTCHA optional in APP_ENV=dev."""
+    from app.database.connection import connect_to_db
+
+    connect_to_db()
+    prev_env = settings.APP_ENV
+    prev_flag = settings.CAPTCHA_ENABLED
+    settings.APP_ENV = "dev"
+    settings.CAPTCHA_ENABLED = "false"
+    try:
+        resp = client.get("/api/v1/auth/emp-status/112233")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "registered" not in body
+        assert set(body.keys()) >= {"empId", "available", "verified"}
+        assert body["empId"] == "112233"
+        assert isinstance(body["available"], bool)
+    finally:
+        settings.APP_ENV = prev_env
+        settings.CAPTCHA_ENABLED = prev_flag
+
+
+def test_emp_status_requires_captcha_when_enabled():
+    prev_env = settings.APP_ENV
+    prev_flag = settings.CAPTCHA_ENABLED
+    settings.APP_ENV = "prod"
+    settings.CAPTCHA_ENABLED = "true"
+    try:
+        resp = client.get("/api/v1/auth/emp-status/112233")
+        assert resp.status_code == 401
+        assert "CAPTCHA" in resp.json()["detail"]
+    finally:
+        settings.APP_ENV = prev_env
+        settings.CAPTCHA_ENABLED = prev_flag
+
+
+def test_signup_duplicate_emp_is_generic():
+    """Duplicate empId signup must not say the ID is already registered."""
+    import base64
+    import json
+    import secrets
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from pony.orm import commit, db_session, select
+
+    from app.auth_crypto import ALG as CREDS_ALG
+    from app.auth_crypto import _private_key
+    from app.database.connection import connect_to_db
+    from app.route_card.models import RcDepartment, RcSbu, RcUser
+    from app.security import hash_password
+
+    connect_to_db()
+    emp_id = "778899"
+    with db_session:
+        sbu = select(x for x in RcSbu if x.is_active)[:1]
+        if not sbu:
+            pytest.skip("no SBU seed data")
+        sbu = sbu[0]
+        dept = select(d for d in RcDepartment if d.is_active and d.sbu.id == sbu.id)[:1]
+        if not dept:
+            pytest.skip("no department seed data")
+        dept = dept[0]
+        existing = RcUser.get(emp_id=emp_id)
+        if not existing:
+            RcUser(
+                emp_id=emp_id,
+                name="Existing User",
+                sbu=sbu.name,
+                department=dept,
+                password_hash=hash_password(f"TempPass!{secrets.token_hex(4)}12"),
+                role="engineer",
+                is_active=True,
+                approval_status="approved",
+            )
+            commit()
+        dept_id = dept.id
+        sbu_name = sbu.name
+
+    pub = _private_key().public_key()
+    raw = json.dumps(
+        {"empId": emp_id, "password": f"ComplexPass!{secrets.token_hex(4)}"}
+    ).encode("utf-8")
+    cipher = base64.b64encode(
+        pub.encrypt(
+            raw,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+    ).decode("ascii")
+
+    resp = client.post(
+        "/api/v1/auth/signup",
+        json={
+            "name": "Dup Engineer",
+            "sbu": sbu_name,
+            "departmentId": dept_id,
+            "cipher": cipher,
+            "alg": CREDS_ALG,
+        },
+    )
+    assert resp.status_code == 400
+    detail = str(resp.json().get("detail", "")).lower()
+    assert "already registered" not in detail
+    assert "unable to complete signup" in detail
+
+
+def test_oarc_to_sap_error_is_sanitized(monkeypatch):
+    """Client must not receive exception internals from OARC→SAP mapping."""
+    from fastapi import HTTPException
+
+    from app.route_card.router import convert_oarc_to_sap
+    from app.route_card.schemas import OarcToSapRequest
+
+    def boom(_data):
+        raise ValueError("sensitive internal mapping detail XYZ")
+
+    monkeypatch.setattr("app.route_card.router.build_sap_payload", boom)
+    with pytest.raises(HTTPException) as exc:
+        convert_oarc_to_sap(OarcToSapRequest(source="test"))
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "OARC to SAP mapping failed"
+    assert "XYZ" not in str(exc.value.detail)
+    assert "sensitive" not in str(exc.value.detail)
 

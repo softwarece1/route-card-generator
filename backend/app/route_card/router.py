@@ -1,10 +1,13 @@
 from io import BytesIO
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, HTTPException
+
+logger = logging.getLogger("route_card.oarc")
 
 from app.download_names import content_disposition
 from .schemas import OarcToSapRequest
@@ -1322,7 +1325,8 @@ def convert_oarc_to_sap(payload: OarcToSapRequest) -> dict:
         return build_sap_payload(data)
 
     except Exception as exc:
+        logger.warning("OARC to SAP mapping failed: %s", exc)
         raise HTTPException(
             status_code=400,
-            detail=f"OARC to SAP mapping failed: {exc}",
+            detail="OARC to SAP mapping failed",
         ) from exc

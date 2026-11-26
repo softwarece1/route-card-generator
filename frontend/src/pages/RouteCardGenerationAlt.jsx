@@ -122,7 +122,7 @@ const UPLOAD_SLOTS = [
   {
     role: "drawing",
     title: "Drawing (GA)",
-    hint: "PDF / TIFF · select several files at once (Max 10 MB each)",
+    hint: "Supports multiple PDF files at once (Max 10 MB each)",
     accept: ".pdf,.tif,.tiff",
     required: true,
     icon: "pi-file",
@@ -401,11 +401,14 @@ export default function RouteCardGenerationAlt() {
   const [sessionId, setSessionId] = useState(null);
   const [docs, setDocs] = useState({ drawing: null, drawings: [], wirelist: null, partslist: null });
   const [slotErrors, setSlotErrors] = useState({});
+  /** Format / content warnings from upload pre-check (persist under the slot; not toast). */
+  const [slotWarnings, setSlotWarnings] = useState({});
   const [slotGlow, setSlotGlow] = useState({});
   const glowTimers = useRef({});
 
   const triggerSlotError = (role, message) => {
     setSlotErrors((prev) => ({ ...prev, [role]: message }));
+    setSlotWarnings((prev) => ({ ...prev, [role]: null }));
     setSlotGlow((prev) => ({ ...prev, [role]: true }));
     if (glowTimers.current[role]) {
       clearTimeout(glowTimers.current[role]);
@@ -421,6 +424,14 @@ export default function RouteCardGenerationAlt() {
     if (glowTimers.current[role]) {
       clearTimeout(glowTimers.current[role]);
     }
+  };
+
+  const setSlotWarning = (role, message) => {
+    setSlotWarnings((prev) => ({ ...prev, [role]: message || null }));
+  };
+
+  const clearSlotWarning = (role) => {
+    setSlotWarnings((prev) => ({ ...prev, [role]: null }));
   };
   const [resultTab, setResultTab] = useState(0);
   const [dragRole, setDragRole] = useState(null);
@@ -581,7 +592,11 @@ export default function RouteCardGenerationAlt() {
   }, [analyzing, sessionId]);
 
   const hasGa = Boolean(docs.drawing || (docs.drawings && docs.drawings.length));
-  const canAnalyze = Boolean(hasGa && docs.partslist && drawingId && !analyzing && !uploadingRole);
+  // GA / PL format pre-check failures block Generate; WL warning is informational only.
+  const hasFormatBlockers = Boolean(slotWarnings.drawing || slotWarnings.partslist);
+  const canAnalyze = Boolean(
+    hasGa && docs.partslist && drawingId && !analyzing && !uploadingRole && !hasFormatBlockers,
+  );
   const showResults = analyzed && !analyzing;
 
   const activeDrawing = useMemo(() => {
@@ -950,6 +965,9 @@ export default function RouteCardGenerationAlt() {
     }
     clearPreview();
     setDocs({ drawing: null, drawings: [], wirelist: null, partslist: null });
+    setSlotErrors({});
+    setSlotWarnings({});
+    setSlotGlow({});
     setDrawingId(null);
     setRouteCardId(null);
     sessionIdRef.current = null;
@@ -1028,6 +1046,7 @@ export default function RouteCardGenerationAlt() {
     const { quiet = false, manageBusy = true, preview = true } = options;
     if (!file) return "skip";
     clearSlotError(role);
+    clearSlotWarning(role);
     const slot = UPLOAD_SLOTS.find((s) => s.role === role);
     const slotTitle = slot?.title || role;
     if (role === "drawing" && isDuplicateDrawingName(file.name)) {
@@ -1080,11 +1099,15 @@ export default function RouteCardGenerationAlt() {
       setRouteCardId(null);
       if (!quiet) toast.success(`${slotTitle} uploaded.`);
       const uploadWarns = [
-        ...(meta.warnings || []),
-        ...(meta.document?.warnings || []),
-      ].filter(Boolean);
-      for (const w of [...new Set(uploadWarns)]) {
-        toast.warn(w);
+        ...new Set(
+          [...(meta.warnings || []), ...(meta.document?.warnings || [])].filter(Boolean),
+        ),
+      ];
+      // Persist under the slot (do not toast) so the user can still see format issues.
+      if (uploadWarns.length) {
+        setSlotWarning(role, uploadWarns.join(" "));
+      } else {
+        clearSlotWarning(role);
       }
       return { status: "ok", drawingId: meta.drawingId || null, fileType };
     } catch (error) {
@@ -1157,6 +1180,7 @@ export default function RouteCardGenerationAlt() {
 
   const removeSlot = async (role, documentId = null) => {
     clearSlotError(role);
+    clearSlotWarning(role);
     try {
       if (sessionId) {
         const meta = await deleteSessionDocument(sessionId, role, documentId);
@@ -1896,6 +1920,9 @@ export default function RouteCardGenerationAlt() {
         ]);
         sessionIdRef.current = id;
         setSessionId(id);
+        setSlotErrors({});
+        setSlotWarnings({});
+        setSlotGlow({});
         if (sess.sbu != null) setSessionSbu(String(sess.sbu || "").trim());
         if (sess.plant != null) setSessionPlant(String(sess.plant || "").trim());
         syncDocsFromSession(
@@ -2101,6 +2128,11 @@ export default function RouteCardGenerationAlt() {
                   size="small"
                   loading={analyzing || priorDialog.checking}
                   disabled={!canAnalyze || priorDialog.checking}
+                  title={
+                    hasFormatBlockers
+                      ? "Fix GA / Parts List format warnings below before generating."
+                      : undefined
+                  }
                   onClick={requestGenerate}
                 />
               </>
@@ -2109,7 +2141,13 @@ export default function RouteCardGenerationAlt() {
           <section className="rca-card" id="rca-sec-upload">
             <SectionHead
               title="Upload Documents"
-              badge={hasGa && docs.partslist ? <Tag value="Ready" severity="success" /> : null}
+              badge={
+                hasFormatBlockers ? (
+                  <Tag value="Format issue" severity="warning" />
+                ) : hasGa && docs.partslist ? (
+                  <Tag value="Ready" severity="success" />
+                ) : null
+              }
             />
             <p className="rca-card__intro">
               Upload one or more GA drawings for the same part family (cross-referenced GAs are merged).
@@ -2123,10 +2161,11 @@ export default function RouteCardGenerationAlt() {
                 const filled = multi ? drawings.length > 0 : Boolean(file);
                 const active = dragRole === slot.role;
                 const uploading = uploadingRole === slot.role;
+                const hasWarn = Boolean(slotWarnings[slot.role]);
                 return (
                   <div
                     key={slot.role}
-                    className={`rca-slot${active ? " rca-slot--active" : ""}${filled ? " rca-slot--filled" : ""}${uploading ? " rca-slot--uploading" : ""}${slotErrors[slot.role] ? " rca-slot--error" : ""}${slotGlow[slot.role] ? " rca-slot--glow" : ""}`}
+                    className={`rca-slot${active ? " rca-slot--active" : ""}${filled ? " rca-slot--filled" : ""}${uploading ? " rca-slot--uploading" : ""}${slotErrors[slot.role] ? " rca-slot--error" : ""}${hasWarn ? " rca-slot--warn" : ""}${slotGlow[slot.role] ? " rca-slot--glow" : ""}`}
                     onDragOver={(e) => {
                       e.preventDefault();
                       if (!uploading) setDragRole(slot.role);
@@ -2314,10 +2353,23 @@ export default function RouteCardGenerationAlt() {
                         <span>{slotErrors[slot.role]}</span>
                       </div>
                     ) : null}
+                    {!slotErrors[slot.role] && slotWarnings[slot.role] ? (
+                      <div className="rca-slot__warn-msg" role="status">
+                        <i className="pi pi-exclamation-triangle" aria-hidden="true" />
+                        <span>{slotWarnings[slot.role]}</span>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
             </div>
+            {hasFormatBlockers ? (
+              <Message
+                className="mt-3 w-full"
+                severity="warn"
+                text="Replace the flagged GA or Parts List with a BEL-format file before Generate OARC is enabled."
+              />
+            ) : null}
             {uploadingRole ? (
               <Message
                 className="mt-3 w-full"

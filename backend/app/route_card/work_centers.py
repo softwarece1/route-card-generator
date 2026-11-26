@@ -1354,10 +1354,6 @@ def seed_default_catalog(dept: str | None = None, plant: str | None = None) -> d
     }
 
 
-# Legacy shared seed password — migrated to Admin@<empId> on startup
-LEGACY_SEED_PASSWORD = "Adm!n@123bel"
-
-
 def seed_password_for_emp(emp_id: str) -> str:
     """Per-user seed password: Admin@ + 6-digit empId (e.g. Admin@482917)."""
     return f"Admin@{str(emp_id or '').strip()}"
@@ -1518,20 +1514,24 @@ def seed_sbu_head_and_ied_users() -> dict:
                 match_existing=existing_eng[0] if existing_eng else None,
             )
 
-    for u in select(
-        u
-        for u in RcUser
-        if u.role in ("ied", "sbu_head", "dept_head", "engineer") and u.is_active
-    )[:]:
-        if not u.password_hash:
-            continue
-        if not verify_password(LEGACY_SEED_PASSWORD, u.password_hash):
-            continue
-        emp = (u.emp_id or "").strip()
-        if not emp:
-            continue
-        u.password_hash = hash_password(seed_password_for_emp(emp))
-        reset += 1
+    from app.config.settings import settings
+
+    legacy = (getattr(settings, "LEGACY_SEED_PASSWORD", "") or "").strip()
+    if legacy:
+        for u in select(
+            u
+            for u in RcUser
+            if u.role in ("ied", "sbu_head", "dept_head", "engineer") and u.is_active
+        )[:]:
+            if not u.password_hash:
+                continue
+            if not verify_password(legacy, u.password_hash):
+                continue
+            emp = (u.emp_id or "").strip()
+            if not emp:
+                continue
+            u.password_hash = hash_password(seed_password_for_emp(emp))
+            reset += 1
 
     commit()
     return {

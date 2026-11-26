@@ -70,10 +70,17 @@ class Settings(BaseSettings):
     FORMAT_TEMPLATES_PATH: str = ""
 
     # Auth
-    SECRET_KEY: str = "route-card-dev-secret-change-me"
+    # Empty = required from env; in APP_ENV=dev an ephemeral key is generated at startup.
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     AUTH_ENABLED: bool = True
+    # Optional: plaintext of a historical shared seed password. When set, demo-org
+    # seed migrates accounts still using that password to Admin@<empId>.
+    LEGACY_SEED_PASSWORD: str = ""
+    # Optional: plaintext of a historical weak admin password. When set, startup
+    # forces must_change_password if admin still matches it.
+    LEGACY_WEAK_ADMIN_PASSWORD: str = ""
     # RSA private key PEM for decrypting login/signup credentials (empty = auto-generate under backend/data/)
     AUTH_RSA_PRIVATE_KEY_PATH: str = ""
     # httpOnly access cookie (LAN HTTP → COOKIE_SECURE=false)
@@ -206,11 +213,45 @@ def _hostname(value: str) -> str:
     return raw.split(":")[0]
 
 
+def effective_http_host(host: str | None, x_forwarded_host: str | None = None) -> str:
+    """Host for CSRF/CORS same-host checks. Prefer X-Forwarded-Host when a proxy rewrote Host."""
+    xfh = (x_forwarded_host or "").split(",")[0].strip()
+    if xfh:
+        return xfh
+    return (host or "").strip()
+
+
+def _is_ip_hostname(host: str) -> bool:
+    """True for IPv4/IPv6 literals (plant LAN IPs), not DNS names."""
+    h = (host or "").strip()
+    if not h:
+        return False
+    try:
+        import ipaddress
+
+        ipaddress.ip_address(h)
+        return True
+    except ValueError:
+        return False
+
+
+def _is_loopback_host_header(host: str | None) -> bool:
+    import re
+
+    h = (host or "").strip()
+    if not h:
+        return False
+    return bool(re.match(r"^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$", h, flags=re.I))
+
+
 def origin_is_allowed(origin: str | None, request_host: str | None = None) -> bool:
     """True for an allow-listed origin, loopback, or the same host as this request.
 
-    ``request_host`` is the Host header (port ignored). Without it, a bare IP
-    origin is rejected so a page on another machine cannot pass the check.
+    ``request_host`` is the Host / X-Forwarded-Host header (port ignored). Without it,
+    a bare IP origin is rejected so a page on another machine cannot pass the check.
+
+    When a local Vite/nginx proxy rewrites Host to loopback, an IP-literal Origin is
+    still accepted (plant clients open http://<server-ip>:5174).
     """
     o = (origin or "").strip().rstrip("/")
     if not o:
@@ -225,7 +266,12 @@ def origin_is_allowed(origin: str | None, request_host: str | None = None) -> bo
     if not request_host or not cors_allow_private_network():
         return False
     origin_host = _hostname(o)
-    return bool(origin_host) and origin_host == _hostname(request_host)
+    if not origin_host:
+        return False
+    if origin_host == _hostname(request_host):
+        return True
+    # Proxy rewrote Host → 127.0.0.1 while browser Origin stays on the LAN IP.
+    return _is_loopback_host_header(request_host) and _is_ip_hostname(origin_host)
 
 
 def captcha_required() -> bool:

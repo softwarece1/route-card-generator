@@ -121,21 +121,23 @@ export async function fetchSignupDepartments(sbu) {
 export const fetchDepartments = fetchSbus;
 
 /**
- * Signup helper: whether empId is already registered.
- * `employee` is populated only when an Employee Master exists (none today).
+ * Signup helper: whether empId is available.
+ * When CAPTCHA is required (prod), pass captchaId + captchaAnswer.
  */
-export async function fetchEmpStatus(empId) {
+export async function fetchEmpStatus(empId, { captchaId, captchaAnswer } = {}) {
   const id = encodeURIComponent((empId || '').trim());
   if (!id) {
     return {
       empId: '',
-      registered: false,
       available: false,
       verified: false,
       employee: null,
     };
   }
-  const { data } = await http.get(`/auth/emp-status/${id}`);
+  const params = {};
+  if (captchaId) params.captchaId = captchaId;
+  if (captchaAnswer) params.captchaAnswer = captchaAnswer;
+  const { data } = await http.get(`/auth/emp-status/${id}`, { params });
   return data;
 }
 

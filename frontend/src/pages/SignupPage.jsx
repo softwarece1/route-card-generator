@@ -8,6 +8,8 @@ import {
   fetchSbus,
   fetchSignupDepartments,
   fetchEmpStatus,
+  fetchAuthConfig,
+  fetchCaptcha,
 } from "@/services/authApi";
 import { isAuthenticated } from "@/lib/auth";
 import { sanitizeInput } from "@/lib/inputSafe";
@@ -57,14 +59,38 @@ export default function SignupPage() {
 
   const [empStatus, setEmpStatus] = useState(null);
   const [verifiedEmployee, setVerifiedEmployee] = useState(null);
+  const [captchaRequired, setCaptchaRequired] = useState(false);
+  const [captchaId, setCaptchaId] = useState("");
+  const [captchaImage, setCaptchaImage] = useState("");
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const [captchaLoading, setCaptchaLoading] = useState(false);
+
+  const loadCaptcha = useCallback(async () => {
+    setCaptchaLoading(true);
+    try {
+      const data = await fetchCaptcha();
+      setCaptchaId(data?.captchaId || "");
+      setCaptchaImage(data?.imageData || "");
+      setCaptchaAnswer("");
+    } catch {
+      setCaptchaId("");
+      setCaptchaImage("");
+    } finally {
+      setCaptchaLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setSbusLoading(true);
       try {
-        const rows = await fetchSbus();
-        if (!cancelled) setSbus(rows);
+        const [rows, cfg] = await Promise.all([fetchSbus(), fetchAuthConfig()]);
+        if (cancelled) return;
+        setSbus(rows);
+        const required = Boolean(cfg?.captchaRequired);
+        setCaptchaRequired(required);
+        if (required) await loadCaptcha();
       } catch {
         if (!cancelled) setSbus([]);
       } finally {
@@ -74,7 +100,7 @@ export default function SignupPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadCaptcha]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,9 +133,16 @@ export default function SignupPage() {
       setVerifiedEmployee(null);
       return;
     }
+    if (captchaRequired && !captchaAnswer.trim()) {
+      setFormError("Enter the CAPTCHA before checking Employee ID");
+      return;
+    }
     const seq = ++empCheckSeq.current;
     try {
-      const status = await fetchEmpStatus(id);
+      const status = await fetchEmpStatus(id, {
+        captchaId: captchaRequired ? captchaId : undefined,
+        captchaAnswer: captchaRequired ? captchaAnswer.trim() : undefined,
+      });
       if (seq !== empCheckSeq.current) return;
       setEmpStatus(status);
       if (status?.verified && status.employee) {
@@ -120,12 +153,17 @@ export default function SignupPage() {
       } else {
         setVerifiedEmployee(null);
       }
-    } catch {
+      if (formError) setFormError("");
+    } catch (err) {
       if (seq !== empCheckSeq.current) return;
       setEmpStatus(null);
       setVerifiedEmployee(null);
+      const detail = err?.response?.data?.detail;
+      if (typeof detail === "string") setFormError(detail);
+    } finally {
+      if (captchaRequired) loadCaptcha();
     }
-  }, []);
+  }, [captchaRequired, captchaId, captchaAnswer, formError, loadCaptcha]);
 
   const passwordErrors = getPasswordErrors(password);
   const passwordOk = password.length > 0 && passwordErrors.length === 0 && !passwordServerError;
@@ -135,9 +173,10 @@ export default function SignupPage() {
   const sbuLocked = Boolean(employeeSbu(verifiedEmployee));
   const selectedDept = departments.find((d) => Number(d.value ?? d.id) === Number(departmentId));
 
+  const empUnavailable = empStatus != null && empStatus.available === false;
   const empInvalid =
     submitted &&
-    (!empId.trim() || !isValidEmployeeId(empId) || Boolean(empStatus?.registered));
+    (!empId.trim() || !isValidEmployeeId(empId) || empUnavailable);
   const nameInvalid = submitted && !name.trim() && !nameLocked;
   const sbuInvalid = submitted && !sbu && !sbuLocked;
   const deptInvalid = submitted && !departmentId;
@@ -152,7 +191,7 @@ export default function SignupPage() {
     passwordOk &&
     passwordsMatch &&
     !confirmMismatch &&
-    !empStatus?.registered &&
+    !empUnavailable &&
     !sbusLoading &&
     !deptsLoading &&
     sbus.length > 0 &&
@@ -290,7 +329,49 @@ export default function SignupPage() {
                   Employee ID must be exactly 6 digits
                 </small>
               )}
+              {empUnavailable ? (
+                <small className="rc-login__hint" style={{ color: "var(--pmf-danger, #b91c1c)" }}>
+                  Unable to use this employee ID
+                </small>
+              ) : null}
             </div>
+
+            {captchaRequired ? (
+              <div className="rc-login__field">
+                <label className="rc-login__label" htmlFor="signupCaptcha">
+                  CAPTCHA
+                </label>
+                <div className="rc-login__captcha-row">
+                  {captchaImage ? (
+                    <img src={captchaImage} alt="CAPTCHA" className="rc-login__captcha-img" />
+                  ) : (
+                    <span className="rc-login__hint">
+                      {captchaLoading ? "Loading…" : "CAPTCHA unavailable"}
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    icon="pi pi-refresh"
+                    rounded
+                    text
+                    size="small"
+                    aria-label="Refresh CAPTCHA"
+                    onClick={loadCaptcha}
+                    disabled={loading || captchaLoading}
+                  />
+                </div>
+                <SafeInputText
+                  id="signupCaptcha"
+                  profile="text"
+                  value={captchaAnswer}
+                  onChange={(e) => setCaptchaAnswer(e.target.value)}
+                  placeholder="Enter CAPTCHA"
+                  disabled={loading}
+                  maxLength={16}
+                  autoComplete="off"
+                />
+              </div>
+            ) : null}
 
             {verifiedEmployee ? (
               <div className="rc-login__verified" aria-live="polite">

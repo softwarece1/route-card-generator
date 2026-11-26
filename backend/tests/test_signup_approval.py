@@ -17,7 +17,7 @@ from app.auth_crypto import _private_key
 from app.config.settings import settings
 from app.database.connection import connect_to_db
 from app.main import app
-from app.route_card.models import RcNotification, RcSbu, RcUser
+from app.route_card.models import RcDepartment, RcNotification, RcSbu, RcUser
 from app.security import hash_password
 
 client = TestClient(app)
@@ -37,7 +37,8 @@ def _encrypt(payload: dict) -> str:
     return base64.b64encode(cipher).decode("ascii")
 
 
-def _ensure_dept(name: str = "Software") -> str:
+def _ensure_sbu(name: str = "Software") -> str:
+    """Ensure an active SBU master row exists; returns its display name."""
     connect_to_db()
     with db_session:
         d = select(x for x in RcSbu if x.name == name)[:1]
@@ -45,18 +46,61 @@ def _ensure_dept(name: str = "Software") -> str:
             code = (name[:8] or "SFT").upper().replace(" ", "_")
             RcSbu(code=code, name=name, plant_id="1110", is_active=True, sort_order=99)
             commit()
+        else:
+            sbu = d[0]
+            if not sbu.is_active:
+                sbu.is_active = True
+                commit()
     return name
 
 
-def _ensure_head(dept: str, emp_id: str = "700001") -> int:
+def _ensure_department(sbu_name: str, code: str = "PMG") -> int:
+    """Ensure a department under the SBU; returns department id."""
     connect_to_db()
     with db_session:
+        sbu = select(x for x in RcSbu if x.name == sbu_name)[:1]
+        if not sbu:
+            raise AssertionError(f"missing SBU {sbu_name}")
+        sbu = sbu[0]
+        if not sbu.is_active:
+            sbu.is_active = True
+        dept = select(
+            d for d in RcDepartment if d.sbu.id == sbu.id and d.code == code
+        )[:1]
+        if not dept:
+            dept = RcDepartment(
+                sbu=sbu,
+                code=code,
+                name=code,
+                is_active=True,
+                sort_order=10,
+            )
+            commit()
+            return dept.id
+        dept = dept[0]
+        if not dept.is_active:
+            dept.is_active = True
+        commit()
+        return dept.id
+
+
+def _ensure_head(sbu_name: str, emp_id: str = "700001") -> int:
+    connect_to_db()
+    with db_session:
+        sbu = select(x for x in RcSbu if x.name == sbu_name and x.is_active)[:1]
+        dept = None
+        if sbu:
+            dept = select(
+                d for d in RcDepartment if d.sbu.id == sbu[0].id and d.is_active
+            )[:1]
+            dept = dept[0] if dept else None
         u = RcUser.get(emp_id=emp_id)
         if not u:
             u = RcUser(
                 emp_id=emp_id,
                 name="Test SBU Head",
-                sbu=dept,
+                sbu=sbu_name,
+                department=dept,
                 password_hash=hash_password("HeadPass2026!#Aa"),
                 role="sbu_head",
                 is_active=True,
@@ -64,7 +108,8 @@ def _ensure_head(dept: str, emp_id: str = "700001") -> int:
             )
         else:
             u.role = "sbu_head"
-            u.sbu = dept
+            u.sbu = sbu_name
+            u.department = dept
             u.is_active = True
             u.approval_status = "approved"
             u.password_hash = hash_password("HeadPass2026!#Aa")
@@ -89,8 +134,9 @@ def captcha_off():
 
 
 def test_signup_pending_no_cookie_and_notifies_head(captcha_off):
-    dept = _ensure_dept("Software")
-    head_id = _ensure_head(dept, "700011")
+    sbu = _ensure_sbu("Software")
+    department_id = _ensure_department(sbu, "PMG")
+    head_id = _ensure_head(sbu, "700011")
     emp_id = f"71{secrets.randbelow(10000):04d}"
     password = "SignupPass2026!#Aa"
 
@@ -104,7 +150,8 @@ def test_signup_pending_no_cookie_and_notifies_head(captcha_off):
         "/api/v1/auth/signup",
         json={
             "name": "Pending Engineer",
-            "sbu": dept,
+            "sbu": sbu,
+            "departmentId": department_id,
             "cipher": _encrypt({"empId": emp_id, "password": password}),
             "alg": CREDS_ALG,
         },
@@ -142,10 +189,12 @@ def select_notifications_for(user_id: int):
 
 
 def test_approve_and_reject_signup(captcha_off):
-    dept = _ensure_dept("Software")
-    head_id = _ensure_head(dept, "700022")
-    _ensure_dept("Assembly")
-    other_head_id = _ensure_head("Assembly", "700044")
+    sbu = _ensure_sbu("Software")
+    department_id = _ensure_department(sbu, "PMG")
+    head_id = _ensure_head(sbu, "700022")
+    other_sbu = _ensure_sbu("Assembly")
+    _ensure_department(other_sbu, "PMG")
+    other_head_id = _ensure_head(other_sbu, "700044")
 
     emp_ok = f"72{secrets.randbelow(10000):04d}"
     emp_bad = f"73{secrets.randbelow(10000):04d}"
@@ -161,7 +210,8 @@ def test_approve_and_reject_signup(captcha_off):
             "/api/v1/auth/signup",
             json={
                 "name": "Pending Engineer Two" if emp == emp_ok else "Pending Engineer Three",
-                "sbu": dept,
+                "sbu": sbu,
+                "departmentId": department_id,
                 "cipher": _encrypt({"empId": emp, "password": password}),
                 "alg": CREDS_ALG,
             },

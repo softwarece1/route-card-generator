@@ -18,7 +18,11 @@ export default defineConfig({
       '/api': {
         // Must match uvicorn --port (this box runs 8003). Override: VITE_API_PROXY_TARGET=http://127.0.0.1:8002
         target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8003',
-        changeOrigin: true,
+        // Keep the browser Host (e.g. 172.16.x.x:5174). changeOrigin:true rewrites Host to
+        // 127.0.0.1:8003 and CSRF same-host checks then fail for LAN IP clients.
+        changeOrigin: false,
+        // If a future proxy must rewrite Host, X-Forwarded-Host still feeds CSRF/CORS.
+        xfwd: true,
         ws: true,
         // Analyze + local VLM can exceed default ~2 min proxy idle timeout
         timeout: 1_200_000,

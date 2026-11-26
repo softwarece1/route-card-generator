@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.auth.cookies import access_cookie_name
-from app.config.settings import origin_is_allowed
+from app.config.settings import effective_http_host, origin_is_allowed
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 
@@ -58,7 +58,11 @@ class CookieCsrfMiddleware(BaseHTTPMiddleware):
         if origin is None:
             return await call_next(request)
 
-        if origin_is_allowed(origin, request.headers.get("host")):
+        host = effective_http_host(
+            request.headers.get("host"),
+            request.headers.get("x-forwarded-host"),
+        )
+        if origin_is_allowed(origin, host):
             return await call_next(request)
 
         return JSONResponse(

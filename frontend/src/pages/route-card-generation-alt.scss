@@ -508,6 +508,10 @@
     border-color: var(--pmf-danger, #ef4444) !important;
   }
 
+  &--warn {
+    border-color: var(--pmf-warn, #d97706) !important;
+  }
+
   &--glow {
     border-color: var(--pmf-danger, #ef4444) !important;
     animation: rca-slot-glow 0.8s ease-in-out infinite alternate;
@@ -526,16 +530,14 @@
   }
 }
 
-.rca-slot__error-msg {
+.rca-slot__error-msg,
+.rca-slot__warn-msg {
   display: flex;
   align-items: flex-start;
   gap: 0.45rem;
   margin-top: 0.65rem;
   padding: 0.5rem 0.65rem;
   border-radius: 0.5rem;
-  background: var(--pmf-danger-soft, #fef2f2);
-  border: 1px solid var(--pmf-danger-border, #fca5a5);
-  color: var(--pmf-danger-fg, #991b1b);
   font-size: 0.76rem;
   line-height: 1.35;
   font-weight: 500;
@@ -543,12 +545,31 @@
   i {
     font-size: 0.88rem;
     margin-top: 0.12rem;
-    color: var(--pmf-danger, #ef4444);
     flex-shrink: 0;
   }
 
   span {
     flex: 1;
+  }
+}
+
+.rca-slot__error-msg {
+  background: var(--pmf-danger-soft, #fef2f2);
+  border: 1px solid var(--pmf-danger-border, #fca5a5);
+  color: var(--pmf-danger-fg, #991b1b);
+
+  i {
+    color: var(--pmf-danger, #ef4444);
+  }
+}
+
+.rca-slot__warn-msg {
+  background: var(--pmf-warn-soft, #fffbeb);
+  border: 1px solid var(--pmf-warn-border, #fcd34d);
+  color: var(--pmf-warn-fg, #92400e);
+
+  i {
+    color: var(--pmf-warn, #d97706);
   }
 }
 

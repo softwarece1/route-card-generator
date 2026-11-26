@@ -263,12 +263,31 @@ def list_signup_departments(request: Request, sbu: str = ""):
 @router.get("/emp-status/{emp_id}")
 @limiter.limit("30/min")
 @db_session
-def emp_status(emp_id: str, request: Request):
+def emp_status(
+    emp_id: str,
+    request: Request,
+    captchaId: Optional[str] = None,
+    captchaAnswer: Optional[str] = None,
+):
+    from app.config.settings import captcha_required
+
+    if captcha_required():
+        if not captchaId or not captchaAnswer:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="CAPTCHA required"
+            )
+        from app.captcha import verify_captcha
+
+        if not verify_captcha(captchaId, captchaAnswer):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired CAPTCHA",
+            )
+
     normalized = _normalize_emp_id(emp_id)
     if not normalized:
         return {
             "empId": "",
-            "registered": False,
             "available": False,
             "verified": False,
             "employee": None,
@@ -276,7 +295,6 @@ def emp_status(emp_id: str, request: Request):
     existing = RcUser.get(emp_id=normalized)
     return {
         "empId": normalized,
-        "registered": bool(existing),
         "available": not bool(existing),
         "verified": False,
         "employee": None,
@@ -319,7 +337,7 @@ def signup(request: Request, response: Response, body: SignupRequest):
         raise HTTPException(400, "Department must belong to the selected SBU")
 
     if RcUser.get(emp_id=emp_id):
-        raise HTTPException(400, f"Employee ID '{emp_id}' is already registered")
+        raise HTTPException(400, "Unable to complete signup with this employee ID")
 
     user = RcUser(
         emp_id=emp_id,
